@@ -19,12 +19,16 @@ export default function UserProfileModal({ visible, onClose }) {
     topUpWallet,
     unclaimedOrderCount,
     banStatus,
-    resetToSampleData,
-    restartOnboarding
+    restartOnboarding,
+    logoutUser,
+    role,
+    setRole
   } = useContext(AppContext);
 
   const [name, setName] = useState(userProfile?.name || '');
   const [rollNo, setRollNo] = useState(userProfile?.rollNo || '');
+  const [facultyId, setFacultyId] = useState(userProfile?.facultyId || '');
+  const [roomNumber, setRoomNumber] = useState(userProfile?.roomNumber || userProfile?.facultyRoomNote || '');
   const [phone, setPhone] = useState(userProfile?.phone || '');
   const [email, setEmail] = useState(userProfile?.email || '');
   const [topUpAmount, setTopUpAmount] = useState('200');
@@ -33,6 +37,8 @@ export default function UserProfileModal({ visible, onClose }) {
     if (userProfile) {
       setName(userProfile.name || '');
       setRollNo(userProfile.rollNo || '');
+      setFacultyId(userProfile.facultyId || '');
+      setRoomNumber(userProfile.roomNumber || userProfile.facultyRoomNote || '');
       setPhone(userProfile.phone || '');
       setEmail(userProfile.email || '');
     }
@@ -46,10 +52,13 @@ export default function UserProfileModal({ visible, onClose }) {
     await updateUserProfile({
       name: name.trim(),
       rollNo: rollNo.trim(),
+      facultyId: facultyId.trim(),
+      roomNumber: roomNumber.trim(),
+      facultyRoomNote: roomNumber.trim(),
       phone: phone.trim(),
       email: email.trim()
     });
-    Alert.alert('Profile Updated', 'Your student identity has been updated across SkipQ.');
+    Alert.alert('Profile Updated', 'Your campus profile details have been saved.');
     onClose();
   };
 
@@ -63,36 +72,18 @@ export default function UserProfileModal({ visible, onClose }) {
     Alert.alert('₹' + val + ' Added', `Your new SkipQ Wallet balance is ₹${walletBalance + val}`);
   };
 
-  const handleResetData = () => {
+  const handleLogout = () => {
     Alert.alert(
-      'Reset Data',
-      'This will reset your local canteens, cart, and orders back to default demonstration values. Proceed?',
+      'Log Out',
+      'Are you sure you want to log out of SkipQ? You will need to verify with your mobile number to sign in again.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Reset to Defaults',
+          text: 'Log Out',
           style: 'destructive',
           onPress: async () => {
-            await resetToSampleData();
-            Alert.alert('Reset Complete', 'Application data restored to initial demo defaults.');
             onClose();
-          }
-        }
-      ]
-    );
-  };
-
-  const handleRestartOnboarding = () => {
-    Alert.alert(
-      'Switch Campus / Change Role',
-      'This will bring back the first-time setup screen where you can switch between Student and Vendor or pick a new campus.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Change Role / Campus',
-          onPress: async () => {
-            onClose();
-            await restartOnboarding();
+            await logoutUser();
           }
         }
       ]
@@ -106,8 +97,10 @@ export default function UserProfileModal({ visible, onClose }) {
           {/* Header */}
           <View style={styles.modalHeader}>
             <View>
-              <Text style={styles.modalTitle}>👤 Student Profile & Settings</Text>
-              <Text style={styles.modalSubtitle}>Manage your live campus ordering identity</Text>
+              <Text style={styles.modalTitle}>👤 Account & Settings</Text>
+              <Text style={styles.modalSubtitle}>
+                {userProfile?.name || 'Campus Scholar'} • {userProfile?.phone ? `+91 ${userProfile.phone}` : 'Signed In'}
+              </Text>
             </View>
             <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
               <Text style={styles.closeBtnText}>✕</Text>
@@ -120,7 +113,7 @@ export default function UserProfileModal({ visible, onClose }) {
               <View>
                 <Text style={styles.walletLabel}>SKIPQ SECURITY WALLET</Text>
                 <Text style={styles.walletBal}>₹{walletBalance.toFixed(2)}</Text>
-                <Text style={styles.walletDesc}>Used for 10% refundable security deposit on Cash orders</Text>
+                <Text style={styles.walletDesc}>Used for refundable security deposit on Cash orders</Text>
               </View>
               <View style={styles.topUpRow}>
                 {[100, 200, 500].map(amt => (
@@ -157,20 +150,45 @@ export default function UserProfileModal({ visible, onClose }) {
               onChangeText={setName}
             />
 
-            <Text style={styles.label}>Campus Roll / Student ID</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. 21BCE1042"
-              placeholderTextColor="#64748b"
-              value={rollNo}
-              onChangeText={setRollNo}
-              autoCapitalize="characters"
-            />
+            {userProfile?.userType === 'faculty' ? (
+              <>
+                <Text style={styles.label}>Faculty / Staff ID</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. FAC-CSE-402"
+                  placeholderTextColor="#64748b"
+                  value={facultyId}
+                  onChangeText={setFacultyId}
+                  autoCapitalize="characters"
+                />
 
-            <Text style={styles.label}>Mobile Phone (For SMS Token / Alert)</Text>
+                <Text style={styles.label}>Cabin / Department Room (For Room Delivery)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. Block B, 3rd Floor, Room 314"
+                  placeholderTextColor="#64748b"
+                  value={roomNumber}
+                  onChangeText={setRoomNumber}
+                />
+              </>
+            ) : (
+              <>
+                <Text style={styles.label}>Campus Roll / Student Enrollment ID</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. 210101120042"
+                  placeholderTextColor="#64748b"
+                  value={rollNo}
+                  onChangeText={setRollNo}
+                  autoCapitalize="characters"
+                />
+              </>
+            )}
+
+            <Text style={styles.label}>Mobile Phone (SMS Notifications)</Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g. +91 98765 43210"
+              placeholder="e.g. 9876543210"
               placeholderTextColor="#64748b"
               value={phone}
               onChangeText={setPhone}
@@ -180,7 +198,7 @@ export default function UserProfileModal({ visible, onClose }) {
             <Text style={styles.label}>Campus Email</Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g. student@campus.edu"
+              placeholder="e.g. user@silveroakuni.ac.in"
               placeholderTextColor="#64748b"
               value={email}
               onChangeText={setEmail}
@@ -193,14 +211,9 @@ export default function UserProfileModal({ visible, onClose }) {
               <Text style={styles.saveBtnText}>Save Profile Changes 💾</Text>
             </TouchableOpacity>
 
-            {/* Switch Role / Re-Onboard */}
-            <TouchableOpacity style={styles.switchRoleBtn} onPress={handleRestartOnboarding}>
-              <Text style={styles.switchRoleText}>🔁 Switch Role / Change University Campus</Text>
-            </TouchableOpacity>
-
-            {/* Reset App Data */}
-            <TouchableOpacity style={styles.resetBtn} onPress={handleResetData}>
-              <Text style={styles.resetBtnText}>🔄 Reset App to Factory Demo Data</Text>
+            {/* Log Out */}
+            <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+              <Text style={styles.logoutBtnText}>🚪 Log Out of SkipQ</Text>
             </TouchableOpacity>
           </ScrollView>
         </View>
@@ -349,32 +362,20 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 14,
   },
-  switchRoleBtn: {
-    backgroundColor: '#1e293b',
+  logoutBtn: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
     borderWidth: 1,
-    borderColor: '#6366f1',
-    paddingVertical: 12,
-    borderRadius: 12,
+    borderColor: 'rgba(239, 68, 68, 0.4)',
+    paddingVertical: 14,
+    borderRadius: 14,
     alignItems: 'center',
-    marginBottom: 10,
+    marginTop: 8,
+    marginBottom: 32,
   },
-  switchRoleText: {
-    color: '#a5b4fc',
-    fontWeight: '800',
-    fontSize: 12,
-  },
-  resetBtn: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: '#ef4444',
-    paddingVertical: 10,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  resetBtnText: {
+  logoutBtnText: {
     color: '#f87171',
-    fontWeight: '700',
-    fontSize: 12,
+    fontWeight: '800',
+    fontSize: 14,
   }
 });
+

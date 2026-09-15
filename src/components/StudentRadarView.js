@@ -12,34 +12,37 @@ import {
 } from 'react-native';
 import { AppContext } from '../context/AppContext';
 import { getDistanceInMeters, formatDistance, MAX_ORDER_DISTANCE_METERS } from '../utils/distance';
-import ActiveOrderFloatingBanner from './ActiveOrderFloatingBanner';
 
-export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout, onOpenPassModal, onOpenHistoryModal }) {
+export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout, onOpenPassModal }) {
   const {
     canteens,
     university,
     userLocation,
-    setUserLocation,
-    requestUserLocation,
     banStatus,
     cart,
     addToCart,
     updateCartQty,
     clearCart,
     orders,
-    activeOrderId
+    activeOrderId,
+    userProfile
   } = useContext(AppContext);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const [activeTab, setActiveTab] = useState('radar'); // 'radar' or 'shops'
+  const [activeTab, setActiveTab] = useState('dishes'); // 'dishes' or 'canteens'
+  const [vegOnly, setVegOnly] = useState(false);
+  const [fastPrepOnly, setFastPrepOnly] = useState(false);
+  const [expandedDish, setExpandedDish] = useState(null);
 
   const campusCanteens = canteens.filter(c => c.universityId === university);
+  const souCampusDist = getDistanceInMeters(userLocation?.lat ?? 23.0917, userLocation?.lng ?? 72.5349, 23.0917, 72.5349);
+  const isWithinCampus = souCampusDist <= 400;
 
-  // Group food items across all campus canteens
-  let itemGroupMap = {};
+  // Flatten & group dishes across all canteens
+  const itemGroupMap = {};
   campusCanteens.forEach(shop => {
-    const distMeters = getDistanceInMeters(userLocation.lat, userLocation.lng, shop.lat, shop.lng);
+    const distMeters = getDistanceInMeters(userLocation?.lat ?? 23.0917, userLocation?.lng ?? 72.5349, shop.lat, shop.lng);
     const isWithin300m = distMeters <= MAX_ORDER_DISTANCE_METERS;
 
     (shop.menu || []).forEach(item => {
@@ -55,14 +58,21 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
         (item.category && item.category.toLowerCase() === selectedCategory.toLowerCase()) ||
         item.name.toLowerCase().includes(selectedCategory.toLowerCase());
 
-      if (matchesQuery && matchesCat) {
-        const key = item.name.toLowerCase();
+      const matchesVeg = !vegOnly || item.isVeg === true;
+      const prepMinMatch = (item.prepTime || '').match(/\d+/);
+      const prepMinsVal = prepMinMatch ? parseInt(prepMinMatch[0], 10) : 5;
+      const matchesFast = !fastPrepOnly || prepMinsVal <= 5;
+
+      if (matchesQuery && matchesCat && matchesVeg && matchesFast) {
+        const key = item.name.toLowerCase().trim();
         if (!itemGroupMap[key]) {
           itemGroupMap[key] = {
+            id: item.id,
             name: item.name,
             category: item.category || 'Snacks',
             isVeg: item.isVeg !== undefined ? item.isVeg : true,
             description: item.description,
+            image: item.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=400&q=80',
             canteens: []
           };
         }
@@ -73,7 +83,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
           distMeters,
           isWithin300m,
           price: item.price,
-          prepTime: item.prepTime,
+          prepTime: item.prepTime || '5m',
           isAvailable: item.isAvailable,
           isVeg: item.isVeg,
           itemId: item.id,
@@ -87,7 +97,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
   const radarItems = Object.values(itemGroupMap);
   const categories = ['All', 'Snacks', 'Beverages', 'Meals', 'Rolls', 'Sandwiches', 'Desserts'];
 
-  // Cart Calculations
+  // Cart calculations
   const cartTotalItems = (cart?.items || []).reduce((sum, it) => sum + it.qty, 0);
   const cartTotalPrice = (cart?.items || []).reduce((sum, it) => sum + it.price * it.qty, 0);
 
@@ -99,307 +109,351 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
 
   const handleAddToCart = (shopObj, itemObj, isWithin300m, distMeters) => {
     if (banStatus === 'perm_ban') {
-      Alert.alert('Account Banned', 'Your account is permanently suspended due to uncollected orders.');
+      Alert.alert('Account Restricted', 'Your account is permanently suspended due to repeated uncollected orders.');
       return;
     }
     if (!isWithin300m) {
       Alert.alert(
-        '🚫 Distance Limit Exceeded (>300m)',
-        `Order blocked! You are ${formatDistance(distMeters)} away from ${shopObj.name}. SkipQ enforces a 300-meter maximum distance limit to ensure freshly prepared hot food.`
+        '📍 Too Far from Canteen',
+        `You are ${formatDistance(distMeters)} from ${shopObj.name}. Please be on-campus to place an order.`,
+        [{ text: 'Got it', style: 'cancel' }]
       );
       return;
     }
     addToCart(shopObj, itemObj);
   };
 
-  return (
-    <View style={styles.container}>
-      {/* Hero Header Card */}
-      <View style={styles.heroBanner}>
-        <View style={styles.heroTop}>
-          <View>
-            <Text style={styles.heroTitle}>Campus Live Food Radar ⚡</Text>
-            <Text style={styles.heroSub}>Find real dishes & zero-queue pickup across counters</Text>
-          </View>
-        </View>
+  const activeOrderObj = orders.find(o => o.id === activeOrderId);
 
-        {/* GPS Control Bar */}
-        <View style={styles.gpsSimulatorRow}>
-          <Text style={styles.gpsLabel}>📡 GPS:</Text>
+  return (
+    <View style={styles.screenContainer}>
+      {/* Top Search & Filter Section */}
+      <View style={styles.topSection}>
+        {/* Minimal Greeting & Live Status */}
+        <View style={styles.greetingRow}>
+          <View>
+            <Text style={styles.greetingTitle}>
+              {userProfile?.name ? `Hey ${userProfile.name.split(' ')[0]} 👋` : 'Hey Foodie 👋'}
+            </Text>
+            <Text style={styles.greetingSub}>Order ahead & pick up with zero queue</Text>
+          </View>
+
+          {/* Discreet GPS Status Chip */}
           <TouchableOpacity
-            style={[styles.simBtn, userLocation.lat === 19.1334 && styles.simBtnActive]}
-            onPress={() => setUserLocation({ lat: 19.1334, lng: 72.9133 })}
-          >
-            <Text style={styles.simBtnText}>📍 Center (30m)</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.simBtn, userLocation.lat === 19.1420 && styles.simBtnActive]}
-            onPress={() => setUserLocation({ lat: 19.1420, lng: 72.9250 })}
-          >
-            <Text style={styles.simBtnText}>🚨 Out of Range (>500m)</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.gpsRecalibrateBtn}
-            onPress={async () => {
-              await requestUserLocation();
-              Alert.alert('GPS Updated', 'Recalibrated using your phone GPS hardware.');
+            style={[styles.rangePill, isWithinCampus ? styles.rangePillActive : styles.rangePillAway]}
+            onPress={() => {
+              if (!isWithinCampus) {
+                Alert.alert(
+                  '📍 Off Campus',
+                  `You are ${formatDistance(souCampusDist)} from Silver Oak University. Please come to campus to order.`,
+                  [{ text: 'OK' }]
+                );
+              }
             }}
           >
-            <Text style={styles.gpsRecalibrateText}>🎯 Phone GPS</Text>
+            <View style={[styles.rangeDot, isWithinCampus ? styles.rangeDotActive : styles.rangeDotAway]} />
+            <Text style={[styles.rangeText, isWithinCampus ? styles.rangeTextActive : styles.rangeTextAway]}>
+              {isWithinCampus ? 'On Campus' : `${formatDistance(souCampusDist)} away`}
+            </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Search Box */}
-        <View style={styles.searchBox}>
+        {/* Minimal Search Box */}
+        <View style={styles.searchBar}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
             style={styles.searchInput}
-            placeholder="Search dish, canteen, or craving..."
+            placeholder="Search puff, chai, frankie, meals..."
             placeholderTextColor="#64748b"
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
-          {searchQuery ? (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Text style={styles.clearBtn}>✕</Text>
+          {Boolean(searchQuery) && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={styles.searchClearText}>✕</Text>
             </TouchableOpacity>
-          ) : null}
+          )}
+        </View>
+
+        {/* Minimal Category Filter Pills */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoryList}
+        >
+          {categories.map(cat => (
+            <TouchableOpacity
+              key={cat}
+              style={[styles.catChip, selectedCategory === cat && styles.catChipActive]}
+              onPress={() => setSelectedCategory(cat)}
+            >
+              <Text style={[styles.catChipText, selectedCategory === cat && styles.catChipTextActive]}>
+                {cat}
+              </Text>
+            </TouchableOpacity>
+          ))}
+
+          <View style={styles.catDivider} />
+
+          {/* Veg Toggle Chip */}
+          <TouchableOpacity
+            style={[styles.vegFilterChip, vegOnly && styles.vegFilterChipActive]}
+            onPress={() => setVegOnly(!vegOnly)}
+          >
+            <Text style={styles.vegFilterText}>{vegOnly ? '🟢 Veg Only ✓' : '🌱 Veg'}</Text>
+          </TouchableOpacity>
+
+          {/* Quick Prep Toggle Chip */}
+          <TouchableOpacity
+            style={[styles.fastFilterChip, fastPrepOnly && styles.fastFilterChipActive]}
+            onPress={() => setFastPrepOnly(!fastPrepOnly)}
+          >
+            <Text style={styles.fastFilterText}>{fastPrepOnly ? '⚡ ≤5m ✓' : '⚡ ≤5m'}</Text>
+          </TouchableOpacity>
+        </ScrollView>
+
+        {/* Segment Switcher: Dishes vs Stalls */}
+        <View style={styles.segmentContainer}>
+          <TouchableOpacity
+            style={[styles.segmentBtn, activeTab === 'dishes' && styles.segmentBtnActive]}
+            onPress={() => setActiveTab('dishes')}
+          >
+            <Text style={[styles.segmentText, activeTab === 'dishes' && styles.segmentTextActive]}>
+              Dishes ({radarItems.length})
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.segmentBtn, activeTab === 'canteens' && styles.segmentBtnActive]}
+            onPress={() => setActiveTab('canteens')}
+          >
+            <Text style={[styles.segmentText, activeTab === 'canteens' && styles.segmentTextActive]}>
+              Stalls ({campusCanteens.length})
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
 
-      {/* Category Filter Chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.chipsScroll}
-        contentContainerStyle={styles.chipsContainer}
-      >
-        {categories.map(cat => (
-          <TouchableOpacity
-            key={cat}
-            style={[styles.chip, selectedCategory === cat && styles.chipActive]}
-            onPress={() => setSelectedCategory(cat)}
-          >
-            <Text style={[styles.chipText, selectedCategory === cat && styles.chipTextActive]}>
-              {cat === 'All' ? '✨ All Dishes' : cat}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      {/* Navigation View Tabs */}
-      <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'radar' && styles.tabBtnActive]}
-          onPress={() => setActiveTab('radar')}
-        >
-          <Text style={[styles.tabText, activeTab === 'radar' && styles.tabTextActive]}>
-            ⚡ Dish Availability Radar ({radarItems.length})
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'shops' && styles.tabBtnActive]}
-          onPress={() => setActiveTab('shops')}
-        >
-          <Text style={[styles.tabText, activeTab === 'shops' && styles.tabTextActive]}>
-            🏬 Campus Stalls ({campusCanteens.length})
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Content Rendering */}
-      {activeTab === 'radar' ? (
+      {/* Main Content Area */}
+      {activeTab === 'dishes' ? (
         <FlatList
           data={radarItems}
           keyExtractor={item => item.name}
-          contentContainerStyle={[styles.listPadding, cartTotalItems > 0 && { paddingBottom: 110 }]}
+          contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: 110 }]}
+          showsVerticalScrollIndicator={false}
           ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyEmoji}>🍽️</Text>
-              <Text style={styles.emptyTitle}>No Matching Food Items</Text>
-              <Text style={styles.emptySub}>Try searching another item or add dishes in Canteen POS.</Text>
-            </View>
-          }
-          renderItem={({ item: group }) => (
-            <View style={styles.radarCard}>
-              <View style={styles.cardHeader}>
-                <View style={styles.tagRow}>
-                  <Text style={styles.categoryTag}>{group.category}</Text>
-                  <Text style={styles.dietTag}>{group.isVeg ? '🟢 Veg' : '🔴 Non-Veg'}</Text>
+            campusCanteens.length === 0 ? (
+              <View style={styles.emptyWrap}>
+                <View style={styles.emptyIconCircle}>
+                  <Text style={styles.emptyIcon}>🏪</Text>
                 </View>
-                <Text style={styles.itemName}>{group.name}</Text>
-                {group.description ? <Text style={styles.itemDesc}>{group.description}</Text> : null}
+                <Text style={styles.emptyTitle}>No Live Canteens on Campus Yet</Text>
+                <Text style={styles.emptySub}>
+                  Silver Oak University currently has no active food stalls registered.
+                </Text>
+                <View style={styles.emptyVendorBox}>
+                  <Text style={styles.emptyVendorTitle}>Are you a Canteen Operator?</Text>
+                  <Text style={styles.emptyVendorSub}>
+                    Register your campus food stall or switch your role to Seller in your Profile to start receiving orders!
+                  </Text>
+                </View>
               </View>
-
-              <View style={styles.matrixBox}>
-                <Text style={styles.matrixTitle}>AVAILABLE AT {group.canteens.length} CANTEEN(S):</Text>
-                {group.canteens.map(shopInfo => {
-                  const qty = getItemCartQty(shopInfo.shopId, shopInfo.itemId);
-
-                  return (
-                    <View key={shopInfo.shopId} style={styles.matrixRow}>
-                      <View style={styles.shopInfo}>
-                        <Text style={styles.shopName}>{shopInfo.shopName}</Text>
-                        <Text style={styles.shopLocationText}>📍 {shopInfo.shopLocation}</Text>
-                        <View style={styles.distanceBadgeRow}>
-                          <Text
-                            style={[
-                              styles.distBadgeText,
-                              shopInfo.isWithin300m ? styles.distValid : styles.distInvalid
-                            ]}
-                          >
-                            {shopInfo.isWithin300m ? '🟢' : '🔴'} {formatDistance(shopInfo.distMeters)}{' '}
-                            ({shopInfo.isWithin300m ? 'Within 300m' : '>300m'})
-                          </Text>
-                          <Text style={styles.prepTimeBadge}>• ⏳ {shopInfo.prepTime}</Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.rowRight}>
-                        <Text style={styles.priceText}>₹{shopInfo.price}</Text>
-
-                        {/* Stepper or Add button */}
-                        {!shopInfo.isAvailable ? (
-                          <View style={[styles.orderBtn, styles.orderBtnDisabled]}>
-                            <Text style={styles.orderBtnText}>Sold Out</Text>
-                          </View>
-                        ) : !shopInfo.isWithin300m ? (
-                          <TouchableOpacity
-                            style={[styles.orderBtn, styles.orderBtnDisabled]}
-                            onPress={() =>
-                              handleAddToCart(
-                                shopInfo.shopObj,
-                                shopInfo.itemObj,
-                                shopInfo.isWithin300m,
-                                shopInfo.distMeters
-                              )
-                            }
-                          >
-                            <Text style={styles.orderBtnText}>🚫 &gt;300m</Text>
-                          </TouchableOpacity>
-                        ) : qty > 0 ? (
-                          <View style={styles.stepperContainer}>
-                            <TouchableOpacity
-                              style={styles.stepperBtn}
-                              onPress={() => updateCartQty(shopInfo.itemId, -1)}
-                            >
-                              <Text style={styles.stepperBtnText}>-</Text>
-                            </TouchableOpacity>
-                            <Text style={styles.stepperQty}>{qty}</Text>
-                            <TouchableOpacity
-                              style={styles.stepperBtn}
-                              onPress={() => updateCartQty(shopInfo.itemId, 1)}
-                            >
-                              <Text style={styles.stepperBtnText}>+</Text>
-                            </TouchableOpacity>
-                          </View>
-                        ) : (
-                          <TouchableOpacity
-                            style={styles.orderBtn}
-                            onPress={() =>
-                              handleAddToCart(
-                                shopInfo.shopObj,
-                                shopInfo.itemObj,
-                                shopInfo.isWithin300m,
-                                shopInfo.distMeters
-                              )
-                            }
-                          >
-                            <Text style={styles.orderBtnText}>+ Add</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    </View>
-                  );
-                })}
+            ) : (
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyIcon}>🍽️</Text>
+                <Text style={styles.emptyTitle}>No dishes found</Text>
+                <Text style={styles.emptySub}>Try searching for another dish or clearing filters.</Text>
               </View>
-            </View>
-          )}
-        />
-      ) : (
-        <FlatList
-          data={campusCanteens}
-          keyExtractor={shop => shop.id}
-          contentContainerStyle={[styles.listPadding, cartTotalItems > 0 && { paddingBottom: 110 }]}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyEmoji}>🏪</Text>
-              <Text style={styles.emptyTitle}>No Canteens Registered</Text>
-              <Text style={styles.emptySub}>Switch to Canteen POS to register your first campus stall.</Text>
-            </View>
+            )
           }
-          renderItem={({ item: shop }) => {
-            const distMeters = getDistanceInMeters(userLocation.lat, userLocation.lng, shop.lat, shop.lng);
-            const isWithin300m = distMeters <= MAX_ORDER_DISTANCE_METERS;
+          renderItem={({ item: group }) => {
+            const primaryShop = group.canteens[0];
+            if (!primaryShop) return null;
+
+            const cartQty = getItemCartQty(primaryShop.shopId, primaryShop.itemId);
+            const hasMultipleStalls = group.canteens.length > 1;
+            const isExpanded = expandedDish === group.name;
 
             return (
-              <View style={styles.shopCard}>
-                <Image source={{ uri: shop.banner }} style={styles.shopBanner} />
-                <View style={styles.shopContent}>
-                  <View style={styles.shopHeaderRow}>
-                    <Text style={styles.shopTitle}>{shop.name}</Text>
-                    <Text style={styles.ratingBadge}>⭐ {shop.rating || 5.0}</Text>
+              <View style={styles.dishCard}>
+                {/* Main Card Row */}
+                <View style={styles.dishMainRow}>
+                  {/* Dish Image with Veg Dot Badge */}
+                  <View style={styles.imageWrap}>
+                    <Image source={{ uri: group.image }} style={styles.dishImg} resizeMode="cover" />
+                    <View style={[styles.vegDotBadge, group.isVeg ? styles.vegBadgeGreen : styles.vegBadgeRed]}>
+                      <View style={[styles.vegDotInner, group.isVeg ? styles.vegDotGreen : styles.vegDotRed]} />
+                    </View>
                   </View>
 
-                  <View style={styles.shopMetaRow}>
-                    <Text style={styles.shopSub}>📍 {shop.location}</Text>
-                    <Text style={[styles.distBadgeText, isWithin300m ? styles.distValid : styles.distInvalid]}>
-                      • {formatDistance(distMeters)} ({isWithin300m ? 'Within 300m' : '>300m'})
+                  {/* Dish Details */}
+                  <View style={styles.dishDetails}>
+                    <View style={styles.titlePriceRow}>
+                      <Text style={styles.dishTitle} numberOfLines={1}>
+                        {group.name}
+                      </Text>
+                      <Text style={styles.dishPrice}>₹{primaryShop.price}</Text>
+                    </View>
+
+                    <Text style={styles.dishStallMeta} numberOfLines={1}>
+                      {primaryShop.shopName} • ⏳ {primaryShop.prepTime}
                     </Text>
+
+                    {Boolean(group.description) && (
+                      <Text style={styles.dishDesc} numberOfLines={1}>
+                        {group.description}
+                      </Text>
+                    )}
+
+                    {/* Multiple Stalls Link */}
+                    {hasMultipleStalls && (
+                      <TouchableOpacity
+                        style={styles.expandStallsBtn}
+                        onPress={() => setExpandedDish(isExpanded ? null : group.name)}
+                      >
+                        <Text style={styles.expandStallsText}>
+                          {isExpanded
+                            ? 'Hide other stalls ▲'
+                            : `Also at ${group.canteens.length - 1} other counter${group.canteens.length > 2 ? 's' : ''} ▼`}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
 
-                  <View style={styles.shopMenuPreview}>
-                    <Text style={styles.previewTitle}>LIVE MENU ITEMS ({(shop.menu || []).length})</Text>
-                    {(shop.menu || []).map(item => {
-                      const qty = getItemCartQty(shop.id, item.id);
+                  {/* Right Action: Add button or Stepper */}
+                  <View style={styles.dishActionCol}>
+                    {!primaryShop.isAvailable ? (
+                      <View style={styles.soldOutBadge}>
+                        <Text style={styles.soldOutText}>Sold Out</Text>
+                      </View>
+                    ) : cartQty > 0 ? (
+                      <View style={styles.qtyStepper}>
+                        <TouchableOpacity
+                          style={styles.stepperBtn}
+                          onPress={() => updateCartQty(primaryShop.itemId, -1)}
+                        >
+                          <Text style={styles.stepperBtnText}>−</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.stepperQtyText}>{cartQty}</Text>
+                        <TouchableOpacity
+                          style={styles.stepperBtn}
+                          onPress={() => updateCartQty(primaryShop.itemId, 1)}
+                        >
+                          <Text style={styles.stepperBtnText}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.addBtn}
+                        onPress={() =>
+                          handleAddToCart(
+                            primaryShop.shopObj,
+                            primaryShop.itemObj,
+                            primaryShop.isWithin300m,
+                            primaryShop.distMeters
+                          )
+                        }
+                      >
+                        <Text style={styles.addBtnText}>+ Add</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
 
+                {/* Expanded Alternate Stalls List */}
+                {isExpanded && hasMultipleStalls && (
+                  <View style={styles.altStallsList}>
+                    {group.canteens.slice(1).map(alt => {
+                      const altQty = getItemCartQty(alt.shopId, alt.itemId);
                       return (
-                        <View key={item.id} style={styles.previewRow}>
+                        <View key={alt.shopId} style={styles.altStallRow}>
                           <View style={{ flex: 1 }}>
-                            <Text style={[styles.previewItemName, !item.isAvailable && styles.lineThrough]}>
-                              {item.isVeg ? '🟢 ' : '🔴 '}
-                              {item.name}
+                            <Text style={styles.altStallName}>{alt.shopName}</Text>
+                            <Text style={styles.altStallMeta}>
+                              {formatDistance(alt.distMeters)} • ⏳ {alt.prepTime}
                             </Text>
-                            <Text style={styles.previewSubInfo}>⏳ {item.prepTime || '5 mins'}</Text>
                           </View>
-
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <Text style={styles.previewPrice}>₹{item.price}</Text>
-
-                            {!item.isAvailable ? (
-                              <Text style={styles.soldOutBadge}>Sold Out</Text>
-                            ) : !isWithin300m ? (
-                              <Text style={styles.farBadge}>&gt;300m</Text>
-                            ) : qty > 0 ? (
-                              <View style={styles.stepperContainer}>
-                                <TouchableOpacity
-                                  style={styles.stepperBtn}
-                                  onPress={() => updateCartQty(item.id, -1)}
-                                >
-                                  <Text style={styles.stepperBtnText}>-</Text>
-                                </TouchableOpacity>
-                                <Text style={styles.stepperQty}>{qty}</Text>
-                                <TouchableOpacity
-                                  style={styles.stepperBtn}
-                                  onPress={() => updateCartQty(item.id, 1)}
-                                >
-                                  <Text style={styles.stepperBtnText}>+</Text>
-                                </TouchableOpacity>
-                              </View>
-                            ) : (
-                              <TouchableOpacity
-                                style={styles.miniOrderBtn}
-                                onPress={() => handleAddToCart(shop, item, isWithin300m, distMeters)}
-                              >
-                                <Text style={styles.miniOrderText}>+ Add</Text>
+                          <Text style={styles.altStallPrice}>₹{alt.price}</Text>
+                          {altQty > 0 ? (
+                            <View style={styles.altStepper}>
+                              <TouchableOpacity onPress={() => updateCartQty(alt.itemId, -1)}>
+                                <Text style={styles.altStepperText}>−</Text>
                               </TouchableOpacity>
-                            )}
-                          </View>
+                              <Text style={styles.altQtyText}>{altQty}</Text>
+                              <TouchableOpacity onPress={() => updateCartQty(alt.itemId, 1)}>
+                                <Text style={styles.altStepperText}>+</Text>
+                              </TouchableOpacity>
+                            </View>
+                          ) : (
+                            <TouchableOpacity
+                              style={styles.altAddBtn}
+                              onPress={() => handleAddToCart(alt.shopObj, alt.itemObj, alt.isWithin300m, alt.distMeters)}
+                            >
+                              <Text style={styles.altAddText}>+ Add</Text>
+                            </TouchableOpacity>
+                          )}
                         </View>
                       );
                     })}
                   </View>
+                )}
+              </View>
+            );
+          }}
+        />
+      ) : (
+        /* Stalls View */
+        <FlatList
+          data={campusCanteens}
+          keyExtractor={item => item.id}
+          contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: 110 }]}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            <View style={styles.emptyWrap}>
+              <View style={styles.emptyIconCircle}>
+                <Text style={styles.emptyIcon}>🏪</Text>
+              </View>
+              <Text style={styles.emptyTitle}>No Canteen Stalls Registered</Text>
+              <Text style={styles.emptySub}>
+                Registered food counters at Silver Oak University will appear here live as vendors sign up.
+              </Text>
+            </View>
+          }
+          renderItem={({ item: shop }) => {
+            const distMeters = getDistanceInMeters(userLocation?.lat ?? 23.0917, userLocation?.lng ?? 72.5349, shop.lat, shop.lng);
+            const isOpen = shop.status === 'Open';
+
+            return (
+              <View style={styles.stallCard}>
+                <Image source={{ uri: shop.banner }} style={styles.stallBanner} resizeMode="cover" />
+                <View style={styles.stallBody}>
+                  <View style={styles.stallTitleRow}>
+                    <Text style={styles.stallName}>{shop.name}</Text>
+                    <View style={[styles.stallStatusBadge, isOpen ? styles.statusOpen : styles.statusClosed]}>
+                      <Text style={[styles.stallStatusText, isOpen ? styles.statusTextOpen : styles.statusTextClosed]}>
+                        {isOpen ? '🟢 Open' : '🔴 Closed'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={styles.stallLocation}>📍 {shop.location}</Text>
+
+                  <View style={styles.stallMetaRow}>
+                    <Text style={styles.stallMetaChip}>⏳ {shop.avgWaitMins || 5}m wait</Text>
+                    <Text style={styles.stallMetaChip}>👥 {shop.currentQueue || 0} in queue</Text>
+                    <Text style={styles.stallMetaChip}>📍 {formatDistance(distMeters)}</Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.viewStallMenuBtn}
+                    onPress={() => {
+                      setSearchQuery(shop.name);
+                      setActiveTab('dishes');
+                    }}
+                  >
+                    <Text style={styles.viewStallMenuText}>
+                      Browse Menu ({shop.menu ? shop.menu.length : 0} items) ➔
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             );
@@ -407,35 +461,24 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
         />
       )}
 
-      {/* Active Order Floating Banner with Live Prep Countdown */}
-      {(() => {
-        const activeOrderObj = (orders || []).find(o => o.id === activeOrderId);
-        return <ActiveOrderFloatingBanner activeOrder={activeOrderObj} onOpenPassModal={onOpenPassModal} />;
-      })()}
-
-      {/* Floating Bottom Cart Bar */}
+      {/* Floating Cart Checkout Bar */}
       {cartTotalItems > 0 && (
-        <View style={styles.floatingCartBar}>
-          <View style={styles.cartInfoWrapper}>
-            <View style={styles.cartBadgeCircle}>
-              <Text style={styles.cartBadgeText}>{cartTotalItems}</Text>
+        <View style={styles.floatingCartDock}>
+          <TouchableOpacity style={styles.floatingCartPill} onPress={onOpenCartCheckout} activeOpacity={0.9}>
+            <View style={styles.cartPillLeft}>
+              <View style={styles.cartIconBadge}>
+                <Text style={styles.cartIconText}>🛒</Text>
+              </View>
+              <View>
+                <Text style={styles.cartPillTitle}>{cartTotalItems} item{cartTotalItems > 1 ? 's' : ''} in cart</Text>
+                <Text style={styles.cartPillShop}>{cart.shopName}</Text>
+              </View>
             </View>
-            <View>
-              <Text style={styles.cartShopName} numberOfLines={1}>
-                {cart.shopName}
-              </Text>
-              <Text style={styles.cartTotalText}>₹{cartTotalPrice.toFixed(0)} • Total</Text>
+            <View style={styles.cartPillRight}>
+              <Text style={styles.cartPillPrice}>₹{cartTotalPrice}</Text>
+              <Text style={styles.cartPillAction}>View Cart ➔</Text>
             </View>
-          </View>
-
-          <View style={styles.cartActionButtons}>
-            <TouchableOpacity style={styles.clearCartBtn} onPress={clearCart}>
-              <Text style={styles.clearCartText}>✕</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.checkoutBarBtn} onPress={onOpenCartCheckout}>
-              <Text style={styles.checkoutBarText}>Review & Order 🚀</Text>
-            </TouchableOpacity>
-          </View>
+          </TouchableOpacity>
         </View>
       )}
     </View>
@@ -443,474 +486,601 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screenContainer: {
     flex: 1,
-    backgroundColor: '#090d16',
+    backgroundColor: '#070a13',
   },
-  heroBanner: {
-    backgroundColor: 'rgba(30, 41, 59, 0.7)',
-    padding: 14,
-    borderRadius: 18,
-    margin: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+  topSection: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+    backgroundColor: '#070a13',
   },
-  heroTop: {
-    marginBottom: 8,
-  },
-  heroTitle: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  heroSub: {
-    color: '#94a3b8',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  gpsSimulatorRow: {
+  greetingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-    padding: 8,
-    borderRadius: 10,
+    justifyContent: 'space-between',
     marginBottom: 10,
   },
-  gpsLabel: {
-    color: '#06b6d4',
-    fontSize: 10,
+  greetingTitle: {
+    color: '#ffffff',
+    fontSize: 18,
     fontWeight: '800',
+    letterSpacing: -0.2,
   },
-  simBtn: {
-    backgroundColor: '#131b2e',
+  greetingSub: {
+    color: '#64748b',
+    fontSize: 11.5,
+    marginTop: 1,
+  },
+  rangePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    gap: 5,
   },
-  simBtnActive: {
-    backgroundColor: '#6366f1',
-    borderColor: '#818cf8',
+  rangePillActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderColor: 'rgba(16, 185, 129, 0.4)',
   },
-  simBtnText: {
-    color: '#ffffff',
+  rangePillAway: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderColor: 'rgba(245, 158, 11, 0.4)',
+  },
+  rangeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  rangeDotActive: {
+    backgroundColor: '#10b981',
+  },
+  rangeDotAway: {
+    backgroundColor: '#f59e0b',
+  },
+  rangeText: {
     fontSize: 10,
     fontWeight: '700',
   },
-  gpsRecalibrateBtn: {
-    backgroundColor: '#10b981',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+  rangeTextActive: {
+    color: '#10b981',
   },
-  gpsRecalibrateText: {
-    color: '#ffffff',
-    fontSize: 10,
-    fontWeight: '800',
+  rangeTextAway: {
+    color: '#f59e0b',
   },
-  searchBox: {
+  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#0f172a',
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 12,
+    height: 42,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 10,
   },
   searchIcon: {
-    fontSize: 14,
+    fontSize: 13,
     marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    color: '#f8fafc',
-    paddingVertical: 8,
-    fontSize: 13,
-  },
-  clearBtn: {
-    color: '#94a3b8',
-    fontSize: 14,
-    padding: 4,
-  },
-  chipsScroll: {
-    maxHeight: 40,
-  },
-  chipsContainer: {
-    paddingHorizontal: 12,
-    gap: 8,
-  },
-  chip: {
-    backgroundColor: '#1e293b',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  chipActive: {
-    backgroundColor: '#6366f1',
-    borderColor: '#818cf8',
-  },
-  chipText: {
-    color: '#94a3b8',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  chipTextActive: {
     color: '#ffffff',
-    fontWeight: '800',
+    fontSize: 13,
+    paddingVertical: 0,
   },
-  tabBar: {
-    flexDirection: 'row',
-    marginHorizontal: 12,
-    marginTop: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  tabBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  tabBtnActive: {
-    borderBottomColor: '#6366f1',
-  },
-  tabText: {
-    color: '#94a3b8',
+  searchClearText: {
+    color: '#64748b',
     fontSize: 12,
-    fontWeight: '700',
+    paddingHorizontal: 4,
   },
-  tabTextActive: {
-    color: '#f8fafc',
-  },
-  listPadding: {
-    padding: 12,
-    paddingBottom: 60,
-  },
-  radarCard: {
-    backgroundColor: '#131d33',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  cardHeader: {
-    marginBottom: 8,
-  },
-  tagRow: {
+  categoryList: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 2,
+    paddingBottom: 8,
   },
-  categoryTag: {
-    color: '#06b6d4',
-    fontSize: 10,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-  },
-  dietTag: {
-    color: '#94a3b8',
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  itemName: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  itemDesc: {
-    color: '#94a3b8',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  matrixBox: {
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-    borderRadius: 12,
-    padding: 8,
-    gap: 8,
-  },
-  matrixTitle: {
-    color: '#64748b',
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  matrixRow: {
-    backgroundColor: '#1a233a',
-    borderRadius: 10,
-    padding: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.04)',
-  },
-  shopInfo: {
-    flex: 1,
-    marginRight: 8,
-  },
-  shopName: {
-    color: '#f8fafc',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  shopLocationText: {
-    color: '#64748b',
-    fontSize: 10,
-    marginTop: 1,
-  },
-  distanceBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 3,
-  },
-  distBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  distValid: { color: '#10b981' },
-  distInvalid: { color: '#f43f5e' },
-  prepTimeBadge: {
-    color: '#94a3b8',
-    fontSize: 10,
-  },
-  rowRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  priceText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  orderBtn: {
-    backgroundColor: '#06b6d4',
+  catChip: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 10,
-  },
-  orderBtnDisabled: {
-    backgroundColor: '#334155',
-    opacity: 0.7,
-  },
-  orderBtnText: {
-    color: '#090d16',
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  stepperContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1e293b',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#06b6d4',
-    overflow: 'hidden',
-  },
-  stepperBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: '#06b6d4',
-  },
-  stepperBtnText: {
-    color: '#090d16',
-    fontWeight: '900',
-    fontSize: 12,
-  },
-  stepperQty: {
-    color: '#ffffff',
-    fontWeight: '800',
-    paddingHorizontal: 8,
-    fontSize: 12,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    paddingVertical: 50,
-  },
-  emptyEmoji: { fontSize: 40, marginBottom: 8 },
-  emptyTitle: { color: '#f8fafc', fontSize: 16, fontWeight: '800' },
-  emptySub: { color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 4, paddingHorizontal: 20 },
-  shopCard: {
-    backgroundColor: '#131d33',
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 14,
+    borderRadius: 18,
+    backgroundColor: '#0f172a',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  shopBanner: {
-    width: '100%',
-    height: 100,
+  catChipActive: {
+    backgroundColor: '#6366f1',
+    borderColor: '#818cf8',
   },
-  shopContent: {
-    padding: 12,
+  catChipText: {
+    color: '#94a3b8',
+    fontSize: 11.5,
+    fontWeight: '600',
   },
-  shopHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  shopTitle: {
+  catChipTextActive: {
     color: '#ffffff',
-    fontSize: 15,
     fontWeight: '800',
   },
-  ratingBadge: {
+  catDivider: {
+    width: 1,
+    height: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    marginHorizontal: 4,
+  },
+  vegFilterChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 18,
+    backgroundColor: '#0f172a',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  vegFilterChipActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    borderColor: '#10b981',
+  },
+  vegFilterText: {
+    color: '#10b981',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  fastFilterChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 18,
+    backgroundColor: '#0f172a',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  fastFilterChipActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    borderColor: '#f59e0b',
+  },
+  fastFilterText: {
     color: '#f59e0b',
     fontSize: 11,
     fontWeight: '700',
   },
-  shopMetaRow: {
+  segmentContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#0b1120',
+    borderRadius: 12,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  segmentBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderRadius: 9,
+  },
+  segmentBtnActive: {
+    backgroundColor: '#1e293b',
+  },
+  segmentText: {
+    color: '#64748b',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  segmentTextActive: {
+    color: '#f1f5f9',
+    fontWeight: '800',
+  },
+  contentList: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 90,
+  },
+  dishCard: {
+    backgroundColor: '#0f172a',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  dishMainRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginVertical: 4,
+    gap: 12,
   },
-  shopSub: {
-    color: '#94a3b8',
-    fontSize: 11,
+  imageWrap: {
+    position: 'relative',
+    width: 72,
+    height: 72,
+    borderRadius: 14,
+    overflow: 'hidden',
   },
-  shopMenuPreview: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
-    paddingTop: 8,
-    marginTop: 8,
+  dishImg: {
+    width: '100%',
+    height: '100%',
   },
-  previewTitle: {
-    color: '#64748b',
-    fontSize: 10,
-    fontWeight: '800',
-    marginBottom: 6,
+  vegDotBadge: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    width: 13,
+    height: 13,
+    borderRadius: 3,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  previewRow: {
+  vegBadgeGreen: {
+    borderColor: '#10b981',
+  },
+  vegBadgeRed: {
+    borderColor: '#ef4444',
+  },
+  vegDotInner: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+  },
+  vegDotGreen: {
+    backgroundColor: '#10b981',
+  },
+  vegDotRed: {
+    backgroundColor: '#ef4444',
+  },
+  dishDetails: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  titlePriceRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.04)',
+    gap: 6,
   },
-  previewItemName: {
-    color: '#cbd5e1',
-    fontSize: 12,
+  dishTitle: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '800',
+    flex: 1,
+  },
+  dishPrice: {
+    color: '#10b981',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  dishStallMeta: {
+    color: '#94a3b8',
+    fontSize: 11,
     fontWeight: '600',
+    marginTop: 2,
   },
-  previewSubInfo: {
+  dishDesc: {
     color: '#64748b',
-    fontSize: 10,
-    marginTop: 1,
+    fontSize: 10.5,
+    marginTop: 2,
+    lineHeight: 14,
   },
-  previewPrice: {
-    color: '#f8fafc',
-    fontSize: 12,
+  expandStallsBtn: {
+    marginTop: 4,
+  },
+  expandStallsText: {
+    color: '#818cf8',
+    fontSize: 10,
     fontWeight: '700',
   },
-  miniOrderBtn: {
-    backgroundColor: '#06b6d4',
-    paddingHorizontal: 10,
+  dishActionCol: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addBtn: {
+    backgroundColor: '#6366f1',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+    shadowColor: '#6366f1',
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  addBtnText: {
+    color: '#ffffff',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+  qtyStepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#6366f1',
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  stepperBtn: {
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+  },
+  stepperBtnText: {
+    color: '#a5b4fc',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  stepperQtyText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '800',
+    paddingHorizontal: 4,
+  },
+  soldOutBadge: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  soldOutText: {
+    color: '#f87171',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  altStallsList: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  altStallRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    gap: 8,
+  },
+  altStallName: {
+    color: '#e2e8f0',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  altStallMeta: {
+    color: '#64748b',
+    fontSize: 10,
+  },
+  altStallPrice: {
+    color: '#10b981',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  altAddBtn: {
+    backgroundColor: 'rgba(99, 102, 241, 0.2)',
+    borderColor: '#6366f1',
+    borderWidth: 1,
+    paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
   },
-  miniOrderText: {
-    color: '#090d16',
+  altAddText: {
+    color: '#a5b4fc',
     fontSize: 10,
+    fontWeight: '800',
+  },
+  altStepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  altStepperText: {
+    color: '#818cf8',
+    fontSize: 12,
     fontWeight: '900',
   },
-  soldOutBadge: {
-    color: '#64748b',
-    fontSize: 10,
-    fontStyle: 'italic',
-  },
-  farBadge: {
-    color: '#f43f5e',
-    fontSize: 10,
+  altQtyText: {
+    color: '#ffffff',
+    fontSize: 11,
     fontWeight: '700',
   },
-  lineThrough: {
-    textDecorationLine: 'line-through',
-    opacity: 0.5,
+  stallCard: {
+    backgroundColor: '#0f172a',
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
-  floatingCartBar: {
-    position: 'absolute',
-    bottom: 12,
-    left: 12,
-    right: 12,
-    backgroundColor: '#1e1b4b',
-    borderRadius: 18,
+  stallBanner: {
+    width: '100%',
+    height: 100,
+  },
+  stallBody: {
     padding: 12,
+  },
+  stallTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  stallName: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '800',
+    flex: 1,
+  },
+  stallStatusBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  statusOpen: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+  },
+  statusClosed: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+  },
+  stallStatusText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  statusTextOpen: {
+    color: '#10b981',
+  },
+  statusTextClosed: {
+    color: '#ef4444',
+  },
+  stallLocation: {
+    color: '#64748b',
+    fontSize: 11,
+    marginBottom: 8,
+  },
+  stallMetaRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 10,
+  },
+  stallMetaChip: {
+    color: '#94a3b8',
+    fontSize: 10,
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    fontWeight: '600',
+  },
+  viewStallMenuBtn: {
+    backgroundColor: '#1e293b',
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#6366f1',
-    shadowColor: '#6366f1',
-    shadowOffset: { width: 0, height: 4 },
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  viewStallMenuText: {
+    color: '#818cf8',
+    fontSize: 11.5,
+    fontWeight: '800',
+  },
+  emptyWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  emptyIcon: {
+    fontSize: 32,
+    marginBottom: 8,
+  },
+  emptyTitle: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  emptySub: {
+    color: '#64748b',
+    fontSize: 12,
+    marginTop: 4,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+    lineHeight: 17,
+  },
+  emptyIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.25)',
+  },
+  emptyVendorBox: {
+    backgroundColor: '#0c1527',
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 20,
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+    alignItems: 'center',
+  },
+  emptyVendorTitle: {
+    color: '#38bdf8',
+    fontSize: 13,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  emptyVendorSub: {
+    color: '#94a3b8',
+    fontSize: 11.5,
+    lineHeight: 16,
+    textAlign: 'center',
+  },
+  floatingCartDock: {
+    position: 'absolute',
+    bottom: 8,
+    left: 16,
+    right: 16,
+  },
+  floatingCartPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#10b981',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    shadowColor: '#10b981',
     shadowOpacity: 0.4,
     shadowRadius: 8,
     elevation: 8,
   },
-  cartInfoWrapper: {
+  cartPillLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    flex: 1,
   },
-  cartBadgeCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#6366f1',
+  cartIconBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(0, 0, 0, 0.15)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cartBadgeText: {
-    color: '#ffffff',
-    fontWeight: '900',
-    fontSize: 12,
+  cartIconText: {
+    fontSize: 14,
   },
-  cartShopName: {
-    color: '#ffffff',
+  cartPillTitle: {
+    color: '#064e3b',
     fontSize: 12,
+    fontWeight: '900',
+  },
+  cartPillShop: {
+    color: '#065f46',
+    fontSize: 10.5,
     fontWeight: '700',
   },
-  cartTotalText: {
-    color: '#a5b4fc',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  cartActionButtons: {
+  cartPillRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
-  clearCartBtn: {
-    padding: 8,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  clearCartText: {
-    color: '#94a3b8',
-    fontWeight: '800',
-    fontSize: 12,
-  },
-  checkoutBarBtn: {
-    backgroundColor: '#10b981',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
-  },
-  checkoutBarText: {
-    color: '#ffffff',
+  cartPillPrice: {
+    color: '#064e3b',
+    fontSize: 14,
     fontWeight: '900',
-    fontSize: 12,
+  },
+  cartPillAction: {
+    backgroundColor: 'rgba(0, 0, 0, 0.15)',
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '800',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
 });

@@ -1,7 +1,7 @@
-import { Platform } from 'react-native';
+import { Platform, Vibration } from 'react-native';
 
-// Universal Web Audio API Synthesizer for chimes and buzzer alerts
-// Works seamlessly in browsers (Expo Web) and gracefully handles environments without window.AudioContext
+// Universal Web Audio API Synthesizer & Speech Announcer for chimes and buzzer alerts
+// Works seamlessly in mobile (Vibration + fallback) and web browsers (Web Audio + Speech Synthesis)
 
 let audioCtx = null;
 
@@ -54,15 +54,21 @@ const playTone = (freq, durationMs, type = 'sine', gainVal = 0.15, delayMs = 0) 
  * 1. Order Placed Chime (Pleasant upward 3-tone chime)
  */
 export const playOrderPlacedSound = () => {
+  try {
+    Vibration.vibrate(100);
+  } catch (e) {}
   playTone(523.25, 120, 'sine', 0.15, 0);    // C5
   playTone(659.25, 120, 'sine', 0.18, 120);  // E5
   playTone(783.99, 250, 'sine', 0.22, 240);  // G5
 };
 
 /**
- * 2. Order Ready Buzzer (Vibrant dual-frequency attention buzzer)
+ * 2. Order Ready Buzzer (Vibrant dual-frequency attention buzzer with vibration)
  */
 export const playOrderReadyBuzzer = () => {
+  try {
+    Vibration.vibrate([0, 180, 80, 260]);
+  } catch (e) {}
   // First pulse
   playTone(880, 160, 'triangle', 0.25, 0);
   playTone(1174.66, 160, 'sine', 0.2, 0);
@@ -76,14 +82,44 @@ export const playOrderReadyBuzzer = () => {
  * 3. New POS Ticket Chime (Kitchen alert bell)
  */
 export const playNewTicketChime = () => {
+  try {
+    Vibration.vibrate([0, 120, 60, 150]);
+  } catch (e) {}
   playTone(659.25, 100, 'sine', 0.2, 0);
   playTone(987.77, 300, 'triangle', 0.22, 100);
 };
 
 /**
- * 4. Error / Warning Beep
+ * 4. Voice Announcer for Ready Tokens (TTS callout for canteen counters)
+ */
+export const announceTokenReady = (tokenNumber, shopName = 'Central Canteen') => {
+  // First trigger loud buzzer + vibration
+  playOrderReadyBuzzer();
+
+  // If Web Speech API is supported, speak the token number aloud!
+  try {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const cleanToken = String(tokenNumber || '').replace(/[^\d]/g, '') || tokenNumber;
+      const text = `Attention please! Token number ${cleanToken} is ready for pickup at ${shopName}`;
+      const utterance = new window.SpeechSynthesisUtterance(text);
+      utterance.rate = 0.95;
+      utterance.pitch = 1.05;
+      utterance.lang = 'en-IN';
+      window.speechSynthesis.speak(utterance);
+    }
+  } catch (err) {
+    console.log('TTS announce note:', err);
+  }
+};
+
+/**
+ * 5. Error / Warning Beep
  */
 export const playWarningBeep = () => {
+  try {
+    Vibration.vibrate(250);
+  } catch (e) {}
   playTone(330, 200, 'sawtooth', 0.12, 0);
   playTone(260, 250, 'sawtooth', 0.12, 180);
 };
+

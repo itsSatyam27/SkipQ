@@ -9,14 +9,17 @@ export default function ActiveOrderFloatingBanner({ activeOrder, onOpenPassModal
     if (!activeOrder) return;
 
     // Calculate remaining prep time
-    const prepMinutes = activeOrder.estimatedMinutes || 12;
-    const createdAt = new Date(activeOrder.createdAt || activeOrder.orderTime || Date.now()).getTime();
+    const prepMinutes = activeOrder.estimatedPrepMins || activeOrder.estimatedMinutes || 6;
+    const createdAt = new Date(activeOrder.timestamp || activeOrder.createdAt || activeOrder.orderTime || Date.now()).getTime();
     const targetTime = createdAt + prepMinutes * 60 * 1000;
 
     const interval = setInterval(() => {
       const remaining = Math.max(0, Math.floor((targetTime - Date.now()) / 1000));
       setTimeLeftSec(remaining);
     }, 1000);
+
+    const initial = Math.max(0, Math.floor((targetTime - Date.now()) / 1000));
+    setTimeLeftSec(initial);
 
     return () => clearInterval(interval);
   }, [activeOrder]);
@@ -48,7 +51,7 @@ export default function ActiveOrderFloatingBanner({ activeOrder, onOpenPassModal
   }
 
   const isReady = activeOrder.orderStatus === 'Ready for Pickup' || activeOrder.orderStatus === 'Ready';
-  const isInPrep = activeOrder.orderStatus === 'In-Prep' || activeOrder.orderStatus === 'In Prep';
+  const isInPrep = activeOrder.orderStatus === 'Preparing' || activeOrder.orderStatus === 'In-Prep' || activeOrder.orderStatus === 'In Prep';
 
   const formatTime = (totalSec) => {
     const mins = Math.floor(totalSec / 60);

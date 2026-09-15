@@ -9,15 +9,29 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
-  Alert
+  Alert,
+  Image,
+  Linking,
+  Switch
 } from 'react-native';
 import { AppContext } from '../context/AppContext';
 
+const BREAK_SLOTS = [
+  { id: 'ASAP', label: '⚡ ASAP', sub: 'Cook Now' },
+  { id: '11:15 AM - Morning Recess', label: '🔔 11:15 AM', sub: 'Recess Break' },
+  { id: '01:10 PM - Lunch Break', label: '🍱 01:10 PM', sub: 'Lunch Break' },
+  { id: '03:45 PM - Evening Break', label: '☕ 03:45 PM', sub: 'Evening Tea' },
+];
+
 export default function OrderCheckoutModal({ visible, target, onClose, onOrderPlaced }) {
-  const { placeOrder, walletBalance, cart, userProfile } = useContext(AppContext);
+  const { placeOrder, walletBalance, cart, userProfile, canteens, rushModeActive } = useContext(AppContext);
 
   const [paymentMethod, setPaymentMethod] = useState('PhonePe');
   const [specialInstructions, setInstructions] = useState('');
+  const [pickupSlot, setPickupSlot] = useState('ASAP');
+  const [isGroupOrder, setIsGroupOrder] = useState(false);
+  const [groupCollectorName, setGroupCollectorName] = useState('');
+  const [facultyRoomNote, setFacultyRoomNote] = useState(userProfile?.facultyRoomNote || '');
 
   useEffect(() => {
     if (cart.specialInstructions) {
@@ -45,19 +59,29 @@ export default function OrderCheckoutModal({ visible, target, onClose, onOrderPl
   const isCash = paymentMethod === 'Cash';
   const isDepositAvailable = walletBalance >= deposit10Percent;
 
+  const currentShopObj = canteens?.find(c => c.id === shopId) || {};
+  const shopUpiId = currentShopObj.upiId || 'skipq.canteen@upi';
+  const upiUri = `upi://pay?pa=${shopUpiId}&pn=${encodeURIComponent(shopName)}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent('SkipQ Order')}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(upiUri)}&bgcolor=ffffff&color=0f172a&margin=8`;
+
   const handleConfirmOrder = async () => {
     try {
+      const isFaculty = userProfile?.userType === 'faculty';
       const orderData = {
         shopId,
         shopName,
-        buyerName: userProfile?.name || 'Campus Student',
+        buyerName: userProfile?.name || (isFaculty ? 'University Faculty' : 'Campus Student'),
         buyerRollNo: userProfile?.rollNo || '',
         buyerPhone: userProfile?.phone || '',
         items,
         specialInstructions: specialInstructions.trim(),
         totalAmount,
         paymentMethod,
-        paymentStatus: isCash ? 'PENDING_CASH' : 'PAID'
+        paymentStatus: isCash ? 'PENDING_CASH' : 'PAID',
+        pickupSlot,
+        isFacultyExpress: isFaculty,
+        facultyRoomNote: isFaculty ? facultyRoomNote.trim() : '',
+        groupCollectorName: isGroupOrder ? groupCollectorName.trim() : ''
       };
 
       const newOrder = await placeOrder(orderData);
@@ -94,13 +118,88 @@ export default function OrderCheckoutModal({ visible, target, onClose, onOrderPl
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false}>
-            {/* Student Ordering Identity */}
+            {/* High Canteen Rush Mode Alert */}
+            {rushModeActive && (
+              <View style={styles.rushBanner}>
+                <Text style={styles.rushBannerTitle}>🔥 HIGH CANTEEN RUSH ACTIVE</Text>
+                <Text style={styles.rushBannerSub}>
+                  Kitchen is experiencing surge volume. Estimated prep times have a +10m buffer.
+                </Text>
+              </View>
+            )}
+
+            {/* Student / Faculty Ordering Identity */}
             <View style={styles.studentCard}>
-              <Text style={styles.studentLabel}>ORDERING AS:</Text>
+              <View style={styles.studentHeaderRow}>
+                <Text style={styles.studentLabel}>
+                  {userProfile?.userType === 'faculty' ? 'STAFF / FACULTY ACCOUNT' : 'STUDENT ACCOUNT'}
+                </Text>
+                {userProfile?.userType === 'faculty' && (
+                  <View style={styles.facultyExpressBadge}>
+                    <Text style={styles.facultyExpressBadgeText}>⭐ EXPRESS PRIORITY</Text>
+                  </View>
+                )}
+              </View>
               <Text style={styles.studentName}>
-                👤 {userProfile?.name || 'Campus Student'}{' '}
+                👤 {userProfile?.name || 'Campus Member'}{' '}
                 {userProfile?.rollNo ? `• ID: ${userProfile.rollNo}` : ''}
               </Text>
+            </View>
+
+            {/* Faculty Room Delivery Note */}
+            {userProfile?.userType === 'faculty' && (
+              <View style={styles.facultyDeskBox}>
+                <Text style={styles.facultyDeskLabel}>🏫 STAFF ROOM / DEPARTMENT DELIVERY (OPTIONAL)</Text>
+                <TextInput
+                  style={styles.facultyDeskInput}
+                  placeholder="e.g. Block A, Staff Room 204 or Express Pickup"
+                  placeholderTextColor="#a78bfa"
+                  value={facultyRoomNote}
+                  onChangeText={setFacultyRoomNote}
+                />
+              </View>
+            )}
+
+            {/* Pre-Order Break Slot Selector */}
+            <Text style={styles.sectionLabel}>⏰ PICKUP TIMING (BREAK SLOTS)</Text>
+            <View style={styles.slotGrid}>
+              {BREAK_SLOTS.map(slot => (
+                <TouchableOpacity
+                  key={slot.id}
+                  style={[styles.slotCard, pickupSlot === slot.id && styles.slotCardActive]}
+                  onPress={() => setPickupSlot(slot.id)}
+                >
+                  <Text style={[styles.slotCardTitle, pickupSlot === slot.id && styles.slotCardTitleActive]}>
+                    {slot.label}
+                  </Text>
+                  <Text style={styles.slotCardSub}>{slot.sub}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Roommate / Group Order Option */}
+            <View style={styles.groupOrderCard}>
+              <View style={styles.groupOrderRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.groupOrderTitle}>👥 Roommate / Group Pickup</Text>
+                  <Text style={styles.groupOrderSub}>Let a friend or roommate collect this order</Text>
+                </View>
+                <Switch
+                  value={isGroupOrder}
+                  onValueChange={setIsGroupOrder}
+                  trackColor={{ false: '#334155', true: '#0ea5e9' }}
+                  thumbColor={isGroupOrder ? '#ffffff' : '#94a3b8'}
+                />
+              </View>
+              {isGroupOrder && (
+                <TextInput
+                  style={styles.collectorInput}
+                  placeholder="Friend's Name & Room (e.g. Yash - Room 304)"
+                  placeholderTextColor="#64748b"
+                  value={groupCollectorName}
+                  onChangeText={setGroupCollectorName}
+                />
+              )}
             </View>
 
             {/* Order Items Breakdown */}
@@ -155,6 +254,55 @@ export default function OrderCheckoutModal({ visible, target, onClose, onOrderPl
                 </TouchableOpacity>
               ))}
             </View>
+
+            {/* Live Dynamic UPI QR Box for Digital Payments */}
+            {!isCash && (
+              <View style={styles.upiQrBox}>
+                <View style={styles.qrHeaderRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.qrHeaderTitle}>📱 Scan & Pay with {paymentMethod}</Text>
+                    <Text style={styles.qrHeaderSub}>Works with any UPI app on student phone</Text>
+                  </View>
+                  <View style={styles.liveUpiBadge}>
+                    <Text style={styles.liveUpiBadgeText}>⚡ LIVE UPI</Text>
+                  </View>
+                </View>
+
+                <View style={styles.qrImageContainer}>
+                  <Image
+                    source={{ uri: qrUrl }}
+                    style={styles.qrCodeImage}
+                    resizeMode="contain"
+                  />
+                </View>
+
+                <View style={styles.upiMetaBox}>
+                  <Text style={styles.upiIdDisplay}>
+                    Payee VPA: <Text style={styles.upiIdBold}>{shopUpiId}</Text>
+                  </Text>
+                  <Text style={styles.upiTotalDisplay}>
+                    Amount: <Text style={styles.upiAmountBold}>₹{totalAmount}</Text>
+                  </Text>
+                </View>
+
+                {Platform.OS !== 'web' ? (
+                  <TouchableOpacity
+                    style={styles.openAppBtn}
+                    onPress={() => {
+                      Linking.openURL(upiUri).catch(() => {
+                        Alert.alert('Notice', 'Scan the QR code directly using your camera or UPI app.');
+                      });
+                    }}
+                  >
+                    <Text style={styles.openAppBtnText}>Pay via {paymentMethod} App ↗</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.webQrHint}>
+                    📲 Point your phone camera or any UPI scanner at this screen to pay
+                  </Text>
+                )}
+              </View>
+            )}
 
             {/* 10% Deposit Warning for Cash */}
             {isCash && (
@@ -393,4 +541,235 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
   },
+  upiQrBox: {
+    backgroundColor: '#131d33',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.25)',
+    alignItems: 'center',
+  },
+  qrHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginBottom: 10,
+  },
+  qrHeaderTitle: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  qrHeaderSub: {
+    color: '#94a3b8',
+    fontSize: 10,
+    marginTop: 1,
+  },
+  liveUpiBadge: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  liveUpiBadgeText: {
+    color: '#10b981',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  qrImageContainer: {
+    backgroundColor: '#ffffff',
+    padding: 10,
+    borderRadius: 14,
+    marginVertical: 8,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  qrCodeImage: {
+    width: 150,
+    height: 150,
+  },
+  upiMetaBox: {
+    backgroundColor: '#0b1120',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    width: '100%',
+    alignItems: 'center',
+    marginVertical: 6,
+  },
+  upiIdDisplay: {
+    color: '#94a3b8',
+    fontSize: 11,
+  },
+  upiIdBold: {
+    color: '#06b6d4',
+    fontWeight: '800',
+  },
+  upiTotalDisplay: {
+    color: '#cbd5e1',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  upiAmountBold: {
+    color: '#10b981',
+    fontWeight: '900',
+    fontSize: 13,
+  },
+  openAppBtn: {
+    backgroundColor: '#6366f1',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    marginTop: 6,
+    width: '100%',
+    alignItems: 'center',
+  },
+  openAppBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  webQrHint: {
+    color: '#64748b',
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  rushBanner: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    padding: 10,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  rushBannerTitle: {
+    color: '#f59e0b',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  rushBannerSub: {
+    color: '#fde68a',
+    fontSize: 11,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  studentHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  facultyExpressBadge: {
+    backgroundColor: 'rgba(168, 85, 247, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#c084fc',
+  },
+  facultyExpressBadgeText: {
+    color: '#e9d5ff',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  facultyDeskBox: {
+    backgroundColor: 'rgba(147, 51, 234, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(192, 132, 252, 0.3)',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 12,
+  },
+  facultyDeskLabel: {
+    color: '#c084fc',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  facultyDeskInput: {
+    backgroundColor: '#0f172a',
+    color: '#f3e8ff',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(192, 132, 252, 0.25)',
+  },
+  slotGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  slotCard: {
+    flexBasis: '48%',
+    backgroundColor: '#131d33',
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  slotCardActive: {
+    borderColor: '#38bdf8',
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+  },
+  slotCardTitle: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  slotCardTitleActive: {
+    color: '#38bdf8',
+  },
+  slotCardSub: {
+    color: '#64748b',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  groupOrderCard: {
+    backgroundColor: '#131d33',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  groupOrderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  groupOrderTitle: {
+    color: '#f8fafc',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  groupOrderSub: {
+    color: '#64748b',
+    fontSize: 10,
+    marginTop: 1,
+  },
+  collectorInput: {
+    backgroundColor: '#0b1120',
+    color: '#f8fafc',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+    marginTop: 8,
+  },
 });
+

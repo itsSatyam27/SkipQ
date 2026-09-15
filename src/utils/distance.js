@@ -38,4 +38,28 @@ export function findClosestUniversity(userLat, userLng, universities) {
   return { university: closest, distanceMeters: minDistance };
 }
 
+export function sortUniversitiesByDistance(userLat, userLng, universities) {
+  if (!universities || universities.length === 0) return [];
+  if (!userLat || !userLng) {
+    return universities.map((u, idx) => ({
+      ...u,
+      distanceMeters: null,
+      distanceFormatted: 'Location pending',
+      isClosest: idx === 0
+    }));
+  }
+
+  const mapped = universities.map(u => {
+    const dist = getDistanceInMeters(userLat, userLng, u.lat, u.lng);
+    return {
+      ...u,
+      distanceMeters: dist,
+      distanceFormatted: formatDistance(dist)
+    };
+  });
+
+  mapped.sort((a, b) => a.distanceMeters - b.distanceMeters);
+  return mapped.map((u, idx) => ({ ...u, isClosest: idx === 0 }));
+}
+
 export const MAX_ORDER_DISTANCE_METERS = 300;

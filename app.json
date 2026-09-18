@@ -16,6 +16,8 @@
     },
     "android": {
       "package": "com.skipq.app",
+      "targetSdkVersion": 34,
+      "compileSdkVersion": 34,
       "adaptiveIcon": {
         "backgroundColor": "#070b14",
         "foregroundImage": "./assets/android-icon-foreground.png",

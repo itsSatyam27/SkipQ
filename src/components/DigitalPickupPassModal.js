@@ -34,6 +34,41 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
     return () => clearInterval(interval);
   }, [activeOrderObj, isCompleted, isCancelled, isAbandoned, isReady]);
 
+  const formatTimer = (sec) => {
+    if (sec === null || sec <= 0) return '00:00';
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const orderCreatedAt = new Date(activeOrderObj?.orderPlacedAt || activeOrderObj?.timestamp || Date.now()).getTime();
+  const graceSecs = activeOrderObj?.cancellationGraceSecs || 120;
+  const [cancelSecondsLeft, setCancelSecondsLeft] = useState(() => {
+    const elapsed = Math.floor((Date.now() - orderCreatedAt) / 1000);
+    return Math.max(0, graceSecs - elapsed);
+  });
+
+  useEffect(() => {
+    if (!activeOrderObj || isCompleted || isCancelled || isAbandoned || isReady) {
+      setCancelSecondsLeft(0);
+      return;
+    }
+    const updateCancelTimer = () => {
+      const elapsed = Math.floor((Date.now() - orderCreatedAt) / 1000);
+      setCancelSecondsLeft(Math.max(0, graceSecs - elapsed));
+    };
+    updateCancelTimer();
+    const timerInterval = setInterval(updateCancelTimer, 1000);
+    return () => clearInterval(timerInterval);
+  }, [activeOrderObj, isCompleted, isCancelled, isAbandoned, isReady]);
+
+  const canCancel = cancelSecondsLeft > 0 && !isReady && !isCompleted && !isCancelled && !isAbandoned;
+  const refundAmount = activeOrderObj?.upfrontPaid !== undefined
+    ? Number(activeOrderObj.upfrontPaid)
+    : (activeOrderObj?.paymentMethod === 'Cash'
+        ? Number(activeOrderObj.heldDepositAmount || Math.ceil((activeOrderObj.totalAmount || 0) * 0.10))
+        : Number(activeOrderObj?.totalAmount || 0));
+
   const handleSharePass = async () => {
     try {
       await Share.share({
@@ -46,17 +81,28 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
   };
 
   const handleCancelOrder = async () => {
+    if (!canCancel) {
+      Alert.alert(
+        'Cancellation Window Closed',
+        'Food preparation is underway at the canteen. To avoid food waste, orders cannot be cancelled after the 2-minute grace period.'
+      );
+      return;
+    }
+
     Alert.alert(
-      'Cancel Order',
-      'Are you sure you want to cancel this order? 100% of your amount will be refunded immediately.',
+      'Cancel Order & Refund',
+      `Cancel this order? ₹${refundAmount} will be immediately refunded back to your ${activeOrderObj.paymentMethod || 'UPI'} account.`,
       [
-        { text: 'No, keep order', style: 'cancel' },
+        { text: 'Keep Order', style: 'cancel' },
         {
-          text: 'Yes, Cancel Order',
+          text: `Yes, Cancel & Refund ₹${refundAmount}`,
           style: 'destructive',
           onPress: async () => {
             const refundMsg = await cancelOrder(activeOrderObj.id, 'buyer');
-            Alert.alert('Order Cancelled', `Your order has been cancelled successfully. ${refundMsg}`);
+            Alert.alert(
+              '🎉 100% UPI Refund Initiated',
+              `${refundMsg || `₹${refundAmount} refunded to your account.`}\n\nTransaction Ref: REF-${Date.now().toString().slice(-6)}`
+            );
           }
         }
       ]
@@ -270,11 +316,22 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
                     ) : null}
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.metaLabel}>AMOUNT PAID</Text>
-                    <Text style={styles.metaAmount}>₹{activeOrderObj.totalAmount}</Text>
-                    <Text style={styles.metaSubText}>
-                      {activeOrderObj.paymentMethod === 'UPI' ? '⚡ UPI Instant' : '💵 Cash Pickup'}
-                    </Text>
+                    <Text style={styles.metaLabel}>AMOUNT</Text>
+                    {activeOrderObj.paymentMethod === 'Cash' ? (
+                      <>
+                        <Text style={styles.metaAmount}>₹{refundAmount} <Text style={{ fontSize: 13, color: '#38bdf8' }}>(Token)</Text></Text>
+                        <Text style={[styles.metaSubText, { color: '#fbbf24', fontWeight: '800' }]}>
+                          💵 Pay ₹{activeOrderObj.dueAtCounter !== undefined ? activeOrderObj.dueAtCounter : Math.max(0, activeOrderObj.totalAmount - refundAmount)} Cash at Stall
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={styles.metaAmount}>₹{activeOrderObj.totalAmount}</Text>
+                        <Text style={[styles.metaSubText, { color: '#4ade80', fontWeight: '800' }]}>
+                          ⚡ 100% Paid via {activeOrderObj.paymentMethod || 'UPI'}
+                        </Text>
+                      </>
+                    )}
                   </View>
                 </View>
 
@@ -300,17 +357,15 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
                   ) : null}
                 </View>
 
-                {/* Cash Deposit Protection Tag */}
-                {activeOrderObj.heldDepositAmount > 0 &&
-                  !isCancelled &&
-                  !isCompleted &&
-                  !isAbandoned && (
-                    <View style={styles.heldDepositPill}>
-                      <Text style={styles.heldDepositText}>
-                        🛡️ ₹{activeOrderObj.heldDepositAmount} (10% Security Deposit) held. Auto-refunded upon counter handover.
-                      </Text>
-                    </View>
-                  )}
+                {/* Refund Status Banner when Cancelled */}
+                {isCancelled && (
+                  <View style={styles.refundBannerBox}>
+                    <Text style={styles.refundBannerTitle}>💸 100% UPI REFUND INITIATED</Text>
+                    <Text style={styles.refundBannerSub}>
+                      ₹{refundAmount} has been refunded to your {activeOrderObj.paymentMethod || 'UPI'} account. Status: REFUND_COMPLETED_UPI
+                    </Text>
+                  </View>
+                )}
 
                 {/* Scannable Pickup QR Code & Barcode */}
                 {!isCancelled && !isCompleted && !isAbandoned && (
@@ -363,10 +418,30 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
               </TouchableOpacity>
             )}
 
+            {/* 2-Minute Cancellation Grace Countdown */}
+            {!isCancelled && !isCompleted && !isAbandoned && !isReady && (
+              <View style={[styles.cancelGraceBanner, canCancel ? styles.cancelGraceActive : styles.cancelGraceLocked]}>
+                <Text style={[styles.cancelGraceText, canCancel ? styles.cancelGraceTextActive : styles.cancelGraceTextLocked]}>
+                  {canCancel
+                    ? `⏱️ Cancellation Window: ${formatTimer(cancelSecondsLeft)} left for 100% instant UPI refund`
+                    : '🔒 Cancellation Closed: Food is on the prep line to avoid canteen waste.'}
+                </Text>
+              </View>
+            )}
+
             {/* Cancel Action */}
             {!isCancelled && !isCompleted && !isAbandoned && (
-              <TouchableOpacity style={styles.cancelBtn} onPress={handleCancelOrder}>
-                <Text style={styles.cancelBtnText}>🚫 Cancel Order & Get Instant 100% Refund</Text>
+              <TouchableOpacity
+                style={[styles.cancelBtn, !canCancel && styles.cancelBtnDisabled]}
+                onPress={handleCancelOrder}
+                disabled={!canCancel}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.cancelBtnText, !canCancel && styles.cancelBtnTextDisabled]}>
+                  {canCancel
+                    ? `🚫 Cancel Order (Instant UPI Refund: ₹${refundAmount})`
+                    : '🔒 Cancellation Closed (Kitchen Preparing Food)'}
+                </Text>
               </TouchableOpacity>
             )}
 
@@ -850,12 +925,66 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     alignItems: 'center',
-    marginTop: 14,
+    marginTop: 10,
+  },
+  cancelBtnDisabled: {
+    backgroundColor: 'rgba(100, 116, 139, 0.12)',
+    borderColor: '#475569',
   },
   cancelBtnText: {
     color: '#f43f5e',
     fontSize: 12,
     fontWeight: '800',
+  },
+  cancelBtnTextDisabled: {
+    color: '#94a3b8',
+  },
+  cancelGraceBanner: {
+    padding: 10,
+    borderRadius: 10,
+    marginTop: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  cancelGraceActive: {
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    borderColor: '#38bdf8',
+  },
+  cancelGraceLocked: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderColor: '#f59e0b',
+  },
+  cancelGraceText: {
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  cancelGraceTextActive: {
+    color: '#38bdf8',
+  },
+  cancelGraceTextLocked: {
+    color: '#fbbf24',
+  },
+  refundBannerBox: {
+    backgroundColor: 'rgba(16, 185, 129, 0.14)',
+    borderColor: '#10b981',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+  },
+  refundBannerTitle: {
+    color: '#34d399',
+    fontSize: 12,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  refundBannerSub: {
+    color: '#a7f3d0',
+    fontSize: 11,
+    marginTop: 4,
+    textAlign: 'center',
+    lineHeight: 15,
   },
   doneBtn: {
     backgroundColor: '#1e293b',

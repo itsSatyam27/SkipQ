@@ -1,0 +1,6 @@
+#!include:.gitignore
+
+# Never upload machine-specific generated Android metadata.
+/android/build/
+/android/.gradle/
+/android/local.properties

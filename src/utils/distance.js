@@ -62,4 +62,5 @@ export function sortUniversitiesByDistance(userLat, userLng, universities) {
   return mapped.map((u, idx) => ({ ...u, isClosest: idx === 0 }));
 }
 
-export const MAX_ORDER_DISTANCE_METERS = 300;
+// Campus pedestrian perimeter radius (in meters) with tolerance for indoor GPS drift
+export const MAX_ORDER_DISTANCE_METERS = 500;

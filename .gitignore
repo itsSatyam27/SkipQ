@@ -30,8 +30,11 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# local environment files -- public Expo variables are still embedded in a build,
+# so never put service credentials in them.
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo

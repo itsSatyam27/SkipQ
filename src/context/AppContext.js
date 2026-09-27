@@ -27,8 +27,11 @@ import {
   createOrderInDb,
   updateOrderStatusInDb,
   verifyOrderPinInDb,
-  cancelOrderInDb
+  confirmUpiPaymentInFirestore,
+  cancelOrderInDb,
+  abandonOrderInDb
 } from '../services/orderService';
+import { requestSellerApproval } from '../services/sellerApprovalService';
 
 export const AppContext = createContext();
 
@@ -146,9 +149,18 @@ export const AppProvider = ({ children }) => {
     });
 
     // Firebase Auth State Listener
-    const unsubscribeAuth = onAuthChange((user) => {
+    const unsubscribeAuth = onAuthChange(async (user) => {
       if (user) {
         setFirebaseActive(true);
+        try {
+          const tokenResult = await user.getIdTokenResult();
+          if (tokenResult.claims.seller === true) {
+            setRoleState('seller');
+            await AsyncStorage.setItem(STORAGE_KEYS.ROLE, 'seller');
+          }
+        } catch (claimError) {
+          console.log('Seller claim refresh note:', claimError.message);
+        }
       }
     });
 
@@ -217,11 +229,8 @@ export const AppProvider = ({ children }) => {
       if (c) {
         try {
           const parsed = JSON.parse(c);
-          const real = Array.isArray(parsed)
-            ? parsed.filter(item => !item.id.startsWith('shop-sou-10') && item.id !== 'shop-nirma-201')
-            : [];
+          const real = Array.isArray(parsed) ? parsed : [];
           setCanteensState(real);
-          await AsyncStorage.setItem(STORAGE_KEYS.CANTEENS, JSON.stringify(real)).catch(() => {});
         } catch (e) {
           setCanteensState([]);
         }
@@ -275,12 +284,14 @@ export const AppProvider = ({ children }) => {
 
 
   const completeOnboarding = async ({ chosenRole, chosenUniversity, profileData, vendorCanteenData }) => {
-    setRoleState(chosenRole);
+    const isSeller = chosenRole === 'seller';
+    const effectiveRole = isSeller ? 'seller' : 'buyer';
+    setRoleState(effectiveRole);
     setUniversityState(chosenUniversity);
 
     let mergedProfile = userProfile;
     if (profileData) {
-      mergedProfile = { ...userProfile, ...profileData };
+      mergedProfile = { ...userProfile, ...profileData, userType: isSeller ? 'seller' : (profileData.userType || 'student') };
       setUserProfileState(mergedProfile);
       await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(mergedProfile));
     }
@@ -290,7 +301,7 @@ export const AppProvider = ({ children }) => {
       await loginWithPhone({
         phone: mergedProfile.phone || '',
         name: mergedProfile.name || '',
-        userType: chosenRole === 'seller' ? 'canteen_vendor' : (mergedProfile.userType || 'student'),
+        userType: isSeller ? 'seller' : (mergedProfile.userType || 'student'),
         universityId: chosenUniversity,
         rollNo: mergedProfile.rollNo || '',
         facultyId: mergedProfile.facultyId || '',
@@ -301,37 +312,28 @@ export const AppProvider = ({ children }) => {
       console.log('Firebase onboarding auth note:', authErr);
     }
 
-    if (chosenRole === 'seller' && vendorCanteenData) {
-      const newId = 'shop-' + Date.now().toString().slice(-4);
-      const newCanteen = {
-        id: newId,
-        universityId: chosenUniversity,
-        name: vendorCanteenData.name || 'My Campus Canteen',
-        location: vendorCanteenData.location || 'Campus Counter #1',
-        openingHours: vendorCanteenData.openingHours || '08:00 AM - 10:00 PM',
-        upiId: vendorCanteenData.upiId || 'merchant.canteen@upi',
-        phone: vendorCanteenData.phone || '+91 98765 00000',
-        rating: 5.0,
-        reviewsCount: 1,
-        status: 'Open',
-        currentQueue: 0,
-        avgWaitMins: 5,
-        lat: userLocation?.lat ?? 23.0917,
-        lng: userLocation?.lng ?? 72.5349,
-        banner: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=600&q=80',
-        tags: vendorCanteenData.tags || ['Campus Canteen'],
-        menu: vendorCanteenData.initialMenu || []
-      };
-
-      const updatedCanteens = [newCanteen, ...canteens];
-      setCanteensState(updatedCanteens);
-      setSellerShopIdState(newId);
-      await AsyncStorage.setItem(STORAGE_KEYS.CANTEENS, JSON.stringify(updatedCanteens));
-      await AsyncStorage.setItem(STORAGE_KEYS.SELLER_SHOP_ID, newId);
-      await createCanteen(newCanteen);
+    // If user is a real vendor registering their shop, create the real canteen!
+    if (isSeller && vendorCanteenData) {
+      try {
+        const createdShop = await addCanteen({
+          name: vendorCanteenData.name,
+          location: vendorCanteenData.location,
+          openingHours: vendorCanteenData.openingHours || '08:00 AM - 08:00 PM',
+          upiId: vendorCanteenData.upiId,
+          phone: vendorCanteenData.phone || mergedProfile.phone || '',
+          universityId: chosenUniversity,
+          menu: []
+        });
+        if (createdShop) {
+          setSellerShopIdState(createdShop.id);
+          await AsyncStorage.setItem(STORAGE_KEYS.SELLER_SHOP_ID, createdShop.id);
+        }
+      } catch (err) {
+        console.log('Error registering initial vendor canteen:', err);
+      }
     }
 
-    await AsyncStorage.setItem(STORAGE_KEYS.ROLE, chosenRole);
+    await AsyncStorage.setItem(STORAGE_KEYS.ROLE, effectiveRole);
     await AsyncStorage.setItem(STORAGE_KEYS.UNIVERSITY, chosenUniversity);
     await AsyncStorage.setItem(STORAGE_KEYS.ONBOARDING_DONE, 'true');
     setIsOnboardingComplete(true);
@@ -367,7 +369,7 @@ export const AppProvider = ({ children }) => {
 
   // --- Real Canteen Management ---
   const addCanteen = async (canteenData) => {
-    const newId = 'shop-' + Date.now().toString().slice(-4);
+    const newId = canteenData.id || ('shop-' + Date.now().toString().slice(-4));
     const newCanteen = {
       id: newId,
       universityId: university,
@@ -380,15 +382,17 @@ export const AppProvider = ({ children }) => {
       tags: ['Campus Canteen'],
       lat: userLocation?.lat ?? 23.0917,
       lng: userLocation?.lng ?? 72.5349,
+      ownerId: userProfile?.uid || 'vendor_' + Date.now(),
       ...canteenData
     };
 
-    const updated = [newCanteen, ...canteens];
+    const updated = [newCanteen, ...canteens.filter(c => c.id !== newId)];
     setCanteensState(updated);
     setSellerShopIdState(newId);
     await AsyncStorage.setItem(STORAGE_KEYS.CANTEENS, JSON.stringify(updated));
     await AsyncStorage.setItem(STORAGE_KEYS.SELLER_SHOP_ID, newId);
     await createCanteen(newCanteen);
+    broadcastEvent(SYNC_EVENTS.CANTEEN_UPDATED, { canteens: updated });
     return newCanteen;
   };
 
@@ -412,6 +416,7 @@ export const AppProvider = ({ children }) => {
 
   // --- Real Menu Management ---
   const addMenuItem = async (shopId, newItem) => {
+    const effectiveShopId = shopId || sellerShopId || (canteens.find(c => c.universityId === university)?.id) || (canteens[0]?.id);
     const id = 'item-' + Date.now().toString().slice(-4);
     const itemToAdd = {
       id,
@@ -425,7 +430,7 @@ export const AppProvider = ({ children }) => {
     };
 
     const updated = canteens.map(shop => {
-      if (shop.id === shopId) {
+      if (shop.id === effectiveShopId) {
         return { ...shop, menu: [itemToAdd, ...(shop.menu || [])] };
       }
       return shop;
@@ -433,17 +438,19 @@ export const AppProvider = ({ children }) => {
 
     setCanteensState(updated);
     await AsyncStorage.setItem(STORAGE_KEYS.CANTEENS, JSON.stringify(updated));
-    const targetShop = updated.find(s => s.id === shopId);
+    const targetShop = updated.find(s => s.id === effectiveShopId);
     if (targetShop) {
-      await updateMenuInDb(shopId, targetShop.menu || []);
+      await updateMenuInDb(effectiveShopId, targetShop.menu || []);
     }
+    broadcastEvent(SYNC_EVENTS.CANTEEN_UPDATED, { canteens: updated });
     return itemToAdd;
   };
 
   const updateMenuItem = async (shopId, itemId, updatedItem) => {
+    const effectiveShopId = shopId || sellerShopId || (canteens.find(c => c.universityId === university)?.id) || (canteens[0]?.id);
     const updated = canteens.map(shop => {
-      if (shop.id === shopId) {
-        const updatedMenu = shop.menu.map(item => {
+      if (shop.id === effectiveShopId) {
+        const updatedMenu = (shop.menu || []).map(item => {
           if (item.id === itemId) {
             return {
               ...item,
@@ -460,32 +467,36 @@ export const AppProvider = ({ children }) => {
 
     setCanteensState(updated);
     await AsyncStorage.setItem(STORAGE_KEYS.CANTEENS, JSON.stringify(updated));
-    const targetShop = updated.find(s => s.id === shopId);
+    const targetShop = updated.find(s => s.id === effectiveShopId);
     if (targetShop) {
-      await updateMenuInDb(shopId, targetShop.menu || []);
+      await updateMenuInDb(effectiveShopId, targetShop.menu || []);
     }
+    broadcastEvent(SYNC_EVENTS.CANTEEN_UPDATED, { canteens: updated });
   };
 
   const deleteMenuItem = async (shopId, itemId) => {
+    const effectiveShopId = shopId || sellerShopId || (canteens.find(c => c.universityId === university)?.id) || (canteens[0]?.id);
     const updated = canteens.map(shop => {
-      if (shop.id === shopId) {
-        return { ...shop, menu: shop.menu.filter(item => item.id !== itemId) };
+      if (shop.id === effectiveShopId) {
+        return { ...shop, menu: (shop.menu || []).filter(item => item.id !== itemId) };
       }
       return shop;
     });
 
     setCanteensState(updated);
     await AsyncStorage.setItem(STORAGE_KEYS.CANTEENS, JSON.stringify(updated));
-    const targetShop = updated.find(s => s.id === shopId);
+    const targetShop = updated.find(s => s.id === effectiveShopId);
     if (targetShop) {
-      await updateMenuInDb(shopId, targetShop.menu || []);
+      await updateMenuInDb(effectiveShopId, targetShop.menu || []);
     }
+    broadcastEvent(SYNC_EVENTS.CANTEEN_UPDATED, { canteens: updated });
   };
 
   const toggleItemStock = async (shopId, itemId) => {
+    const effectiveShopId = shopId || sellerShopId || (canteens.find(c => c.universityId === university)?.id) || (canteens[0]?.id);
     const updated = canteens.map(shop => {
-      if (shop.id === shopId) {
-        const updatedMenu = shop.menu.map(item => {
+      if (shop.id === effectiveShopId) {
+        const updatedMenu = (shop.menu || []).map(item => {
           if (item.id === itemId) {
             return { ...item, isAvailable: !item.isAvailable };
           }
@@ -498,10 +509,11 @@ export const AppProvider = ({ children }) => {
 
     setCanteensState(updated);
     await AsyncStorage.setItem(STORAGE_KEYS.CANTEENS, JSON.stringify(updated));
-    const targetShop = updated.find(s => s.id === shopId);
+    const targetShop = updated.find(s => s.id === effectiveShopId);
     if (targetShop) {
-      await updateMenuInDb(shopId, targetShop.menu || []);
+      await updateMenuInDb(effectiveShopId, targetShop.menu || []);
     }
+    broadcastEvent(SYNC_EVENTS.CANTEEN_UPDATED, { canteens: updated });
   };
 
   const updateItemPrice = async (shopId, itemId, newPrice) => {
@@ -590,19 +602,7 @@ export const AppProvider = ({ children }) => {
       }
     }
 
-    // 3. Pay After Takeout (Cash) -> Hold 10% Security Deposit from Wallet
-    let heldDepositAmount = 0;
-    if (orderData.paymentMethod === 'Cash') {
-      heldDepositAmount = Math.ceil(orderData.totalAmount * 0.10);
-      if (walletBalance < heldDepositAmount) {
-        throw new Error(`INSUFFICIENT WALLET BALANCE: Cash orders require a ₹${heldDepositAmount} (10%) refundable security deposit. Your wallet balance is ₹${walletBalance}. Please top up wallet or pay via UPI.`);
-      }
-
-      const newBal = walletBalance - heldDepositAmount;
-      setWalletBalance(newBal);
-      await AsyncStorage.setItem(STORAGE_KEYS.USER_WALLET, String(newBal));
-    }
-
+    // 3. The server validates prices, wallet balance, bans, and cash deposits.
     const maxItemPrep = (orderData.items || []).reduce((max, it) => {
       const match = (it.prepTime || '').match(/\d+/);
       const mins = match ? parseInt(match[0], 10) : 5;
@@ -625,7 +625,7 @@ export const AppProvider = ({ children }) => {
       buyerName: userProfile.name || (isFacultyOrder ? 'University Faculty' : 'Campus Student'),
       buyerPhone: userProfile.phone || '',
       buyerRollNo: userProfile.rollNo || '',
-      heldDepositAmount,
+      heldDepositAmount: 0,
       pickupSlot: orderData.pickupSlot || 'ASAP',
       isFacultyExpress: isFacultyOrder,
       facultyRoomNote: orderData.facultyRoomNote || userProfile?.facultyRoomNote || '',
@@ -633,26 +633,31 @@ export const AppProvider = ({ children }) => {
       ...orderData
     };
 
-    const updatedOrders = [newOrder, ...orders];
-    setOrdersState(updatedOrders);
-    setActiveOrderIdState(newOrder.id);
-    clearCart();
-
-    await AsyncStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(updatedOrders));
-    await AsyncStorage.setItem(STORAGE_KEYS.ACTIVE_PASS, newOrder.id);
-
     // Persist to Cloud Firestore for kitchen POS and multi-device sync
+    let confirmedOrder = newOrder;
     try {
-      await createOrderInDb(newOrder);
+      const serverOrder = await createOrderInDb(newOrder);
+      if (serverOrder) {
+        confirmedOrder = { ...newOrder, ...serverOrder };
+      }
     } catch (fsErr) {
-      console.log('Order Firestore sync note:', fsErr.message);
+      console.log('Order sync note, using local confirmation:', fsErr.message);
     }
 
-    // Trigger order placed sound and broadcast
+    const confirmedOrders = [confirmedOrder, ...orders.filter(o => o.id !== confirmedOrder.id)];
+    setOrdersState(confirmedOrders);
+    setActiveOrderIdState(confirmedOrder.id);
+    setWalletBalance(prev => {
+      const nextBalance = Math.max(0, prev - Number(confirmedOrder.heldDepositAmount || 0));
+      AsyncStorage.setItem(STORAGE_KEYS.USER_WALLET, String(nextBalance)).catch(() => {});
+      return nextBalance;
+    });
+    await AsyncStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(confirmedOrders));
+    await AsyncStorage.setItem(STORAGE_KEYS.ACTIVE_PASS, confirmedOrder.id);
+    clearCart();
     playOrderPlacedSound();
-    broadcastEvent(SYNC_EVENTS.ORDER_CREATED, newOrder);
-
-    return newOrder;
+    broadcastEvent(SYNC_EVENTS.ORDER_CREATED, confirmedOrder);
+    return confirmedOrder;
   };
 
   const markOrderReady = async (orderId) => {
@@ -664,7 +669,7 @@ export const AppProvider = ({ children }) => {
     try {
       await updateOrderStatusInDb(orderId, 'Ready for Pickup');
     } catch (e) {
-      console.log('Order ready Firestore sync note:', e.message);
+      console.log('Order ready DB sync note:', e.message);
     }
 
     if (targetOrder) {
@@ -679,21 +684,21 @@ export const AppProvider = ({ children }) => {
     const targetOrder = orders.find(o => o.id === orderId);
     if (!targetOrder) return;
 
-    let newWalletBal = walletBalance;
-    if (targetOrder.heldDepositAmount > 0) {
-      newWalletBal = walletBalance + targetOrder.heldDepositAmount;
-      setWalletBalance(newWalletBal);
-      await AsyncStorage.setItem(STORAGE_KEYS.USER_WALLET, String(newWalletBal));
-    }
-
     const updatedOrders = orders.map(o => (o.id === orderId ? { ...o, orderStatus: 'Completed' } : o));
     setOrdersState(updatedOrders);
     await AsyncStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(updatedOrders));
 
     try {
       await updateOrderStatusInDb(orderId, 'Completed');
+      if (targetOrder.heldDepositAmount > 0) {
+        setWalletBalance(prev => {
+          const nextBalance = prev + Number(targetOrder.heldDepositAmount);
+          AsyncStorage.setItem(STORAGE_KEYS.USER_WALLET, String(nextBalance)).catch(() => {});
+          return nextBalance;
+        });
+      }
     } catch (e) {
-      console.log('Order completed Firestore sync note:', e.message);
+      console.log('Order completed DB sync note:', e.message);
     }
 
     broadcastEvent(SYNC_EVENTS.ORDER_STATUS_CHANGED, { orderId, orderStatus: 'Completed' });
@@ -707,14 +712,19 @@ export const AppProvider = ({ children }) => {
       throw new Error(`Incorrect PIN! Entered "${enteredPin}", but student pass requires "${targetOrder.pickupPin}".`);
     }
 
-    try {
-      await verifyOrderPinInDb(orderId, enteredPin);
-    } catch (e) {
-      console.log('Firebase verify PIN note:', e.message);
-    }
+    await verifyOrderPinInDb(orderId, enteredPin);
 
     await markOrderCompleted(orderId);
     return true;
+  };
+
+  const confirmUpiPayment = async (orderId) => {
+    const targetOrder = orders.find(o => o.id === orderId);
+    if (!targetOrder) throw new Error('Order not found');
+    await confirmUpiPaymentInFirestore(orderId);
+    const updated = orders.map(o => o.id === orderId ? { ...o, paymentStatus: 'CONFIRMED_BY_MERCHANT' } : o);
+    setOrdersState(updated);
+    await AsyncStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(updated));
   };
 
   // Re-order past order: populate cart with exact items & shop
@@ -746,58 +756,81 @@ export const AppProvider = ({ children }) => {
     const targetOrder = orders.find(o => o.id === orderId);
     if (!targetOrder) return;
 
-    let refundText = '';
-    let newWalletBal = walletBalance;
+    const refundAmount = targetOrder.upfrontPaid !== undefined
+      ? Number(targetOrder.upfrontPaid)
+      : (targetOrder.paymentMethod === 'Cash'
+          ? Number(targetOrder.heldDepositAmount || Math.ceil(targetOrder.totalAmount * 0.10))
+          : Number(targetOrder.totalAmount));
 
-    if (targetOrder.paymentMethod === 'Cash' && targetOrder.heldDepositAmount > 0) {
-      newWalletBal = walletBalance + targetOrder.heldDepositAmount;
-      setWalletBalance(newWalletBal);
-      await AsyncStorage.setItem(STORAGE_KEYS.USER_WALLET, String(newWalletBal));
-      refundText = `10% Security Deposit (₹${targetOrder.heldDepositAmount}) refunded to SkipQ Wallet.`;
-    } else if (targetOrder.paymentMethod !== 'Cash') {
-      refundText = `Full amount (₹${targetOrder.totalAmount}) refunded immediately to ${targetOrder.paymentMethod}.`;
-    }
+    let refundText = targetOrder.paymentMethod === 'Cash'
+      ? `10% Pre-order commitment token (₹${refundAmount}) refunded to your UPI account.`
+      : `Full amount (₹${refundAmount}) refunded immediately to your ${targetOrder.paymentMethod || 'UPI'} account.`;
 
-    const updatedOrders = orders.map(o => (o.id === orderId ? { ...o, orderStatus: 'Cancelled', cancelledBy } : o));
+    const updatedOrders = orders.map(o => (o.id === orderId ? {
+      ...o,
+      orderStatus: 'Cancelled',
+      cancelledBy,
+      refundStatus: 'REFUND_COMPLETED_UPI',
+      refundAmount,
+      refundText
+    } : o));
     setOrdersState(updatedOrders);
     await AsyncStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(updatedOrders));
 
     try {
-      await cancelOrderInDb(orderId, cancelledBy, { refundText });
+      await cancelOrderInDb(orderId, cancelledBy, {
+        refundText,
+        refundAmount,
+        refundStatus: 'REFUND_COMPLETED_UPI'
+      });
+      if (targetOrder.heldDepositAmount > 0) {
+        setWalletBalance(prev => {
+          const nextBalance = prev + Number(targetOrder.heldDepositAmount);
+          AsyncStorage.setItem(STORAGE_KEYS.USER_WALLET, String(nextBalance)).catch(() => {});
+          return nextBalance;
+        });
+      }
     } catch (e) {
-      console.log('Firebase cancel order note:', e.message);
+      console.log('Cancel order DB sync note:', e.message);
     }
 
+    broadcastEvent(SYNC_EVENTS.ORDER_STATUS_CHANGED, {
+      orderId,
+      orderStatus: 'Cancelled',
+      refundAmount,
+      refundStatus: 'REFUND_COMPLETED_UPI'
+    });
     return refundText;
   };
 
   const markOrderAbandoned = async (orderId) => {
-    const newUnclaimedCount = unclaimedOrderCount + 1;
-    setUnclaimedOrderCount(newUnclaimedCount);
-    await AsyncStorage.setItem(STORAGE_KEYS.UNCLAIMED_COUNT, String(newUnclaimedCount));
+    let penalty = {
+      newUnclaimedCount: unclaimedOrderCount + 1,
+      newBanStatus: 'temp_ban',
+      newBanUntil: new Date(Date.now() + 86400000).toISOString()
+    };
 
-    let newBanStatus = banStatus;
-    let newBanUntil = null;
-
-    if (newUnclaimedCount === 1) {
-      newBanStatus = 'temp_ban';
-      const banDate = new Date();
-      banDate.setDate(banDate.getDate() + 3);
-      newBanUntil = banDate.toISOString();
-      setBanStatus(newBanStatus);
-      setBanUntil(newBanUntil);
-      await AsyncStorage.setItem(STORAGE_KEYS.BAN_STATUS, newBanStatus);
-      await AsyncStorage.setItem(STORAGE_KEYS.BAN_UNTIL, newBanUntil);
-    } else if (newUnclaimedCount >= 2) {
-      newBanStatus = 'perm_ban';
-      setBanStatus(newBanStatus);
-      await AsyncStorage.setItem(STORAGE_KEYS.BAN_STATUS, newBanStatus);
+    try {
+      const serverPenalty = await abandonOrderInDb(orderId);
+      if (serverPenalty?.penalty) {
+        penalty = serverPenalty.penalty;
+      }
+    } catch (e) {
+      console.log('Abandon order DB sync note:', e.message);
     }
+
+    const { newUnclaimedCount, newBanStatus, newBanUntil } = penalty;
+    setUnclaimedOrderCount(newUnclaimedCount);
+    setBanStatus(newBanStatus);
+    setBanUntil(newBanUntil);
+    await AsyncStorage.setItem(STORAGE_KEYS.UNCLAIMED_COUNT, String(newUnclaimedCount));
+    await AsyncStorage.setItem(STORAGE_KEYS.BAN_STATUS, newBanStatus);
+    if (newBanUntil) await AsyncStorage.setItem(STORAGE_KEYS.BAN_UNTIL, newBanUntil);
 
     const updatedOrders = orders.map(o => (o.id === orderId ? { ...o, orderStatus: 'Abandoned' } : o));
     setOrdersState(updatedOrders);
     await AsyncStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(updatedOrders));
-
+    broadcastEvent(SYNC_EVENTS.ORDER_STATUS_CHANGED, { orderId, orderStatus: 'Abandoned' });
     return { newUnclaimedCount, newBanStatus, newBanUntil };
   };
 
@@ -844,7 +877,7 @@ export const AppProvider = ({ children }) => {
         canteens, addCanteen, updateCanteen, deleteCanteen,
         addMenuItem, updateMenuItem, deleteMenuItem, toggleItemStock, updateItemPrice,
         cart, addToCart, updateCartQty, setSpecialInstructions, clearCart,
-        orders, placeOrder, markOrderReady, markOrderCompleted, verifyAndCompleteOrder, cancelOrder, markOrderAbandoned,
+        orders, placeOrder, markOrderReady, markOrderCompleted, verifyAndCompleteOrder, confirmUpiPayment, cancelOrder, markOrderAbandoned,
         reorderItems, rateOrder,
         activeOrderId, setActiveOrderIdState,
         userLocation, setUserLocation, requestUserLocation, locationPermissionGranted,

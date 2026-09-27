@@ -1,17 +1,14 @@
 import React, { useState, useContext, useEffect } from 'react';
-import { StyleSheet, View, SafeAreaView, StatusBar, TouchableOpacity, Text } from 'react-native';
+import { StyleSheet, View, StatusBar, TouchableOpacity, Text } from 'react-native';
 import { AppProvider, AppContext } from './src/context/AppContext';
 import Header from './src/components/Header';
 import StudentRadarView from './src/components/StudentRadarView';
 import StudentCartScreen from './src/components/StudentCartScreen';
 import StudentProfileScreen from './src/components/StudentProfileScreen';
 import SellerPosView from './src/components/SellerPosView';
-import OrderCheckoutModal from './src/components/OrderCheckoutModal';
 import DigitalPickupPassModal from './src/components/DigitalPickupPassModal';
 import AddMenuItemModal from './src/components/AddMenuItemModal';
 import CreateCanteenModal from './src/components/CreateCanteenModal';
-import UserProfileModal from './src/components/UserProfileModal';
-import OrderHistoryModal from './src/components/OrderHistoryModal';
 import OnboardingFlow from './src/components/OnboardingFlow';
 import FirebaseConfigModal from './src/components/FirebaseConfigModal';
 import DynamicActiveBookingPill from './src/components/DynamicActiveBookingPill';
@@ -45,16 +42,11 @@ function MainScreen() {
     };
   }, []);
 
-  const [checkoutTarget, setCheckoutTarget] = useState(null);
-  const [checkoutVisible, setCheckoutVisible] = useState(false);
-
   const [passModalVisible, setPassModalVisible] = useState(false);
   const [addItemModalVisible, setAddItemModalVisible] = useState(false);
   const [editingMenuItem, setEditingMenuItem] = useState(null);
   const [createCanteenModalVisible, setCreateCanteenModalVisible] = useState(false);
-  const [profileModalVisible, setProfileModalVisible] = useState(false);
   const [vendorProfileModalVisible, setVendorProfileModalVisible] = useState(false);
-  const [historyModalVisible, setHistoryModalVisible] = useState(false);
 
   const handleSelectOrderItem = (shopObj, itemObj) => {
     addToCart(shopObj, itemObj);
@@ -70,10 +62,6 @@ function MainScreen() {
     setAddItemModalVisible(true);
   };
 
-  const handleOrderPlaced = newOrder => {
-    setActiveBookingPillVisible(true);
-  };
-
   const activeOrderObj = orders.find(o => o.id === activeOrderId);
   const hasActivePass =
     activeOrderObj && activeOrderObj.orderStatus !== 'Completed' && activeOrderObj.orderStatus !== 'Cancelled';
@@ -82,13 +70,12 @@ function MainScreen() {
 
   return (
     <View style={styles.appContainer}>
-      <StatusBar barStyle="light-content" backgroundColor="#070a13" />
+      <StatusBar barStyle="dark-content" backgroundColor="#f5f3ee" />
 
       {/* Modern Top Header */}
       <Header
         onOpenPassModal={() => setPassModalVisible(true)}
         onOpenProfileModal={() => setCurrentTab('profile')}
-        onOpenHistoryModal={() => setCurrentTab('cart')}
         isPillVisible={activeBookingPillVisible}
         onToggleActivePill={() => setActiveBookingPillVisible(prev => !prev)}
       />
@@ -111,7 +98,6 @@ function MainScreen() {
             onSelectOrderItem={handleSelectOrderItem}
             onOpenCartCheckout={handleOpenCartCheckout}
             onOpenPassModal={() => setPassModalVisible(true)}
-            onOpenHistoryModal={() => setCurrentTab('cart')}
           />
         ) : currentTab === 'cart' ? (
           <StudentCartScreen
@@ -136,25 +122,9 @@ function MainScreen() {
       )}
 
       {/* Modals */}
-      <OrderCheckoutModal
-        visible={checkoutVisible}
-        target={checkoutTarget}
-        onClose={() => setCheckoutVisible(false)}
-        onOrderPlaced={handleOrderPlaced}
-      />
-
       <DigitalPickupPassModal
         visible={passModalVisible}
         onClose={() => setPassModalVisible(false)}
-      />
-
-      <OrderHistoryModal
-        visible={historyModalVisible}
-        onClose={() => setHistoryModalVisible(false)}
-        onReorderSuccess={() => {
-          setCheckoutTarget(null);
-          setCheckoutVisible(true);
-        }}
       />
 
       <AddMenuItemModal
@@ -169,11 +139,6 @@ function MainScreen() {
       <CreateCanteenModal
         visible={createCanteenModalVisible}
         onClose={() => setCreateCanteenModalVisible(false)}
-      />
-
-      <UserProfileModal
-        visible={profileModalVisible}
-        onClose={() => setProfileModalVisible(false)}
       />
 
       <VendorProfileModal
@@ -323,43 +288,46 @@ export default function App() {
 const styles = StyleSheet.create({
   appContainer: {
     flex: 1,
-    backgroundColor: '#070a13',
+    backgroundColor: '#f5f3ee',
   },
   bottomDockContainer: {
-    paddingHorizontal: 12,
-    paddingBottom: 8,
-    paddingTop: 4,
-    backgroundColor: '#070a13',
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+    paddingTop: 10,
+    backgroundColor: '#f5f3ee',
   },
   bottomBar: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(15, 23, 42, 0.92)',
-    borderRadius: 22,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    backgroundColor: '#1c2521',
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
+    borderColor: '#2e3b34',
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    shadowColor: '#172019',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
     elevation: 8,
   },
   bottomTab: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 4,
+    paddingVertical: 7,
     borderRadius: 14,
   },
   bottomTabActive: {
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: '#314238',
   },
   bottomTabActiveCart: {
-    backgroundColor: 'rgba(16, 185, 129, 0.18)',
+    backgroundColor: '#4d8062',
   },
   bottomTabActiveSeller: {
-    backgroundColor: 'rgba(16, 185, 129, 0.18)',
+    backgroundColor: '#4d8062',
   },
   tabIconWrap: {
     alignItems: 'center',
@@ -381,31 +349,31 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   tabIcon: {
-    fontSize: 17,
+    fontSize: 16,
   },
   tabLabel: {
-    color: '#64748b',
-    fontSize: 9.5,
-    fontWeight: '700',
-    marginTop: 2,
+    color: '#aab9ae',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.1,
   },
   tabLabelActive: {
-    color: '#818cf8',
+    color: '#ffffff',
     fontWeight: '900',
   },
   tabLabelActiveCart: {
-    color: '#10b981',
+    color: '#ffffff',
     fontWeight: '900',
   },
   tabLabelActiveSeller: {
-    color: '#10b981',
+    color: '#ffffff',
     fontWeight: '900',
   },
   cartTabBadge: {
     position: 'absolute',
     top: -5,
     right: -10,
-    backgroundColor: '#10b981',
+    backgroundColor: '#e9b95a',
     minWidth: 16,
     height: 16,
     borderRadius: 8,
@@ -413,7 +381,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 3,
     borderWidth: 1.5,
-    borderColor: '#0f172a',
+    borderColor: '#1c2521',
   },
   cartTabBadgeText: {
     color: '#ffffff',
@@ -424,21 +392,21 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -2,
     right: -6,
-    backgroundColor: '#06b6d4',
+    backgroundColor: '#e9b95a',
     width: 8,
     height: 8,
     borderRadius: 4,
     borderWidth: 1.5,
-    borderColor: '#0f172a',
+    borderColor: '#1c2521',
   },
   loadingLogo: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#6366f1',
+    backgroundColor: '#1c2521',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#6366f1',
+    shadowColor: '#172019',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.5,
     shadowRadius: 12,
@@ -450,7 +418,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   loadingText: {
-    color: '#94a3b8',
+    color: '#aab9ae',
     fontSize: 13,
     marginTop: 14,
     fontWeight: '800',

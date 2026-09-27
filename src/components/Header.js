@@ -110,6 +110,9 @@ export default function Header({
                 <Text style={styles.bookingTokenText}>#{activeOrderObj.tokenNumber || 'SQ'}</Text>
               </TouchableOpacity>
             )}
+            <TouchableOpacity style={styles.avatarBtn} onPress={onOpenProfileModal} activeOpacity={0.75}>
+              <Text style={styles.avatarText}>{(userProfile?.name || 'S').trim().charAt(0).toUpperCase()}</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -178,10 +181,10 @@ export default function Header({
 
 const styles = StyleSheet.create({
   headerWrapper: {
-    backgroundColor: '#070a13',
+    backgroundColor: '#f5f3ee',
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 4 : 10,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: '#e2ded5',
   },
   headerContainer: {
     paddingHorizontal: 16,
@@ -199,20 +202,20 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   logoBadge: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: '#6366f1',
+    width: 38,
+    height: 38,
+    borderRadius: 13,
+    backgroundColor: '#1c2521',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#6366f1',
+    shadowColor: '#172019',
     shadowOpacity: 0.5,
     shadowRadius: 6,
     elevation: 4,
   },
   logoText: {
     color: '#ffffff',
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '900',
   },
   brandInfo: {
@@ -224,21 +227,21 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   brandName: {
-    color: '#ffffff',
-    fontSize: 16,
+    color: '#1c2521',
+    fontSize: 17,
     fontWeight: '900',
     letterSpacing: -0.3,
   },
   campusBadge: {
-    backgroundColor: 'rgba(99, 102, 241, 0.2)',
+    backgroundColor: '#e5eee8',
     paddingHorizontal: 5,
     paddingVertical: 1,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.4)',
+    borderColor: '#c7d8cc',
   },
   campusBadgeText: {
-    color: '#a5b4fc',
+    color: '#376048',
     fontSize: 8.5,
     fontWeight: '900',
   },
@@ -249,13 +252,13 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   campusPickerText: {
-    color: '#94a3b8',
+    color: '#65736a',
     fontSize: 11,
     fontWeight: '600',
     maxWidth: 160,
   },
   campusPickerArrow: {
-    color: '#64748b',
+    color: '#9a9187',
     fontSize: 11,
   },
   rightActions: {
@@ -308,17 +311,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#0c1a2d',
+    backgroundColor: '#1c2521',
     paddingVertical: 4,
     paddingHorizontal: 8,
     borderRadius: 12,
     borderWidth: 1.2,
-    borderColor: '#06b6d480',
+    borderColor: '#4d8062',
   },
   activeBookingIconBtnOpen: {
-    backgroundColor: '#162b4d',
-    borderColor: '#38bdf8',
-    shadowColor: '#38bdf8',
+    backgroundColor: '#314238',
+    borderColor: '#a8d0b4',
+    shadowColor: '#4d8062',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.45,
     shadowRadius: 6,
@@ -350,14 +353,14 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#1e293b',
+    backgroundColor: '#e5eee8',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: '#c7d8cc',
   },
   avatarText: {
-    color: '#e2e8f0',
+    color: '#376048',
     fontSize: 12,
     fontWeight: '800',
   },

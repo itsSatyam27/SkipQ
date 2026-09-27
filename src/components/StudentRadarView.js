@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useMemo, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -25,7 +25,8 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
     clearCart,
     orders,
     activeOrderId,
-    userProfile
+    userProfile,
+    setRole
   } = useContext(AppContext);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -35,11 +36,12 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
   const [fastPrepOnly, setFastPrepOnly] = useState(false);
   const [expandedDish, setExpandedDish] = useState(null);
 
-  const campusCanteens = canteens.filter(c => c.universityId === university);
+  const campusCanteens = useMemo(() => canteens.filter(c => c.universityId === university), [canteens, university]);
   const souCampusDist = getDistanceInMeters(userLocation?.lat ?? 23.0917, userLocation?.lng ?? 72.5349, 23.0917, 72.5349);
   const isWithinCampus = souCampusDist <= 400;
 
   // Flatten & group dishes across all canteens
+  const radarItems = useMemo(() => {
   const itemGroupMap = {};
   campusCanteens.forEach(shop => {
     const distMeters = getDistanceInMeters(userLocation?.lat ?? 23.0917, userLocation?.lng ?? 72.5349, shop.lat, shop.lng);
@@ -94,7 +96,8 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
     });
   });
 
-  const radarItems = Object.values(itemGroupMap);
+  return Object.values(itemGroupMap);
+  }, [campusCanteens, fastPrepOnly, searchQuery, selectedCategory, userLocation?.lat, userLocation?.lng, vegOnly]);
   const categories = ['All', 'Snacks', 'Beverages', 'Meals', 'Rolls', 'Sandwiches', 'Desserts'];
 
   // Cart calculations
@@ -117,6 +120,21 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
         '📍 Too Far from Canteen',
         `You are ${formatDistance(distMeters)} from ${shopObj.name}. Please be on-campus to place an order.`,
         [{ text: 'Got it', style: 'cancel' }]
+      );
+      return;
+    }
+    if (cart.shopId && cart.shopId !== shopObj.id && cartTotalItems > 0) {
+      Alert.alert(
+        'Replace Cart Items?',
+        `Your cart currently contains ${cartTotalItems} item(s) from "${cart.shopName}". Would you like to clear it and start ordering from "${shopObj.name}"?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Clear & Add',
+            style: 'destructive',
+            onPress: () => addToCart(shopObj, itemObj)
+          }
+        ]
       );
       return;
     }
@@ -253,8 +271,15 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                 <View style={styles.emptyVendorBox}>
                   <Text style={styles.emptyVendorTitle}>Are you a Canteen Operator?</Text>
                   <Text style={styles.emptyVendorSub}>
-                    Register your campus food stall or switch your role to Seller in your Profile to start receiving orders!
+                    Register your campus food stall or switch to Vendor POS to add menu items and start taking orders!
                   </Text>
+                  <TouchableOpacity
+                    style={styles.emptyVendorActionBtn}
+                    onPress={() => setRole('seller')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.emptyVendorActionBtnText}>🏪 Open Vendor POS / Register Canteen 🚀</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             ) : (
@@ -416,6 +441,13 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
               <Text style={styles.emptySub}>
                 Registered food counters at Silver Oak University will appear here live as vendors sign up.
               </Text>
+              <TouchableOpacity
+                style={[styles.emptyVendorActionBtn, { marginTop: 16 }]}
+                onPress={() => setRole('seller')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.emptyVendorActionBtnText}>🏪 Open Vendor POS / Register Canteen 🚀</Text>
+              </TouchableOpacity>
             </View>
           }
           renderItem={({ item: shop }) => {
@@ -488,13 +520,16 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
 const styles = StyleSheet.create({
   screenContainer: {
     flex: 1,
-    backgroundColor: '#070a13',
+    backgroundColor: '#f7f4ee',
   },
   topSection: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 4,
-    backgroundColor: '#070a13',
+    backgroundColor: '#f7f4ee',
   },
   greetingRow: {
     flexDirection: 'row',
@@ -503,13 +538,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   greetingTitle: {
-    color: '#ffffff',
-    fontSize: 18,
+    color: '#1c2521',
+    fontSize: 21,
     fontWeight: '800',
     letterSpacing: -0.2,
   },
   greetingSub: {
-    color: '#64748b',
+    color: '#766d63',
     fontSize: 11.5,
     marginTop: 1,
   },
@@ -554,12 +589,12 @@ const styles = StyleSheet.create({
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0f172a',
-    borderRadius: 14,
+    backgroundColor: '#fffdf9',
+    borderRadius: 12,
     paddingHorizontal: 12,
     height: 42,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#e8e1d7',
     marginBottom: 10,
   },
   searchIcon: {
@@ -568,7 +603,7 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    color: '#ffffff',
+    color: '#27221d',
     fontSize: 13,
     paddingVertical: 0,
   },
@@ -587,16 +622,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 18,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#fffdf9',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#e8e1d7',
   },
   catChipActive: {
-    backgroundColor: '#6366f1',
-    borderColor: '#818cf8',
+    backgroundColor: '#27221d',
+    borderColor: '#27221d',
   },
   catChipText: {
-    color: '#94a3b8',
+    color: '#766d63',
     fontSize: 11.5,
     fontWeight: '600',
   },
@@ -646,11 +681,11 @@ const styles = StyleSheet.create({
   },
   segmentContainer: {
     flexDirection: 'row',
-    backgroundColor: '#0b1120',
+    backgroundColor: '#ece6dc',
     borderRadius: 12,
     padding: 3,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: '#e2d9cc',
     marginTop: 2,
     marginBottom: 4,
   },
@@ -661,29 +696,32 @@ const styles = StyleSheet.create({
     borderRadius: 9,
   },
   segmentBtnActive: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#fffdf9',
   },
   segmentText: {
-    color: '#64748b',
+    color: '#9a9187',
     fontSize: 11.5,
     fontWeight: '700',
   },
   segmentTextActive: {
-    color: '#f1f5f9',
+    color: '#27221d',
     fontWeight: '800',
   },
   contentList: {
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 90,
   },
   dishCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: 16,
+    backgroundColor: '#fffdf9',
+    borderRadius: 14,
     padding: 12,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: '#e8e1d7',
   },
   dishMainRow: {
     flexDirection: 'row',
@@ -741,24 +779,24 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   dishTitle: {
-    color: '#ffffff',
+    color: '#27221d',
     fontSize: 14,
     fontWeight: '800',
     flex: 1,
   },
   dishPrice: {
-    color: '#10b981',
+    color: '#376048',
     fontSize: 14,
     fontWeight: '900',
   },
   dishStallMeta: {
-    color: '#94a3b8',
+    color: '#766d63',
     fontSize: 11,
     fontWeight: '600',
     marginTop: 2,
   },
   dishDesc: {
-    color: '#64748b',
+    color: '#9a9187',
     fontSize: 10.5,
     marginTop: 2,
     lineHeight: 14,
@@ -767,7 +805,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   expandStallsText: {
-    color: '#818cf8',
+    color: '#376048',
     fontSize: 10,
     fontWeight: '700',
   },
@@ -776,11 +814,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   addBtn: {
-    backgroundColor: '#6366f1',
+    backgroundColor: '#1c2521',
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 10,
-    shadowColor: '#6366f1',
+    shadowColor: '#172019',
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 3,
@@ -1018,6 +1056,19 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     lineHeight: 16,
     textAlign: 'center',
+  },
+  emptyVendorActionBtn: {
+    backgroundColor: '#38bdf8',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginTop: 12,
+    alignItems: 'center',
+  },
+  emptyVendorActionBtnText: {
+    color: '#090d16',
+    fontSize: 12.5,
+    fontWeight: '800',
   },
   floatingCartDock: {
     position: 'absolute',

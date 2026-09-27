@@ -10,14 +10,13 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.skipq.app",
       "infoPlist": {
-        "NSCameraUsageDescription": "SkipQ uses the camera to scan digital pickup pass QR codes at canteen counters.",
         "NSLocationWhenInUseUsageDescription": "SkipQ uses location to automatically discover nearest registered campus canteens."
       }
     },
     "android": {
       "package": "com.skipq.app",
-      "targetSdkVersion": 34,
-      "compileSdkVersion": 34,
+      "targetSdkVersion": 36,
+      "compileSdkVersion": 36,
       "adaptiveIcon": {
         "backgroundColor": "#070b14",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -25,7 +24,6 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "permissions": [
-        "CAMERA",
         "VIBRATE",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION"

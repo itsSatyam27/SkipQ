@@ -1,26 +1,15 @@
 import React, { useState, useContext, useEffect, useRef } from 'react';
 import {
-  StyleSheet,
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  SafeAreaView,
-  StatusBar,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
-  ActivityIndicator
+  StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, SafeAreaView,
+  StatusBar, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, useColorScheme, Linking
 } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
 import * as Location from 'expo-location';
 import { AppContext } from '../context/AppContext';
 import { DEFAULT_UNIVERSITIES } from '../data/mockData';
-import { sortUniversitiesByDistance, getDistanceInMeters, formatDistance } from '../utils/distance';
-import { sendSmsOtp } from '../services/smsService';
-import { loginWithPhone, getUserProfileByPhone } from '../services/authService';
-import { fetchNearbyCampuses } from '../services/campusService';
+import { getDistanceInMeters, formatDistance } from '../utils/distance';
+import { sendSmsOtp, verifySmsOtp } from '../services/smsService';
+import { signInWithVerifiedOtp } from '../services/authService';
+// campusService not needed — Silver Oak only build
 
 export default function OnboardingFlow() {
   const {
@@ -37,15 +26,10 @@ export default function OnboardingFlow() {
   // Step 1: Phone Login & Verification
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
-  const [isExistingUser, setIsExistingUser] = useState(false);
   const [isCheckingProfile, setIsCheckingProfile] = useState(false);
-  const [existingUserName, setExistingUserName] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [isOtpVerified, setIsOtpVerified] = useState(false);
-  const [copiedCode, setCopiedCode] = useState(false);
-  const [autoFilled, setAutoFilled] = useState(false);
-  const [smsDeliveryStatus, setSmsDeliveryStatus] = useState('simulated');
   const otpInputRef = useRef(null);
 
   // Step 2: User Type ('student', 'faculty', 'seller')
@@ -58,46 +42,15 @@ export default function OnboardingFlow() {
   const [isRequestingLocation, setIsRequestingLocation] = useState(false);
   const [isFetchingCampuses, setIsFetchingCampuses] = useState(false);
 
-  // Step 4: Nearest Campus Selection
-  const [selectedUniversity, setSelectedUniversity] = useState('sou');
-  const [sortedCampuses, setSortedCampuses] = useState([]);
+  // University is fixed to Silver Oak for Phase 1
+  const selectedUniversity = 'sou';
 
   // Vendor Fields (if userType === 'seller')
   const [stallName, setStallName] = useState('');
   const [stallLocation, setStallLocation] = useState('');
   const [merchantUpi, setMerchantUpi] = useState('');
 
-  const selectedCampusObj =
-    sortedCampuses.find(u => u.id === selectedUniversity) ||
-    sortedCampuses[0] ||
-    DEFAULT_UNIVERSITIES.find(u => u.id === selectedUniversity) ||
-    DEFAULT_UNIVERSITIES[0];
-
-  const campusDistanceDisplay =
-    selectedCampusObj?.distanceFormatted && selectedCampusObj.distanceFormatted !== 'Location pending'
-      ? selectedCampusObj.distanceFormatted
-      : (userLocation?.lat && selectedCampusObj?.lat)
-        ? formatDistance(getDistanceInMeters(userLocation.lat, userLocation.lng, selectedCampusObj.lat, selectedCampusObj.lng))
-        : (selectedCampusObj?.distanceFormatted || 'Calculating...');
-
-  const campusCanteensLiveCount = (canteens || []).filter(
-    c => c.universityId === (selectedCampusObj?.id || 'sou')
-  ).length;
-
-  // Update sorted campuses whenever userLocation changes
-  useEffect(() => {
-    // Only refresh if we have real GPS (not null)
-    if (!userLocation?.lat || !userLocation?.lng) return;
-    fetchNearbyCampuses(userLocation.lat, userLocation.lng).then((list) => {
-      setSortedCampuses(list);
-      if (list.length > 0 && !selectedUniversity) {
-        setSelectedUniversity(list[0].id);
-      }
-    }).catch(() => {});
-  }, [userLocation]);
-
   const [resendTimer, setResendTimer] = useState(0);
-  const [expectedOtp, setExpectedOtp] = useState('');
   const [isSendingSms, setIsSendingSms] = useState(false);
 
   useEffect(() => {
@@ -119,44 +72,20 @@ export default function OnboardingFlow() {
     }
 
     setIsSendingSms(true);
-    const generated = String(Math.floor(100000 + Math.random() * 900000));
-    setExpectedOtp(generated);
-    setOtpSent(true);
-    setOtpCode('');
-    setResendTimer(30);
-    setCopiedCode(false);
-    setAutoFilled(false);
-
     try {
-      const result = await sendSmsOtp(cleanPhone, generated);
-      if (result && result.success) {
-        setSmsDeliveryStatus('live');
+      const res = await sendSmsOtp(cleanPhone);
+      setOtpSent(true);
+      if (res?.isDemo) {
+        setOtpCode('123456');
+        Alert.alert('Verification Code Sent', 'Demo / local mode active. Use code: 123456 (pre-filled for testing)');
       } else {
-        setSmsDeliveryStatus('simulated');
+        setOtpCode('');
       }
+      setResendTimer(30);
     } catch (e) {
-      setSmsDeliveryStatus('simulated');
+      Alert.alert('Could not send code', e.message || 'Please try again in a moment.');
     } finally {
       setIsSendingSms(false);
-    }
-  };
-
-  const handleAutoFill = () => {
-    if (expectedOtp) {
-      setOtpCode(expectedOtp);
-      setAutoFilled(true);
-      setTimeout(() => setAutoFilled(false), 2500);
-    }
-  };
-
-  const handleCopyCode = async () => {
-    if (!expectedOtp) return;
-    try {
-      await Clipboard.setStringAsync(expectedOtp);
-      setCopiedCode(true);
-      setTimeout(() => setCopiedCode(false), 2500);
-    } catch (e) {
-      console.log('Clipboard copy note:', e);
     }
   };
 
@@ -174,55 +103,15 @@ export default function OnboardingFlow() {
       Alert.alert('6-Digit Code Required', 'Please enter the complete 6-digit verification code.');
       return;
     }
-    // Verify against received SMS OTP
-    if (expectedOtp && otpCode.trim() !== expectedOtp) {
-      Alert.alert('Incorrect Code', 'The 6-digit code you entered is invalid. Please check and try again.');
-      return;
-    }
-
     setIsCheckingProfile(true);
 
     try {
-      // Check if user already has a registered profile
-      const existingProfile = await getUserProfileByPhone(cleanPhone);
-
-      if (existingProfile && existingProfile.name && existingProfile.name.trim() !== '' && existingProfile.name !== 'Campus Student') {
-        console.log('[Onboarding] Existing user profile recognized:', cleanPhone, existingProfile.name);
-        setIsExistingUser(true);
-        setExistingUserName(existingProfile.name);
-        setName(existingProfile.name);
-        if (existingProfile.userType) setUserType(existingProfile.userType);
-        if (existingProfile.rollNo) setRollNo(existingProfile.rollNo);
-        if (existingProfile.facultyId) setFacultyId(existingProfile.facultyId);
-        if (existingProfile.roomNumber) setRoomNumber(existingProfile.roomNumber);
-        if (existingProfile.universityId) setSelectedUniversity(existingProfile.universityId);
-
-        // Synchronize Firestore user document immediately
-        await loginWithPhone({
-          phone: cleanPhone,
-          name: existingProfile.name,
-          userType: existingProfile.userType || 'student',
-          universityId: existingProfile.universityId || selectedUniversity || 'sou',
-          rollNo: existingProfile.rollNo || '',
-          facultyId: existingProfile.facultyId || '',
-          roomNumber: existingProfile.roomNumber || ''
-        });
-
-        setIsOtpVerified(true);
-        // Existing user! Skip Step 2 (Name & Details) completely and proceed to Location setup!
-        setStep(3);
-      } else {
-        // New unregistered user: proceed to enter Name & Role details
-        console.log('[Onboarding] New user, prompting for profile details');
-        setIsExistingUser(false);
-        setIsOtpVerified(true);
-        setStep(2);
-      }
-    } catch (e) {
-      console.log('User profile lookup error:', e);
-      setIsExistingUser(false);
+      const result = await verifySmsOtp(cleanPhone, otpCode.trim());
+      await signInWithVerifiedOtp(result.customToken);
       setIsOtpVerified(true);
       setStep(2);
+    } catch (e) {
+      Alert.alert('Verification failed', e.message || 'The code is invalid or has expired.');
     } finally {
       setIsCheckingProfile(false);
     }
@@ -233,54 +122,26 @@ export default function OnboardingFlow() {
     setIsRequestingLocation(true);
     try {
       await requestUserLocation();
-      let coords = null;
-      try {
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        if (loc?.coords) {
-          coords = { lat: loc.coords.latitude, lng: loc.coords.longitude };
-        }
-      } catch (locErr) {}
-
-      const lat = coords?.lat || userLocation?.lat;
-      const lng = coords?.lng || userLocation?.lng;
-
-      setIsFetchingCampuses(true);
-      try {
-        const list = await fetchNearbyCampuses(lat, lng);
-        setSortedCampuses(list);
-        if (list.length > 0) {
-          setSelectedUniversity(list[0].id);
-        }
-      } catch (fetchErr) {
-        console.log('Campus fetch note:', fetchErr);
-      } finally {
-        setIsFetchingCampuses(false);
-      }
     } catch (e) {
       console.log('Location grant note:', e);
     } finally {
       setIsRequestingLocation(false);
-      setStep(4);
+      // Silver Oak only — go straight to vendor setup or finish
+      if (userType === 'seller') {
+        setStep(4);
+      } else {
+        await handleFinishOnboarding();
+      }
     }
   };
 
   const handleSkipLocation = async () => {
-    // Use SOU default coordinates as fallback
-    setIsFetchingCampuses(true);
-    try {
-      const fallbackLat = userLocation?.lat || 23.0917;
-      const fallbackLng = userLocation?.lng || 72.5349;
-      const list = await fetchNearbyCampuses(fallbackLat, fallbackLng);
-      setSortedCampuses(list);
-      if (list.length > 0) {
-        setSelectedUniversity(list[0].id);
-      }
-    } catch (e) {
-      console.log('Campus fetch (skip) note:', e);
-    } finally {
-      setIsFetchingCampuses(false);
+    // Silver Oak only — skip campus picking entirely
+    if (userType === 'seller') {
+      setStep(4);
+    } else {
+      await handleFinishOnboarding();
     }
-    setStep(4);
   };
 
   // Step 4 Handlers (Finish & Enter Campus)
@@ -317,6 +178,13 @@ export default function OnboardingFlow() {
       },
       vendorCanteenData
     });
+
+    if (chosenRole === 'seller') {
+      Alert.alert(
+        '🎉 Canteen Registered!',
+        `Your food counter "${stallName}" is now registered and live on the Silver Oak campus radar. Welcome to your Kitchen POS!`
+      );
+    }
   };
 
   return (
@@ -371,11 +239,10 @@ export default function OnboardingFlow() {
                 {otpSent && (
                   <TouchableOpacity
                     style={styles.changePhoneBtn}
-                    onPress={() => {
-                      setOtpSent(false);
-                      setOtpCode('');
-                      setExpectedOtp('');
-                    }}
+                      onPress={() => {
+                        setOtpSent(false);
+                        setOtpCode('');
+                      }}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
                     <Text style={styles.changePhoneText}>Edit</Text>
@@ -421,38 +288,6 @@ export default function OnboardingFlow() {
                     </TouchableOpacity>
                   </View>
 
-                  {/* Sleek SMS Autofill Suggestion Banner */}
-                  {Boolean(expectedOtp) && (
-                    <View style={styles.smsAutofillBanner}>
-                      <View style={styles.smsAutofillLeft}>
-                        <Text style={styles.smsIcon}>💬</Text>
-                        <View>
-                          <Text style={styles.smsAutofillLabel}>Code from SMS</Text>
-                          <Text style={styles.smsCodeHighlight}>{expectedOtp}</Text>
-                        </View>
-                      </View>
-                      <View style={styles.smsAutofillActions}>
-                        <TouchableOpacity
-                          style={[styles.quickFillButton, autoFilled && styles.quickFillButtonSuccess]}
-                          onPress={handleAutoFill}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={styles.quickFillButtonText}>
-                            {autoFilled ? '✓ Filled' : '⚡ Auto-Fill'}
-                          </Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.quickCopyButton, copiedCode && styles.quickCopyButtonSuccess]}
-                          onPress={handleCopyCode}
-                          activeOpacity={0.8}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                          <Text style={styles.quickCopyButtonText}>{copiedCode ? '✓' : '📋'}</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  )}
-
                   {/* Segmented 6-Digit Boxes with Full Transparent Overlay */}
                   <View style={styles.interactiveBoxesContainer}>
                     <View style={styles.segmentedBoxesRow}>
@@ -492,19 +327,6 @@ export default function OnboardingFlow() {
                     />
                   </View>
 
-                  {otpCode.length === 6 && (
-                    <View style={styles.codeMatchBanner}>
-                      {otpCode === expectedOtp ? (
-                        <View style={styles.codeMatchSuccessBadge}>
-                          <Text style={styles.codeMatchSuccessText}>✓ 6-Digit Code Verified</Text>
-                        </View>
-                      ) : (
-                        <View style={styles.codeMatchErrorBadge}>
-                          <Text style={styles.codeMatchErrorText}>⚠️ Incorrect verification code</Text>
-                        </View>
-                      )}
-                    </View>
-                  )}
                 </View>
               )}
 
@@ -695,7 +517,7 @@ export default function OnboardingFlow() {
                         facultyId: userType === 'faculty' ? facultyId.trim() : '',
                         roomNumber: userType === 'faculty' ? roomNumber.trim() : ''
                       });
-                    } catch (e) {}
+                    } catch (e) { }
                     setStep(3);
                   }}
                 >
@@ -811,104 +633,104 @@ export default function OnboardingFlow() {
                 </View>
               ) : (
                 <>
-              {/* Auto-chosen Nearest Campus Callout */}
-              <View style={styles.autoSelectCampusBanner}>
-                <View style={styles.autoSelectCampusHeader}>
-                  <Text style={styles.autoSelectCampusBadge}>🎯 AUTO-CHOSEN NEAREST CAMPUS</Text>
-                  <Text style={styles.autoSelectCampusDist}>{campusDistanceDisplay}</Text>
-                </View>
-                <Text style={styles.autoSelectCampusName}>{selectedCampusObj?.name || 'Silver Oak University'}</Text>
-                <Text style={styles.autoSelectCampusSub}>
-                  {selectedCampusObj?.type || 'University'} • {selectedCampusObj?.city || 'Ahmedabad'}
-                  {campusCanteensLiveCount > 0 ? ` • 🟢 ${campusCanteensLiveCount} Canteens Active` : ' • 0 Canteens Live'}
-                </Text>
-                <Text style={styles.autoSelectCampusNote}>
-                  ✓ Selected for you. Confirm below or tap any other campus to switch:
-                </Text>
-              </View>
+                  {/* Auto-chosen Nearest Campus Callout */}
+                  <View style={styles.autoSelectCampusBanner}>
+                    <View style={styles.autoSelectCampusHeader}>
+                      <Text style={styles.autoSelectCampusBadge}>🎯 AUTO-CHOSEN NEAREST CAMPUS</Text>
+                      <Text style={styles.autoSelectCampusDist}>{campusDistanceDisplay}</Text>
+                    </View>
+                    <Text style={styles.autoSelectCampusName}>{selectedCampusObj?.name || 'Silver Oak University'}</Text>
+                    <Text style={styles.autoSelectCampusSub}>
+                      {selectedCampusObj?.type || 'University'} • {selectedCampusObj?.city || 'Ahmedabad'}
+                      {campusCanteensLiveCount > 0 ? ` • 🟢 ${campusCanteensLiveCount} Canteens Active` : ' • 0 Canteens Live'}
+                    </Text>
+                    <Text style={styles.autoSelectCampusNote}>
+                      ✓ Selected for you. Confirm below or tap any other campus to switch:
+                    </Text>
+                  </View>
 
-              {/* Sorted Campus Cards */}
-              <View style={styles.campusesList}>
-                {sortedCampuses.map((campus, idx) => {
-                  const isSelected = selectedUniversity === campus.id;
-                  const isNearest = idx === 0;
-                  const liveCount = (canteens || []).filter(c => c.universityId === campus.id).length;
+                  {/* Sorted Campus Cards */}
+                  <View style={styles.campusesList}>
+                    {sortedCampuses.map((campus, idx) => {
+                      const isSelected = selectedUniversity === campus.id;
+                      const isNearest = idx === 0;
+                      const liveCount = (canteens || []).filter(c => c.universityId === campus.id).length;
 
-                  return (
-                    <TouchableOpacity
-                      key={campus.id}
-                      style={[
-                        styles.campusCard,
-                        isSelected && styles.campusCardActive,
-                        isNearest && styles.campusCardNearest
-                      ]}
-                      onPress={() => setSelectedUniversity(campus.id)}
-                    >
-                      <View style={styles.campusCardHeader}>
-                        <View style={{ flex: 1 }}>
-                          <View style={styles.campusTagRow}>
-                            {isNearest && (
-                              <View style={styles.nearestBadge}>
-                                <Text style={styles.nearestBadgeText}>
-                                  🎯 NEAREST TO YOU • {campus.distanceFormatted}
-                                </Text>
+                      return (
+                        <TouchableOpacity
+                          key={campus.id}
+                          style={[
+                            styles.campusCard,
+                            isSelected && styles.campusCardActive,
+                            isNearest && styles.campusCardNearest
+                          ]}
+                          onPress={() => setSelectedUniversity(campus.id)}
+                        >
+                          <View style={styles.campusCardHeader}>
+                            <View style={{ flex: 1 }}>
+                              <View style={styles.campusTagRow}>
+                                {isNearest && (
+                                  <View style={styles.nearestBadge}>
+                                    <Text style={styles.nearestBadgeText}>
+                                      🎯 NEAREST TO YOU • {campus.distanceFormatted}
+                                    </Text>
+                                  </View>
+                                )}
+                                {!isNearest && (
+                                  <View style={styles.distanceBadge}>
+                                    <Text style={styles.distanceBadgeText}>
+                                      📍 {campus.distanceFormatted}
+                                    </Text>
+                                  </View>
+                                )}
+                                {liveCount > 0 && (
+                                  <View style={styles.liveCanteensBadge}>
+                                    <Text style={styles.liveCanteensBadgeText}>
+                                      🟢 {liveCount} Canteens Live
+                                    </Text>
+                                  </View>
+                                )}
                               </View>
-                            )}
-                            {!isNearest && (
-                              <View style={styles.distanceBadge}>
-                                <Text style={styles.distanceBadgeText}>
-                                  📍 {campus.distanceFormatted}
-                                </Text>
-                              </View>
-                            )}
-                            {liveCount > 0 && (
-                              <View style={styles.liveCanteensBadge}>
-                                <Text style={styles.liveCanteensBadgeText}>
-                                  🟢 {liveCount} Canteens Live
-                                </Text>
-                              </View>
-                            )}
+                              <Text style={[styles.campusCardTitle, isSelected && styles.campusCardTitleActive]}>
+                                {campus.name}
+                              </Text>
+                              <Text style={styles.campusCardType}>
+                                {campus.type} • {campus.city}
+                              </Text>
+                              <Text style={styles.campusCardAddr} numberOfLines={1}>
+                                {campus.address}
+                              </Text>
+                            </View>
+                            <View style={[styles.radioCircle, isSelected && styles.radioCircleActive]}>
+                              {isSelected && <View style={styles.radioDot} />}
+                            </View>
                           </View>
-                          <Text style={[styles.campusCardTitle, isSelected && styles.campusCardTitleActive]}>
-                            {campus.name}
-                          </Text>
-                          <Text style={styles.campusCardType}>
-                            {campus.type} • {campus.city}
-                          </Text>
-                          <Text style={styles.campusCardAddr} numberOfLines={1}>
-                            {campus.address}
-                          </Text>
-                        </View>
-                        <View style={[styles.radioCircle, isSelected && styles.radioCircleActive]}>
-                          {isSelected && <View style={styles.radioDot} />}
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
 
-              {/* Action Buttons */}
-              <View style={styles.btnRow}>
-                <TouchableOpacity style={styles.backBtn} onPress={() => setStep(3)}>
-                  <Text style={styles.backBtnText}>← Back</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.launchBtn}
-                  onPress={() => {
-                    if (userType === 'seller') {
-                      setStep(5);
-                    } else {
-                      handleFinishOnboarding();
-                    }
-                  }}
-                >
-                  <Text style={styles.launchBtnText}>
-                    {userType === 'seller' ? 'Next: Setup Stall ➔' : 'Confirm & Enter Food Radar 🚀'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              </>
+                  {/* Action Buttons */}
+                  <View style={styles.btnRow}>
+                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(3)}>
+                      <Text style={styles.backBtnText}>← Back</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.launchBtn}
+                      onPress={() => {
+                        if (userType === 'seller') {
+                          setStep(5);
+                        } else {
+                          handleFinishOnboarding();
+                        }
+                      }}
+                    >
+                      <Text style={styles.launchBtnText}>
+                        {userType === 'seller' ? 'Next: Setup Stall ➔' : 'Confirm & Enter Food Radar 🚀'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
               )}
             </View>
           )}
@@ -991,7 +813,7 @@ export default function OnboardingFlow() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#070a13',
+    backgroundColor: '#f7f4ee',
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 8 : 8,
   },
   scrollContent: {
@@ -1007,10 +829,10 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 16,
-    backgroundColor: '#4f46e5',
+    backgroundColor: '#d76b43',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#6366f1',
+    shadowColor: '#d76b43',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.6,
     shadowRadius: 14,
@@ -1026,56 +848,56 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   brandTitle: {
-    color: '#ffffff',
+    color: '#27221d',
     fontSize: 24,
     fontWeight: '900',
     letterSpacing: -0.5,
   },
   brandTagline: {
-    color: '#94a3b8',
+    color: '#766d63',
     fontSize: 12,
     marginTop: 3,
     fontWeight: '600',
     letterSpacing: 0.2,
   },
   card: {
-    backgroundColor: '#0c1322',
+    backgroundColor: '#fffdf9',
     borderRadius: 24,
     padding: 20,
     borderWidth: 1.5,
-    borderColor: 'rgba(99, 102, 241, 0.22)',
+    borderColor: '#e8e1d7',
   },
   stepIndicator: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    backgroundColor: '#f2eadc',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 20,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.35)',
+    borderColor: '#dec8a9',
   },
   stepIndicatorText: {
-    color: '#a5b4fc',
+    color: '#b85c38',
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 0.8,
   },
   cardTitle: {
-    color: '#ffffff',
+    color: '#27221d',
     fontSize: 21,
     fontWeight: '900',
     letterSpacing: -0.4,
   },
   cardDesc: {
-    color: '#94a3b8',
+    color: '#766d63',
     fontSize: 13,
     lineHeight: 19,
     marginTop: 4,
     marginBottom: 16,
   },
   inputLabel: {
-    color: '#94a3b8',
+    color: '#766d63',
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -1083,7 +905,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   inputLabelNoMargin: {
-    color: '#94a3b8',
+    color: '#766d63',
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -1091,16 +913,16 @@ const styles = StyleSheet.create({
   unifiedPhoneCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#111c35',
+    backgroundColor: '#f3eee6',
     borderRadius: 16,
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: '#dfd4c5',
     paddingHorizontal: 14,
     height: 54,
   },
   unifiedPhoneCardLocked: {
-    borderColor: 'rgba(99, 102, 241, 0.4)',
-    backgroundColor: '#0d162b',
+    borderColor: '#d76b43',
+    backgroundColor: '#eee7dc',
   },
   countryCodeBadge: {
     flexDirection: 'row',
@@ -1111,19 +933,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   countryCodeText: {
-    color: '#f1f5f9',
+    color: '#27221d',
     fontSize: 15,
     fontWeight: '800',
   },
   phoneDivider: {
     width: 1,
     height: 22,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    backgroundColor: '#d8ccbd',
     marginHorizontal: 12,
   },
   unifiedPhoneInput: {
     flex: 1,
-    color: '#ffffff',
+    color: '#27221d',
     fontSize: 17,
     fontWeight: '800',
     letterSpacing: 1.5,
@@ -1143,7 +965,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   sendOtpBtn: {
-    backgroundColor: '#4f46e5',
+    backgroundColor: '#d76b43',
     height: 48,
     borderRadius: 14,
     alignItems: 'center',
@@ -1152,10 +974,10 @@ const styles = StyleSheet.create({
   },
   sendOtpBtnDisabled: {
     opacity: 0.4,
-    backgroundColor: '#1e293b',
+    backgroundColor: '#c9c3bb',
   },
   sendOtpBtnText: {
-    color: '#ffffff',
+    color: '#fffdf9',
     fontSize: 13,
     fontWeight: '800',
     letterSpacing: 0.3,
@@ -1167,13 +989,13 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   verificationSection: {
-    backgroundColor: '#0a101f',
+    backgroundColor: '#f3eee6',
     borderRadius: 18,
     padding: 14,
     marginTop: 14,
     marginBottom: 6,
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.2)',
+    borderColor: '#b8c8d4',
   },
   verificationHeaderRow: {
     flexDirection: 'row',
@@ -1353,31 +1175,31 @@ const styles = StyleSheet.create({
   },
   unifiedTextInput: {
     flex: 1,
-    color: '#ffffff',
+    color: '#27221d',
     fontSize: 15,
     fontWeight: '700',
     paddingVertical: 0,
   },
   input: {
-    backgroundColor: '#111c35',
+    backgroundColor: '#f3eee6',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 11,
-    color: '#ffffff',
+    color: '#27221d',
     fontSize: 14,
     fontWeight: '600',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: '#dfd4c5',
     marginBottom: 10,
   },
   primaryBtn: {
-    backgroundColor: '#4f46e5',
+    backgroundColor: '#d76b43',
     height: 54,
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 16,
-    shadowColor: '#4f46e5',
+    shadowColor: '#d76b43',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.45,
     shadowRadius: 12,
@@ -1395,17 +1217,17 @@ const styles = StyleSheet.create({
   roleCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#111a2e',
+    backgroundColor: '#f3eee6',
     borderRadius: 16,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: '#e2d9cc',
     gap: 12,
   },
   roleCardActive: {
-    borderColor: '#6366f1',
-    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+    borderColor: '#d76b43',
+    backgroundColor: '#f8e8df',
   },
   roleIconCircle: {
     width: 40,
@@ -1425,7 +1247,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   roleTitle: {
-    color: '#ffffff',
+    color: '#27221d',
     fontSize: 14,
     fontWeight: '900',
   },
@@ -1463,7 +1285,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   roleSub: {
-    color: '#94a3b8',
+    color: '#766d63',
     fontSize: 11,
     lineHeight: 16,
     marginTop: 4,
@@ -1867,4 +1689,3 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
-

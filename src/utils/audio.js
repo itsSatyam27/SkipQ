@@ -5,6 +5,24 @@ import { Platform, Vibration } from 'react-native';
 
 let audioCtx = null;
 
+// Ensure AudioContext is unlocked on web upon the first user interaction
+if (Platform.OS === 'web' && typeof window !== 'undefined') {
+  const unlockAudio = () => {
+    if (!audioCtx) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass) {
+        audioCtx = new AudioContextClass();
+      }
+    }
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+    }
+  };
+  window.addEventListener('click', unlockAudio, { passive: true });
+  window.addEventListener('touchstart', unlockAudio, { passive: true });
+  window.addEventListener('keydown', unlockAudio, { passive: true });
+}
+
 const getAudioContext = () => {
   if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
   if (!audioCtx) {

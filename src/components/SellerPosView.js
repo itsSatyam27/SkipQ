@@ -32,6 +32,7 @@ export default function SellerPosView({
     markOrderReady,
     markOrderCompleted,
     verifyAndCompleteOrder,
+    confirmUpiPayment,
     cancelOrder,
     markOrderAbandoned,
     university,
@@ -402,7 +403,9 @@ export default function SellerPosView({
                       <Text style={styles.orderTotalAmount}>₹{order.totalAmount}</Text>
                       <View style={styles.paymentChip}>
                         <Text style={styles.paymentChipText}>
-                          {order.paymentMethod === 'Cash' ? '💵 Cash' : `⚡ ${order.paymentMethod}`}
+                          {order.paymentMethod === 'Cash'
+                            ? `💵 Collect ₹${order.dueAtCounter !== undefined ? order.dueAtCounter : Math.max(0, order.totalAmount - (order.upfrontPaid || Math.ceil(order.totalAmount * 0.1)))} Cash`
+                            : `⚡ ${order.paymentMethod} (100% Paid)`}
                         </Text>
                       </View>
                     </View>
@@ -428,9 +431,13 @@ export default function SellerPosView({
                       </View>
                     ) : null}
 
-                    {order.heldDepositAmount > 0 && isPreparing && (
-                      <Text style={styles.depositNotice}>
-                        🔒 10% Security Deposit Held: ₹{order.heldDepositAmount}
+                    {order.paymentMethod === 'Cash' ? (
+                      <Text style={[styles.depositNotice, { color: '#0284c7' }]}>
+                        ⚡ 10% UPI Token Paid: ₹{order.upfrontPaid || order.heldDepositAmount || Math.ceil(order.totalAmount * 0.1)} • Collect ₹{order.dueAtCounter !== undefined ? order.dueAtCounter : Math.max(0, order.totalAmount - (order.upfrontPaid || Math.ceil(order.totalAmount * 0.1)))} Cash at Counter
+                      </Text>
+                    ) : (
+                      <Text style={[styles.depositNotice, { color: '#16a34a' }]}>
+                        ⚡ 100% Online UPI Paid (₹{order.upfrontPaid || order.totalAmount})
                       </Text>
                     )}
                   </View>
@@ -462,6 +469,27 @@ export default function SellerPosView({
 
                   {/* Action Buttons */}
                   <View style={styles.kdsActionsColumn}>
+                    {order.paymentStatus === 'PENDING_MERCHANT_CONFIRMATION' && (
+                      <TouchableOpacity
+                        style={styles.kdsActionBtnVerify}
+                        onPress={() => Alert.alert(
+                          'Confirm UPI payment',
+                          `Confirm that ₹${order.totalAmount} has arrived in your UPI app before preparing this order.`,
+                          [
+                            { text: 'Not yet', style: 'cancel' },
+                            { text: 'Payment received', onPress: async () => {
+                              try {
+                                await confirmUpiPayment(order.id);
+                                Alert.alert('Payment confirmed', 'The student has been notified that you confirmed payment.');
+                              } catch (e) { Alert.alert('Could not confirm', e.message || 'Please try again.'); }
+                            } }
+                          ]
+                        )}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.kdsBtnTextPrimary}>💳 Confirm UPI Payment</Text>
+                      </TouchableOpacity>
+                    )}
                     {isPreparing && (
                       <TouchableOpacity
                         style={styles.kdsActionBtnPrimary}
@@ -529,8 +557,8 @@ export default function SellerPosView({
                           {isCompleted
                             ? '✅ Completed & Picked Up'
                             : isCancelled
-                            ? '❌ Cancelled & Refunded'
-                            : '🚨 Abandoned (No-Show Penalty)'}
+                              ? '❌ Cancelled & Refunded'
+                              : '🚨 Abandoned (No-Show Penalty)'}
                         </Text>
                       </View>
                     )}
@@ -854,18 +882,6 @@ export default function SellerPosView({
                 <Text style={styles.verifyConfirmText}>Verify PIN & Complete 🚀</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.bypassBtn}
-                onPress={async () => {
-                  if (!orderToVerify) return;
-                  await markOrderCompleted(orderToVerify.id);
-                  setVerifyModalVisible(false);
-                  setOrderToVerify(null);
-                  Alert.alert('Order Handed Over', `Token ${orderToVerify.tokenNumber} marked completed (Manual override).`);
-                }}
-              >
-                <Text style={styles.bypassBtnText}>Manual Vendor Handover</Text>
-              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -885,17 +901,17 @@ export default function SellerPosView({
               </TouchableOpacity>
             </View>
 
-            {/* Viewfinder simulation */}
+            {/* QR capture is intentionally unavailable until a real camera flow is added. */}
             <View style={styles.viewfinderBox}>
               <View style={styles.cornerTL} />
               <View style={styles.cornerTR} />
               <View style={styles.cornerBL} />
               <View style={styles.cornerBR} />
               <View style={styles.laserScanLine} />
-              <Text style={styles.viewfinderText}>Align pickup QR code in frame</Text>
+              <Text style={styles.viewfinderText}>QR scanning is unavailable. Use the pickup PIN.</Text>
             </View>
 
-            {/* Target Order 1-Tap Verification */}
+            {/* QR scanning is not enabled yet; every handover still requires the pickup PIN. */}
             {orderToVerify && (
               <View style={styles.fastMatchCard}>
                 <View style={{ flex: 1 }}>
@@ -905,14 +921,14 @@ export default function SellerPosView({
                 </View>
                 <TouchableOpacity
                   style={styles.fastMatchBtn}
-                  onPress={async () => {
-                    await markOrderCompleted(orderToVerify.id);
+                  onPress={() => {
                     setQrScanModalVisible(false);
-                    setOrderToVerify(null);
-                    Alert.alert('✅ QR Verified!', `Token ${orderToVerify.tokenNumber} handed over successfully.`);
+                    setPinInput('');
+                    setPinError('');
+                    setVerifyModalVisible(true);
                   }}
                 >
-                  <Text style={styles.fastMatchBtnText}>⚡ 1-Tap Complete</Text>
+                  <Text style={styles.fastMatchBtnText}>Enter Pickup PIN</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -924,10 +940,12 @@ export default function SellerPosView({
                 <TouchableOpacity
                   key={rOrd.id}
                   style={styles.quickReadyRow}
-                  onPress={async () => {
-                    await markOrderCompleted(rOrd.id);
+                  onPress={() => {
+                    setOrderToVerify(rOrd);
                     setQrScanModalVisible(false);
-                    Alert.alert('✅ Order Collected', `Token ${rOrd.tokenNumber} verified & handed over.`);
+                    setPinInput('');
+                    setPinError('');
+                    setVerifyModalVisible(true);
                   }}
                 >
                   <Text style={styles.quickReadyToken}>#{rOrd.tokenNumber}</Text>
@@ -946,21 +964,21 @@ export default function SellerPosView({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#090d16',
-    padding: 12,
+    backgroundColor: '#f5f3ee',
+    padding: 16,
   },
   emptyContainer: {
     flex: 1,
-    backgroundColor: '#090d16',
+    backgroundColor: '#f5f3ee',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
   },
   emptyEmoji: { fontSize: 48, marginBottom: 12 },
-  emptyTitle: { color: '#ffffff', fontSize: 18, fontWeight: '800' },
-  emptySub: { color: '#94a3b8', fontSize: 12, textAlign: 'center', marginVertical: 8 },
+  emptyTitle: { color: '#1c2521', fontSize: 18, fontWeight: '800' },
+  emptySub: { color: '#65736a', fontSize: 12, textAlign: 'center', marginVertical: 8 },
   createFirstBtn: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#1c2521',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 12,
@@ -970,12 +988,12 @@ const styles = StyleSheet.create({
 
   // — Seller Header —
   sellerHeader: {
-    backgroundColor: 'rgba(20, 30, 50, 0.75)',
-    borderRadius: 20,
-    padding: 16,
+    backgroundColor: '#1c2521',
+    borderRadius: 24,
+    padding: 18,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#314238',
   },
   headerTopRow: {
     flexDirection: 'row',
@@ -1009,35 +1027,35 @@ const styles = StyleSheet.create({
   },
   shopTitle: {
     color: '#ffffff',
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '900',
     letterSpacing: -0.3,
   },
   switchPill: {
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    backgroundColor: '#314238',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.3)',
+    borderColor: '#4d8062',
   },
   switchPillText: {
-    color: '#818cf8',
+    color: '#c3d0c7',
     fontSize: 10,
     fontWeight: '800',
   },
   shopLoc: {
-    color: '#94a3b8',
+    color: '#aab9ae',
     fontSize: 11,
   },
   newCanteenBtn: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#e9b95a',
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 10,
   },
   newCanteenBtnText: {
-    color: '#ffffff',
+    color: '#1c2521',
     fontSize: 11,
     fontWeight: '900',
   },
@@ -1048,12 +1066,12 @@ const styles = StyleSheet.create({
   },
   statBox: {
     flex: 1,
-    backgroundColor: '#11192e',
+    backgroundColor: '#26332b',
     padding: 10,
     borderRadius: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: '#314238',
   },
   statBoxActive: {
     borderColor: 'rgba(245, 158, 11, 0.3)',
@@ -1072,7 +1090,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   statLbl: {
-    color: '#94a3b8',
+    color: '#aab9ae',
     fontSize: 9,
     fontWeight: '700',
     marginTop: 2,
@@ -1081,12 +1099,12 @@ const styles = StyleSheet.create({
   // — Segmented Sub-Tab Bar —
   subTabBar: {
     flexDirection: 'row',
-    backgroundColor: '#111827',
+    backgroundColor: '#e5eee8',
     borderRadius: 14,
     padding: 4,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#c7d8cc',
   },
   subTabBtn: {
     flex: 1,
@@ -1098,10 +1116,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   subTabBtnActive: {
-    backgroundColor: '#6366f1',
+    backgroundColor: '#1c2521',
   },
   subTabText: {
-    color: '#94a3b8',
+    color: '#65736a',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1126,11 +1144,11 @@ const styles = StyleSheet.create({
 
   // — Panel —
   panel: {
-    backgroundColor: '#131d33',
-    borderRadius: 18,
-    padding: 14,
+    backgroundColor: '#fffdf9',
+    borderRadius: 22,
+    padding: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#e2ded5',
   },
 
   // — Filter Pills —
@@ -1140,16 +1158,16 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   filterPill: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#f0eee8',
     paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: 20,
   },
   filterPillActive: {
-    backgroundColor: '#6366f1',
+    backgroundColor: '#1c2521',
   },
   filterPillText: {
-    color: '#94a3b8',
+    color: '#65736a',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1163,28 +1181,28 @@ const styles = StyleSheet.create({
     paddingVertical: 30,
   },
   noOrdersEmoji: { fontSize: 32, marginBottom: 6 },
-  noOrdersText: { color: '#94a3b8', fontSize: 12 },
+  noOrdersText: { color: '#65736a', fontSize: 12 },
   addFirstDishBtn: {
-    backgroundColor: '#06b6d4',
+    backgroundColor: '#e9b95a',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 10,
     marginTop: 10,
   },
-  addFirstDishText: { color: '#090d16', fontWeight: '800', fontSize: 12 },
+  addFirstDishText: { color: '#1c2521', fontWeight: '800', fontSize: 12 },
 
   // ═══════════════════════════
   // KDS Order Cards
   // ═══════════════════════════
   kdsCard: {
-    backgroundColor: '#111a2f',
-    borderRadius: 16,
+    backgroundColor: '#f9f8f4',
+    borderRadius: 18,
     padding: 16,
     marginBottom: 12,
     borderLeftWidth: 4,
     borderLeftColor: '#f59e0b',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: '#e2ded5',
   },
   kdsReadyCard: {
     borderLeftColor: '#10b981',
@@ -1259,13 +1277,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   orderStudentName: {
-    color: '#e2e8f0',
+    color: '#1c2521',
     fontSize: 13,
     fontWeight: '700',
     marginTop: 3,
   },
   orderTotalAmount: {
-    color: '#ffffff',
+    color: '#1c2521',
     fontSize: 18,
     fontWeight: '900',
   },
@@ -1284,7 +1302,7 @@ const styles = StyleSheet.create({
 
   // Items in order
   itemsList: {
-    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+    backgroundColor: '#f0eee8',
     padding: 12,
     borderRadius: 12,
     marginBottom: 12,
@@ -1309,13 +1327,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   itemText: {
-    color: '#f8fafc',
+    color: '#1c2521',
     fontSize: 13,
     fontWeight: '600',
     flex: 1,
   },
   itemPriceSub: {
-    color: '#94a3b8',
+    color: '#65736a',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -2244,5 +2262,3 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 });
-
-

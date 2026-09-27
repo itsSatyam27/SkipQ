@@ -55,13 +55,14 @@ export default function OrderCheckoutModal({ visible, target, onClose, onOrderPl
   if (!visible || items.length === 0) return null;
 
   const totalAmount = items.reduce((sum, it) => sum + it.price * it.qty, 0);
-  const deposit10Percent = Math.ceil(totalAmount * 0.10);
+  const deposit10Percent = Math.max(5, Math.ceil(totalAmount * 0.10));
   const isCash = paymentMethod === 'Cash';
-  const isDepositAvailable = walletBalance >= deposit10Percent;
+  const upfrontAmount = isCash ? deposit10Percent : totalAmount;
+  const dueAtCounter = isCash ? Math.max(0, totalAmount - deposit10Percent) : 0;
 
   const currentShopObj = canteens?.find(c => c.id === shopId) || {};
   const shopUpiId = currentShopObj.upiId || 'skipq.canteen@upi';
-  const upiUri = `upi://pay?pa=${shopUpiId}&pn=${encodeURIComponent(shopName)}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent('SkipQ Order')}`;
+  const upiUri = `upi://pay?pa=${shopUpiId}&pn=${encodeURIComponent(shopName)}&am=${upfrontAmount}&cu=INR&tn=${encodeURIComponent(isCash ? 'SkipQ 10% Preorder Token' : 'SkipQ Order')}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(upiUri)}&bgcolor=ffffff&color=0f172a&margin=8`;
 
   const handleConfirmOrder = async () => {
@@ -76,8 +77,13 @@ export default function OrderCheckoutModal({ visible, target, onClose, onOrderPl
         items,
         specialInstructions: specialInstructions.trim(),
         totalAmount,
+        upfrontPaid: upfrontAmount,
+        dueAtCounter,
+        heldDepositAmount: isCash ? deposit10Percent : 0,
         paymentMethod,
-        paymentStatus: isCash ? 'PENDING_CASH' : 'PAID',
+        paymentStatus: isCash ? 'TOKEN_PAID_CASH_DUE' : 'PENDING_MERCHANT_CONFIRMATION',
+        orderPlacedAt: new Date().toISOString(),
+        cancellationGraceSecs: 120, // 2-minute cancellation & refund window
         pickupSlot,
         isFacultyExpress: isFaculty,
         facultyRoomNote: isFaculty ? facultyRoomNote.trim() : '',
@@ -255,80 +261,82 @@ export default function OrderCheckoutModal({ visible, target, onClose, onOrderPl
               ))}
             </View>
 
-            {/* Live Dynamic UPI QR Box for Digital Payments */}
-            {!isCash && (
-              <View style={styles.upiQrBox}>
-                <View style={styles.qrHeaderRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.qrHeaderTitle}>📱 Scan & Pay with {paymentMethod}</Text>
-                    <Text style={styles.qrHeaderSub}>Works with any UPI app on student phone</Text>
-                  </View>
-                  <View style={styles.liveUpiBadge}>
-                    <Text style={styles.liveUpiBadgeText}>⚡ LIVE UPI</Text>
-                  </View>
-                </View>
-
-                <View style={styles.qrImageContainer}>
-                  <Image
-                    source={{ uri: qrUrl }}
-                    style={styles.qrCodeImage}
-                    resizeMode="contain"
-                  />
-                </View>
-
-                <View style={styles.upiMetaBox}>
-                  <Text style={styles.upiIdDisplay}>
-                    Payee VPA: <Text style={styles.upiIdBold}>{shopUpiId}</Text>
+            {/* Live Dynamic UPI QR Box for Digital Payments & Preorder Token */}
+            <View style={styles.upiQrBox}>
+              <View style={styles.qrHeaderRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.qrHeaderTitle}>
+                    {isCash ? '📱 Pay 10% Token via UPI' : `📱 Scan & Pay with ${paymentMethod}`}
                   </Text>
-                  <Text style={styles.upiTotalDisplay}>
-                    Amount: <Text style={styles.upiAmountBold}>₹{totalAmount}</Text>
+                  <Text style={styles.qrHeaderSub}>
+                    {isCash
+                      ? `Pay ₹${deposit10Percent} token now • Pay ₹${dueAtCounter} cash at counter`
+                      : '100% online • 2-min instant UPI refund guarantee'}
                   </Text>
                 </View>
-
-                {Platform.OS !== 'web' ? (
-                  <TouchableOpacity
-                    style={styles.openAppBtn}
-                    onPress={() => {
-                      Linking.openURL(upiUri).catch(() => {
-                        Alert.alert('Notice', 'Scan the QR code directly using your camera or UPI app.');
-                      });
-                    }}
-                  >
-                    <Text style={styles.openAppBtnText}>Pay via {paymentMethod} App ↗</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <Text style={styles.webQrHint}>
-                    📲 Point your phone camera or any UPI scanner at this screen to pay
-                  </Text>
-                )}
+                <View style={styles.liveUpiBadge}>
+                  <Text style={styles.liveUpiBadgeText}>⚡ LIVE UPI</Text>
+                </View>
               </View>
-            )}
 
-            {/* 10% Deposit Warning for Cash */}
+              <View style={styles.qrImageContainer}>
+                <Image
+                  source={{ uri: qrUrl }}
+                  style={styles.qrCodeImage}
+                  resizeMode="contain"
+                />
+              </View>
+
+              <View style={styles.upiMetaBox}>
+                <Text style={styles.upiIdDisplay}>
+                  Payee VPA: <Text style={styles.upiIdBold}>{shopUpiId}</Text>
+                </Text>
+                <Text style={styles.upiTotalDisplay}>
+                  Payable Now: <Text style={styles.upiAmountBold}>₹{upfrontAmount}</Text>
+                </Text>
+              </View>
+
+              {Platform.OS !== 'web' ? (
+                <TouchableOpacity
+                  style={styles.openAppBtn}
+                  onPress={() => {
+                    Linking.openURL(upiUri).catch(() => {
+                      Alert.alert('Notice', 'Scan the QR code directly using your camera or UPI app.');
+                    });
+                  }}
+                >
+                  <Text style={styles.openAppBtnText}>
+                    {isCash ? `Pay ₹${deposit10Percent} Token via UPI ↗` : `Pay ₹${totalAmount} via ${paymentMethod} ↗`}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.webQrHint}>
+                  📲 Point your phone camera or any UPI scanner at this screen to pay
+                </Text>
+              )}
+            </View>
+
+            {/* Cash Reminder Notice */}
             {isCash && (
-              <View style={[styles.depositNotice, !isDepositAvailable && styles.depositWarning]}>
+              <View style={styles.depositNotice}>
                 <Text style={styles.depositNoticeTitle}>
-                  🔒 10% Refundable Security Deposit: ₹{deposit10Percent}
+                  💵 10% UPI Token Pre-order + 90% Cash at Stall
                 </Text>
                 <Text style={styles.depositNoticeSub}>
-                  To guarantee order pickup and prevent counter food waste, ₹{deposit10Percent} is held from your SkipQ Security Wallet (Current Balance: ₹{walletBalance.toFixed(0)}). It is immediately refunded upon counter pickup!
+                  ₹{deposit10Percent} paid via UPI reserves your queue slot and confirms hot food prep. Pay remaining ₹{dueAtCounter} cash at stall. ⏱️ 100% refundable if cancelled within 2 minutes!
                 </Text>
               </View>
             )}
 
             {/* Submit Button */}
             <TouchableOpacity
-              style={[
-                styles.submitBtn,
-                isCash && !isDepositAvailable && styles.submitBtnDisabled
-              ]}
-              disabled={isCash && !isDepositAvailable}
+              style={styles.submitBtn}
               onPress={handleConfirmOrder}
             >
               <Text style={styles.submitBtnText}>
-                {isCash && !isDepositAvailable
-                  ? '⚠️ Top Up Wallet to Order with Cash'
-                  : '🚀 Place Order & Get Digital Pass'}
+                {isCash
+                  ? `🚀 Pay ₹${deposit10Percent} Token & Pre-order`
+                  : `🚀 Confirm ₹${totalAmount} Order & Get Pass`}
               </Text>
             </TouchableOpacity>
           </ScrollView>

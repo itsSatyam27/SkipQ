@@ -47,8 +47,8 @@ export default function CreateCanteenModal({ visible, onClose }) {
         upiId: upiId.trim() || `${name.toLowerCase().replace(/\s+/g, '')}@upi`,
         phone: phone.trim() || '+91 98765 00000',
         tags: parsedTags.length > 0 ? parsedTags : ['Campus Eats'],
-        lat: useCurrentGps ? (userLocation?.lat ?? 23.0917) : 19.1334,
-        lng: useCurrentGps ? (userLocation?.lng ?? 72.5349) : 72.9133,
+        lat: useCurrentGps ? (userLocation?.lat ?? 23.0917) : 23.0917,
+        lng: useCurrentGps ? (userLocation?.lng ?? 72.5349) : 72.5349,
         banner: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=600&q=80',
         menu: []
       });

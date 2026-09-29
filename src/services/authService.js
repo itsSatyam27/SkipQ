@@ -16,11 +16,91 @@ const STORAGE_LOCAL_USER = '@skipq_local_user_profile_v1';
 const STORAGE_APP_USER = '@skipq_user_profile_v2';
 const STORAGE_USERS_MAP = '@skipq_registered_users_map';
 
-// Check if a user already exists by phone number in Firestore or Local Storage
+// Check if a user already exists by phone number in Local Storage or Firestore
 export async function getUserProfileByPhone(phone) {
-  // Phone-based lookups leak whether a person has an account. Profiles can only
-  // be read after verified authentication, using the authenticated UID.
+  const cleanPhone = (phone || '').replace(/\D/g, '');
+  if (!cleanPhone) return null;
+
+  // 1. Check local persistent accounts registry
+  try {
+    const rawMap = await AsyncStorage.getItem(STORAGE_USERS_MAP);
+    if (rawMap) {
+      const map = JSON.parse(rawMap);
+      if (map[cleanPhone] && map[cleanPhone].name) {
+        return map[cleanPhone];
+      }
+    }
+  } catch (err) {
+    console.log('Error reading local users map:', err);
+  }
+
+  // 2. Check local user profile backup
+  try {
+    const backupRaw = await AsyncStorage.getItem(STORAGE_LOCAL_USER);
+    if (backupRaw) {
+      const backup = JSON.parse(backupRaw);
+      if (backup.phone && backup.phone.replace(/\D/g, '') === cleanPhone && backup.name) {
+        return backup;
+      }
+    }
+  } catch (err2) {}
+
+  // 3. Check active app user profile
+  try {
+    const appUserRaw = await AsyncStorage.getItem(STORAGE_APP_USER);
+    if (appUserRaw) {
+      const appUser = JSON.parse(appUserRaw);
+      if (appUser.phone && appUser.phone.replace(/\D/g, '') === cleanPhone && appUser.name) {
+        return appUser;
+      }
+    }
+  } catch (err3) {}
+
+  // 4. Check Firestore users collection by phone
+  if (isFirebaseConfigured && db) {
+    try {
+      // Check phone doc directly: users/phone_<cleanPhone>
+      const phoneDocRef = doc(db, 'users', `phone_${cleanPhone}`);
+      const phoneSnap = await getDoc(phoneDocRef);
+      if (phoneSnap.exists()) {
+        const data = phoneSnap.data();
+        if (data && data.name) {
+          await saveUserProfileToLocalRegistry(cleanPhone, data);
+          return data;
+        }
+      }
+
+      // Check current verified auth user if matching phone
+      if (auth?.currentUser?.uid) {
+        const userRef = doc(db, 'users', auth.currentUser.uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const data = userSnap.data();
+          if (data && data.name) {
+            await saveUserProfileToLocalRegistry(cleanPhone, data);
+            return data;
+          }
+        }
+      }
+    } catch (fsErr) {
+      console.log('Firestore getUserProfileByPhone note:', fsErr.message);
+    }
+  }
+
   return null;
+}
+
+export async function saveUserProfileToLocalRegistry(phone, profileData) {
+  const cleanPhone = (phone || '').replace(/\D/g, '');
+  if (!cleanPhone || !profileData) return;
+  try {
+    const rawMap = await AsyncStorage.getItem(STORAGE_USERS_MAP);
+    const map = rawMap ? JSON.parse(rawMap) : {};
+    map[cleanPhone] = { ...map[cleanPhone], ...profileData, phone: cleanPhone };
+    await AsyncStorage.setItem(STORAGE_USERS_MAP, JSON.stringify(map));
+  } catch (e) {
+    console.log('Error saving to local users registry:', e);
+  }
 }
 
 export async function signInWithVerifiedOtp(customToken) {
@@ -73,7 +153,7 @@ export async function loginWithPhone({ phone, name, userType = 'student', univer
         console.log('Firestore getDoc note:', getErr.message);
       }
 
-      const profileData = {
+      const firestorePayload = {
         uid: userDocId,
         authUid: authUid,
         phone: cleanPhone,
@@ -83,24 +163,28 @@ export async function loginWithPhone({ phone, name, userType = 'student', univer
         rollNo: rollNo || existingData.rollNo || '',
         facultyId: facultyId || existingData.facultyId || '',
         roomNumber: roomNumber || existingData.roomNumber || '',
-        walletBalance: existingData.walletBalance ?? 500,
-        unclaimedOrderCount: existingData.unclaimedOrderCount ?? 0,
-        banStatus: existingData.banStatus || 'active',
         updatedAt: serverTimestamp()
       };
 
       if (!existingData.createdAt) {
-        profileData.createdAt = serverTimestamp();
+        firestorePayload.createdAt = serverTimestamp();
       }
 
-      // Write directly to users/<userDocId> in Firestore
-      await setDoc(userDocRef, profileData, { merge: true });
+      // Write directly to users/<userDocId> in Firestore (excluding server-guarded keys)
+      await setDoc(userDocRef, firestorePayload, { merge: true });
 
-      console.log(`[Firebase] User registered and synced in Firestore: users/${userDocId}`);
-      await AsyncStorage.setItem(STORAGE_LOCAL_USER, JSON.stringify(profileData));
-      return profileData;
+      const fullProfile = {
+        ...firestorePayload,
+        walletBalance: existingData.walletBalance === 500 ? 0 : (existingData.walletBalance ?? 0),
+        unclaimedOrderCount: existingData.unclaimedOrderCount ?? 0,
+        banStatus: existingData.banStatus || 'active'
+      };
+
+      await AsyncStorage.setItem(STORAGE_LOCAL_USER, JSON.stringify(fullProfile));
+      await saveUserProfileToLocalRegistry(cleanPhone, fullProfile);
+      return fullProfile;
     } catch (firestoreError) {
-      console.warn('Firestore write note:', firestoreError.message);
+      console.log('Firestore write note:', firestoreError.message);
     }
   }
 
@@ -115,7 +199,7 @@ export async function loginWithPhone({ phone, name, userType = 'student', univer
     rollNo: rollNo || '',
     facultyId: facultyId || '',
     roomNumber: roomNumber || '',
-    walletBalance: 500,
+    walletBalance: 0,
     unclaimedOrderCount: 0,
     banStatus: 'active',
     updatedAt: new Date().toISOString()

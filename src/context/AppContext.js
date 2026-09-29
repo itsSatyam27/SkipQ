@@ -2,8 +2,9 @@ import React, { createContext, useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { DEFAULT_UNIVERSITIES, INITIAL_CANTEENS } from '../data/mockData';
-import { getDistanceInMeters, MAX_ORDER_DISTANCE_METERS } from '../utils/distance';
+import { getDistanceInMeters, formatDistance, isWithinOrderingPerimeter, MAX_ORDER_DISTANCE_METERS } from '../utils/distance';
 import { playOrderPlacedSound, playOrderReadyBuzzer, playNewTicketChime, announceTokenReady } from '../utils/audio';
+import { registerForPushNotificationsAsync, sendOrderReadyNotification } from '../utils/notifications';
 import { broadcastEvent, subscribeToRealtimeEvents, SYNC_EVENTS } from '../utils/sync';
 import {
   isFirebaseConfigured,
@@ -13,7 +14,8 @@ import {
 import {
   loginWithPhone,
   syncUserProfileToFirestore,
-  onAuthChange
+  onAuthChange,
+  saveUserProfileToLocalRegistry
 } from '../services/authService';
 import {
   subscribeToCanteens,
@@ -79,7 +81,7 @@ export const AppProvider = ({ children }) => {
   // Location & Wallet State — starts as null until real GPS is obtained
   const [userLocation, setUserLocation] = useState(null);
   const [locationPermissionGranted, setLocationPermissionGranted] = useState(false);
-  const [walletBalance, setWalletBalance] = useState(500); // ₹500 starting balance
+  const [walletBalance, setWalletBalance] = useState(0); // ₹0 starting balance
   const [unclaimedOrderCount, setUnclaimedOrderCount] = useState(0);
   const [banStatus, setBanStatus] = useState('active'); // 'active' | 'temp_ban' | 'perm_ban'
   const [banUntil, setBanUntil] = useState(null);
@@ -90,6 +92,7 @@ export const AppProvider = ({ children }) => {
   useEffect(() => {
     loadStoredData();
     requestUserLocation();
+    registerForPushNotificationsAsync();
 
     // Check custom saved Firebase configuration
     loadPersistedFirebaseConfig().then(res => {
@@ -113,6 +116,10 @@ export const AppProvider = ({ children }) => {
 
         if (orderStatus === 'Ready' || orderStatus === 'Ready for Pickup') {
           playOrderReadyBuzzer();
+          const targetOrd = orders.find(o => o.id === orderId);
+          if (targetOrd) {
+            sendOrderReadyNotification(targetOrd);
+          }
         }
       } else if (event.type === SYNC_EVENTS.CANTEEN_UPDATED) {
         if (event.payload?.canteens) {
@@ -126,23 +133,54 @@ export const AppProvider = ({ children }) => {
       const cleanList = Array.isArray(remoteCanteens)
         ? remoteCanteens.filter(c => !c.id.startsWith('shop-sou-10') && c.id !== 'shop-nirma-201')
         : [];
-      setCanteensState(cleanList);
-      AsyncStorage.setItem(STORAGE_KEYS.CANTEENS, JSON.stringify(cleanList)).catch(() => {});
+      setCanteensState(prev => {
+        const merged = [...cleanList];
+        (prev || []).forEach(p => {
+          if (!merged.some(m => m.id === p.id)) {
+            merged.push(p);
+          }
+        });
+        const normalized = merged.map(shop => {
+          const uni = DEFAULT_UNIVERSITIES.find(u => u.id === (shop.universityId || 'sou')) || DEFAULT_UNIVERSITIES[0];
+          return {
+            ...shop,
+            lat: uni.lat,
+            lng: uni.lng
+          };
+        });
+        AsyncStorage.setItem(STORAGE_KEYS.CANTEENS, JSON.stringify(normalized)).catch(() => {});
+        return normalized;
+      });
     });
 
     // Realtime Firestore listener for Orders (Student & Kitchen POS sync)
-    const unsubscribeOrders = subscribeToOrders((remoteOrders) => {
+    // Filter scoped to user role & shop to comply with Firestore security rules
+    const currentUid = userProfile?.uid;
+    const filter = {
+      role,
+      uid: currentUid,
+      shopId: role === 'seller' ? sellerShopId : null
+    };
+
+    const unsubscribeOrders = subscribeToOrders(filter, (remoteOrders) => {
       if (Array.isArray(remoteOrders)) {
         const cleanOrders = remoteOrders.filter(o => o.id !== 'SQ-2101');
         setOrdersState(prev => {
-          // Check if any order changed to Ready
-          cleanOrders.forEach(rem => {
-            const old = prev.find(p => p.id === rem.id);
-            if (old && old.orderStatus !== 'Ready for Pickup' && rem.orderStatus === 'Ready for Pickup') {
-              playOrderReadyBuzzer();
+          const merged = [...cleanOrders];
+          (prev || []).forEach(p => {
+            if (!merged.some(m => m.id === p.id)) {
+              merged.push(p);
             }
           });
-          return cleanOrders;
+          // Check if any order changed to Ready
+          cleanOrders.forEach(rem => {
+            const old = (prev || []).find(p => p.id === rem.id);
+            if (old && old.orderStatus !== 'Ready for Pickup' && rem.orderStatus === 'Ready for Pickup') {
+              playOrderReadyBuzzer();
+              sendOrderReadyNotification(rem);
+            }
+          });
+          return merged;
         });
         AsyncStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(cleanOrders)).catch(() => {});
       }
@@ -170,7 +208,7 @@ export const AppProvider = ({ children }) => {
       if (unsubscribeOrders) unsubscribeOrders();
       if (unsubscribeAuth) unsubscribeAuth();
     };
-  }, [university]);
+  }, [university, role, sellerShopId, userProfile?.uid]);
 
 
   const requestUserLocation = async () => {
@@ -182,7 +220,8 @@ export const AppProvider = ({ children }) => {
         if (loc && loc.coords) {
           setUserLocation({
             lat: loc.coords.latitude,
-            lng: loc.coords.longitude
+            lng: loc.coords.longitude,
+            accuracy: loc.coords.accuracy || 0
           });
         }
 
@@ -197,7 +236,8 @@ export const AppProvider = ({ children }) => {
               if (newLoc && newLoc.coords) {
                 setUserLocation({
                   lat: newLoc.coords.latitude,
-                  lng: newLoc.coords.longitude
+                  lng: newLoc.coords.longitude,
+                  accuracy: newLoc.coords.accuracy || 0
                 });
               }
             }
@@ -230,7 +270,15 @@ export const AppProvider = ({ children }) => {
         try {
           const parsed = JSON.parse(c);
           const real = Array.isArray(parsed) ? parsed : [];
-          setCanteensState(real);
+          const normalized = real.map(shop => {
+            const uni = DEFAULT_UNIVERSITIES.find(u => u.id === (shop.universityId || 'sou')) || DEFAULT_UNIVERSITIES[0];
+            return {
+              ...shop,
+              lat: uni.lat,
+              lng: uni.lng
+            };
+          });
+          setCanteensState(normalized);
         } catch (e) {
           setCanteensState([]);
         }
@@ -260,7 +308,17 @@ export const AppProvider = ({ children }) => {
       }
 
       const w = await AsyncStorage.getItem(STORAGE_KEYS.USER_WALLET);
-      if (w) setWalletBalance(parseFloat(w));
+      if (w !== null) {
+        const parsedW = parseFloat(w);
+        if (parsedW === 500) {
+          setWalletBalance(0);
+          await AsyncStorage.setItem(STORAGE_KEYS.USER_WALLET, '0');
+        } else {
+          setWalletBalance(parsedW);
+        }
+      } else {
+        setWalletBalance(0);
+      }
 
       const p = await AsyncStorage.getItem(STORAGE_KEYS.USER_PROFILE);
       if (p) setUserProfileState(JSON.parse(p));
@@ -314,6 +372,10 @@ export const AppProvider = ({ children }) => {
 
     // If user is a real vendor registering their shop, create the real canteen!
     if (isSeller && vendorCanteenData) {
+      mergedProfile.stallName = vendorCanteenData.name;
+      mergedProfile.stallLocation = vendorCanteenData.location;
+      mergedProfile.merchantUpi = vendorCanteenData.upiId;
+
       try {
         const createdShop = await addCanteen({
           name: vendorCanteenData.name,
@@ -322,15 +384,23 @@ export const AppProvider = ({ children }) => {
           upiId: vendorCanteenData.upiId,
           phone: vendorCanteenData.phone || mergedProfile.phone || '',
           universityId: chosenUniversity,
+          ownerId: mergedProfile.uid,
           menu: []
         });
         if (createdShop) {
           setSellerShopIdState(createdShop.id);
+          mergedProfile.sellerShopId = createdShop.id;
           await AsyncStorage.setItem(STORAGE_KEYS.SELLER_SHOP_ID, createdShop.id);
         }
       } catch (err) {
         console.log('Error registering initial vendor canteen:', err);
       }
+      setUserProfileState(mergedProfile);
+      await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(mergedProfile));
+    }
+
+    if (mergedProfile?.phone) {
+      await saveUserProfileToLocalRegistry(mergedProfile.phone, mergedProfile);
     }
 
     await AsyncStorage.setItem(STORAGE_KEYS.ROLE, effectiveRole);
@@ -348,6 +418,9 @@ export const AppProvider = ({ children }) => {
     const updated = { ...userProfile, ...newProfile };
     setUserProfileState(updated);
     await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(updated));
+    if (updated.phone) {
+      await saveUserProfileToLocalRegistry(updated.phone, updated);
+    }
     await syncUserProfileToFirestore(updated);
   };
 
@@ -369,6 +442,7 @@ export const AppProvider = ({ children }) => {
 
   // --- Real Canteen Management ---
   const addCanteen = async (canteenData) => {
+    const campusUni = DEFAULT_UNIVERSITIES.find(u => u.id === (canteenData.universityId || university)) || DEFAULT_UNIVERSITIES[0];
     const newId = canteenData.id || ('shop-' + Date.now().toString().slice(-4));
     const newCanteen = {
       id: newId,
@@ -380,10 +454,11 @@ export const AppProvider = ({ children }) => {
       avgWaitMins: 5,
       menu: [],
       tags: ['Campus Canteen'],
-      lat: userLocation?.lat ?? 23.0917,
-      lng: userLocation?.lng ?? 72.5349,
       ownerId: userProfile?.uid || 'vendor_' + Date.now(),
-      ...canteenData
+      ...canteenData,
+      // Campus stalls are physically on campus grounds (Silver Oak University)
+      lat: campusUni.lat,
+      lng: campusUni.lng
     };
 
     const updated = [newCanteen, ...canteens.filter(c => c.id !== newId)];
@@ -429,12 +504,38 @@ export const AppProvider = ({ children }) => {
       description: newItem.description || 'Freshly prepared at counter.'
     };
 
-    const updated = canteens.map(shop => {
+    let shopFound = false;
+    let updated = canteens.map(shop => {
       if (shop.id === effectiveShopId) {
+        shopFound = true;
         return { ...shop, menu: [itemToAdd, ...(shop.menu || [])] };
       }
       return shop;
     });
+
+    if (!shopFound) {
+      const campusUni = DEFAULT_UNIVERSITIES.find(u => u.id === university) || DEFAULT_UNIVERSITIES[0];
+      const newStall = {
+        id: effectiveShopId || `stall-${Date.now().toString().slice(-4)}`,
+        name: userProfile?.stallName || 'Demo stall',
+        location: userProfile?.stallLocation || 'Silver Oak University Campus',
+        universityId: university,
+        openingHours: '08:00 AM - 08:00 PM',
+        upiId: userProfile?.merchantUpi || 'canteen@upi',
+        phone: userProfile?.phone || '+91 98765 43210',
+        status: 'Open',
+        rating: 5.0,
+        currentQueue: 0,
+        avgWaitMins: 5,
+        menu: [itemToAdd],
+        tags: ['Campus Canteen'],
+        lat: campusUni.lat,
+        lng: campusUni.lng,
+        ownerId: userProfile?.uid
+      };
+      updated = [newStall, ...canteens];
+      createCanteen(newStall);
+    }
 
     setCanteensState(updated);
     await AsyncStorage.setItem(STORAGE_KEYS.CANTEENS, JSON.stringify(updated));
@@ -593,13 +694,32 @@ export const AppProvider = ({ children }) => {
       }
     }
 
-    // 2. Real Hardware GPS Geofence Verification (300m threshold)
-    const targetShop = canteens.find(c => c.id === orderData.shopId);
-    if (targetShop && targetShop.lat && targetShop.lng && userLocation?.lat && userLocation?.lng) {
-      const distMeters = getDistanceInMeters(userLocation.lat, userLocation.lng, targetShop.lat, targetShop.lng);
-      if (distMeters > MAX_ORDER_DISTANCE_METERS) {
-        throw new Error(`ORDER BLOCKED: Hardware GPS detects you are ${distMeters}m away from ${targetShop.name} (>300m campus limit). You must be on the campus grounds to place live orders.`);
+    // 1b. Check Wallet Balance if paying with Wallet
+    if (orderData.paymentMethod === 'Wallet') {
+      const orderTotal = Number(orderData.totalAmount || 0);
+      if (walletBalance < orderTotal) {
+        throw new Error(`Insufficient wallet balance. You have ₹${walletBalance.toFixed(0)}, but your order total is ₹${orderTotal}.`);
       }
+    }
+
+    // 2. Real Hardware GPS Geofence Verification with drift tolerance
+    const campusUni = DEFAULT_UNIVERSITIES.find(u => u.id === university) || DEFAULT_UNIVERSITIES[0];
+    const targetShop = canteens.find(c => c.id === orderData.shopId);
+    const shopLat = targetShop?.lat || campusUni.lat;
+    const shopLng = targetShop?.lng || campusUni.lng;
+
+    if (!userLocation || userLocation.lat == null || userLocation.lng == null) {
+      throw new Error(
+        'GPS LOCATION REQUIRED: Please enable device location permissions. Orders can only be placed while physically on campus grounds (<500m).'
+      );
+    }
+
+    const distMeters = getDistanceInMeters(userLocation.lat, userLocation.lng, shopLat, shopLng);
+    if (!isWithinOrderingPerimeter(distMeters, userLocation.accuracy || 0)) {
+      const formattedDist = formatDistance(distMeters);
+      throw new Error(
+        `ORDER BLOCKED: Hardware GPS detects you are ${formattedDist} away from ${targetShop?.name || 'Silver Oak University'} (>500m campus limit). SkipQ orders can only be placed when physically on campus grounds.`
+      );
     }
 
     // 3. The server validates prices, wallet balance, bans, and cash deposits.
@@ -648,7 +768,13 @@ export const AppProvider = ({ children }) => {
     setOrdersState(confirmedOrders);
     setActiveOrderIdState(confirmedOrder.id);
     setWalletBalance(prev => {
-      const nextBalance = Math.max(0, prev - Number(confirmedOrder.heldDepositAmount || 0));
+      let deduction = 0;
+      if (confirmedOrder.paymentMethod === 'Wallet') {
+        deduction = Number(confirmedOrder.totalAmount || 0);
+      } else if (confirmedOrder.heldDepositAmount) {
+        deduction = Number(confirmedOrder.heldDepositAmount || 0);
+      }
+      const nextBalance = Math.max(0, prev - deduction);
       AsyncStorage.setItem(STORAGE_KEYS.USER_WALLET, String(nextBalance)).catch(() => {});
       return nextBalance;
     });
@@ -764,6 +890,8 @@ export const AppProvider = ({ children }) => {
 
     let refundText = targetOrder.paymentMethod === 'Cash'
       ? `10% Pre-order commitment token (₹${refundAmount}) refunded to your UPI account.`
+      : targetOrder.paymentMethod === 'Wallet'
+      ? `Full amount (₹${refundAmount}) refunded back to your SkipQ Wallet balance.`
       : `Full amount (₹${refundAmount}) refunded immediately to your ${targetOrder.paymentMethod || 'UPI'} account.`;
 
     const updatedOrders = orders.map(o => (o.id === orderId ? {
@@ -783,7 +911,13 @@ export const AppProvider = ({ children }) => {
         refundAmount,
         refundStatus: 'REFUND_COMPLETED_UPI'
       });
-      if (targetOrder.heldDepositAmount > 0) {
+      if (targetOrder.paymentMethod === 'Wallet') {
+        setWalletBalance(prev => {
+          const nextBalance = prev + Number(targetOrder.totalAmount || refundAmount || 0);
+          AsyncStorage.setItem(STORAGE_KEYS.USER_WALLET, String(nextBalance)).catch(() => {});
+          return nextBalance;
+        });
+      } else if (targetOrder.heldDepositAmount > 0) {
         setWalletBalance(prev => {
           const nextBalance = prev + Number(targetOrder.heldDepositAmount);
           AsyncStorage.setItem(STORAGE_KEYS.USER_WALLET, String(nextBalance)).catch(() => {});
@@ -847,14 +981,24 @@ export const AppProvider = ({ children }) => {
   };
 
   const logoutUser = async () => {
-    // Clear all user data from local storage
-    await AsyncStorage.multiRemove(Object.values(STORAGE_KEYS));
+    // Clear user-specific session data from local storage, but preserve campus canteens
+    const userSessionKeys = [
+      STORAGE_KEYS.ROLE,
+      STORAGE_KEYS.SELLER_SHOP_ID,
+      STORAGE_KEYS.ACTIVE_PASS,
+      STORAGE_KEYS.USER_WALLET,
+      STORAGE_KEYS.USER_PROFILE,
+      STORAGE_KEYS.UNCLAIMED_COUNT,
+      STORAGE_KEYS.BAN_STATUS,
+      STORAGE_KEYS.BAN_UNTIL,
+      STORAGE_KEYS.ONBOARDING_DONE
+    ];
+    await AsyncStorage.multiRemove(userSessionKeys);
 
-    // Reset all state
+    // Reset user state
     setUserProfileState(DEFAULT_PROFILE);
-    setOrdersState([]);
     setActiveOrderIdState(null);
-    setWalletBalance(500);
+    setWalletBalance(0);
     setUnclaimedOrderCount(0);
     setBanStatus('active');
     setBanUntil(null);

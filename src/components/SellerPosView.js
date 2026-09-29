@@ -1,4 +1,4 @@
-import React, { useContext, useState, useMemo } from 'react';
+import React, { useContext, useState, useMemo, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -10,8 +10,14 @@ import {
   Alert,
   Modal,
   FlatList,
-  Image
+  Image,
+  Platform,
+  StatusBar,
+  Dimensions,
+  useWindowDimensions
 } from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { LinearGradient } from 'expo-linear-gradient';
 import { AppContext } from '../context/AppContext';
 import { announceTokenReady } from '../utils/audio';
 
@@ -24,6 +30,7 @@ export default function SellerPosView({
     canteens,
     sellerShopId,
     setSellerShopId,
+    userProfile,
     toggleItemStock,
     updateItemPrice,
     deleteMenuItem,
@@ -40,37 +47,128 @@ export default function SellerPosView({
     toggleRushMode
   } = useContext(AppContext);
 
+  const [permission, requestPermission] = useCameraPermissions();
   const [activeTab, setActiveTab] = useState('orders'); // 'orders', 'menu', 'analytics'
   const [orderFilter, setOrderFilter] = useState('active'); // 'active', 'completed'
-  const [canteenPickerVisible, setCanteenPickerVisible] = useState(false);
   const [verifyModalVisible, setVerifyModalVisible] = useState(false);
   const [qrScanModalVisible, setQrScanModalVisible] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
   const [orderToVerify, setOrderToVerify] = useState(null);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState('');
   const [chefBatchCollapsed, setChefBatchCollapsed] = useState(false);
+  const [isScanningActive, setIsScanningActive] = useState(true);
+  const [isCameraReady, setIsCameraReady] = useState(false);
+  const [selectedOrderActionSheet, setSelectedOrderActionSheet] = useState(null);
+
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const screenHeight = Math.max(windowHeight, Dimensions.get('screen').height);
+  const screenWidth = Math.max(windowWidth, Dimensions.get('screen').width);
+
+  // Auto-request camera permissions if QR scanner modal is opened
+  useEffect(() => {
+    if (qrScanModalVisible && (!permission || !permission.granted)) {
+      requestPermission();
+    }
+  }, [qrScanModalVisible, permission]);
+
+  // Barcode / QR Handler for instant pickup verification
+  const handleBarcodeScanned = async ({ data }) => {
+    if (!isScanningActive || !data) return;
+    setIsScanningActive(false);
+
+    // Expected format: SKIPQ-PASS:<orderId>:<pickupPin> or raw orderId / token
+    let scannedOrderId = null;
+    let scannedPin = null;
+
+    if (typeof data === 'string' && data.startsWith('SKIPQ-PASS:')) {
+      const parts = data.split(':');
+      scannedOrderId = parts[1];
+      scannedPin = parts[2];
+    } else {
+      scannedOrderId = String(data).trim();
+    }
+
+    const matchedOrder = orders.find(
+      o => o.id === scannedOrderId || String(o.tokenNumber) === scannedOrderId
+    );
+
+    if (matchedOrder) {
+      try {
+        const pinToUse = scannedPin || matchedOrder.pickupPin || '0000';
+        await verifyAndCompleteOrder(matchedOrder.id, pinToUse);
+        Alert.alert(
+          '✅ Handover Verified!',
+          `Token #${matchedOrder.tokenNumber} for ${matchedOrder.buyerName || 'Student'} completed successfully.`
+        );
+        setQrScanModalVisible(false);
+      } catch (err) {
+        Alert.alert('Scan Verification Note', err.message || 'Could not complete order.');
+        setTimeout(() => setIsScanningActive(true), 1500);
+      }
+    } else {
+      Alert.alert(
+        'Pass Not Found',
+        `Scanned payload "${data}" does not match an active order in this canteen.`,
+        [{ text: 'Try Again', onPress: () => setIsScanningActive(true) }]
+      );
+    }
+  };
 
   // Menu Management state
   const [menuSearch, setMenuSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
 
   const campusCanteens = canteens.filter(c => c.universityId === university);
-  const currentShop = campusCanteens.find(c => c.id === sellerShopId) || campusCanteens[0];
+  const currentShop = useMemo(() => {
+    // 1. Try to find match by sellerShopId
+    if (sellerShopId) {
+      const match = campusCanteens.find(c => c.id === sellerShopId);
+      if (match) return match;
+    }
+    // 2. Try to find match by owner ID
+    if (userProfile?.uid) {
+      const match = campusCanteens.find(c => c.ownerId === userProfile.uid);
+      if (match) return match;
+    }
+    // 3. Try to match by stall name entered during onboarding
+    if (userProfile?.stallName) {
+      const match = campusCanteens.find(
+        c => c.name && c.name.trim().toLowerCase() === userProfile.stallName.trim().toLowerCase()
+      );
+      if (match) return match;
+      // Synthesize stall from user profile
+      return {
+        id: sellerShopId || `stall-${(userProfile.stallName || 'shop').toLowerCase().replace(/\s+/g, '-')}`,
+        name: userProfile.stallName,
+        location: userProfile.stallLocation || 'Silver Oak University Campus',
+        openingHours: '08:00 AM - 08:00 PM',
+        upiId: userProfile.merchantUpi || 'canteen@upi',
+        phone: userProfile.phone || '+91 98765 43210',
+        status: 'Open',
+        rating: 5.0,
+        currentQueue: 0,
+        avgWaitMins: 5,
+        menu: []
+      };
+    }
+    // 4. Fallback to first campus canteen or a default stall
+    return campusCanteens[0] || {
+      id: sellerShopId || 'shop-vendor',
+      name: userProfile?.name ? `${userProfile.name}'s Canteen` : 'My Campus Canteen',
+      location: 'Silver Oak University Campus',
+      openingHours: '08:00 AM - 08:00 PM',
+      upiId: 'canteen@upi',
+      phone: '+91 98765 43210',
+      status: 'Open',
+      rating: 5.0,
+      currentQueue: 0,
+      avgWaitMins: 5,
+      menu: []
+    };
+  }, [canteens, university, sellerShopId, userProfile]);
 
-  if (!currentShop) {
-    return (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyEmoji}>🏪</Text>
-        <Text style={styles.emptyTitle}>No Canteen Configured</Text>
-        <Text style={styles.emptySub}>Register your first campus canteen to start managing orders.</Text>
-        <TouchableOpacity style={styles.createFirstBtn} onPress={onOpenCreateCanteenModal}>
-          <Text style={styles.createFirstBtnText}>+ Register New Canteen 🚀</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  const shopOrders = orders.filter(o => o.shopId === currentShop.id);
+  const shopOrders = currentShop ? orders.filter(o => o.shopId === currentShop.id) : [];
   const activeOrders = shopOrders.filter(
     o => o.orderStatus !== 'Completed' && o.orderStatus !== 'Cancelled' && o.orderStatus !== 'Abandoned'
   );
@@ -189,101 +287,103 @@ export default function SellerPosView({
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }}>
-      {/* Seller Header with Canteen Switcher */}
-      <View style={styles.sellerHeader}>
-        <View style={styles.headerTopRow}>
-          <View style={{ flex: 1 }}>
-            <View style={styles.sellerCampusBadge}>
-              <View style={styles.sellerCampusDot} />
-              <Text style={styles.sellerCampusText}>SILVER OAK UNIVERSITY • KDS</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.canteenSelectorBtn}
-              onPress={() => setCanteenPickerVisible(true)}
-            >
+    <View style={styles.rootWrapper}>
+      <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }}>
+        {/* Seller Header: Ocean Breeze Blue-to-Teal Hero Card */}
+        <LinearGradient
+          colors={['#0747a6', '#0070d2', '#00a3c4']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.sellerHeader}
+        >
+          <View style={styles.headerTopRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sellerSubtitle}>Vendor KDS • Live stall</Text>
               <Text style={styles.shopTitle} numberOfLines={1}>
-                🏪 {currentShop.name}
+                {currentShop.name}
               </Text>
-              <View style={styles.switchPill}>
-                <Text style={styles.switchPillText}>Switch ▼</Text>
-              </View>
-            </TouchableOpacity>
-            <Text style={styles.shopLoc}>📍 {currentShop.location}</Text>
-          </View>
-
-          <View style={styles.headerRightActions}>
-            <TouchableOpacity
-              style={[styles.rushBtnHeader, rushModeActive && styles.rushBtnHeaderActive]}
-              onPress={toggleRushMode}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.rushBtnIcon}>{rushModeActive ? '🔥' : '⚡'}</Text>
-              <Text style={[styles.rushBtnText, rushModeActive && styles.rushBtnTextActive]}>
-                {rushModeActive ? 'Rush ON' : 'Rush'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.newCanteenBtn} onPress={onOpenCreateCanteenModal}>
-              <Text style={styles.newCanteenBtnText}>+ New</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Quick Stats */}
-        <View style={styles.statsRow}>
-          <View style={[styles.statBox, styles.statBoxActive]}>
-            <Text style={[styles.statVal, { color: '#fbbf24' }]}>{activeOrders.length}</Text>
-            <Text style={styles.statLbl}>Live Kitchen</Text>
-          </View>
-          <View style={[styles.statBox, styles.statBoxRevenue]}>
-            <Text style={[styles.statVal, { color: '#34d399' }]}>₹{totalRevenue.toFixed(0)}</Text>
-            <Text style={styles.statLbl}>Revenue</Text>
-          </View>
-          <View style={[styles.statBox, styles.statBoxMenu]}>
-            <Text style={[styles.statVal, { color: '#38bdf8' }]}>{menuItems.length}</Text>
-            <Text style={styles.statLbl}>Dishes</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* POS Sub-Navigation — Segmented Control */}
-      <View style={styles.subTabBar}>
-        <TouchableOpacity
-          style={[styles.subTabBtn, activeTab === 'orders' && styles.subTabBtnActive]}
-          onPress={() => setActiveTab('orders')}
-        >
-          <Text style={[styles.subTabText, activeTab === 'orders' && styles.subTabTextActive]}>
-            🍳 Orders
-          </Text>
-          {activeOrders.length > 0 && (
-            <View style={styles.subTabBadge}>
-              <Text style={styles.subTabBadgeText}>{activeOrders.length}</Text>
+              <Text style={styles.shopLoc}>{currentShop.location || 'Near Library'}</Text>
             </View>
-          )}
-        </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.subTabBtn, activeTab === 'menu' && styles.subTabBtnActive]}
-          onPress={() => setActiveTab('menu')}
-        >
-          <Text style={[styles.subTabText, activeTab === 'menu' && styles.subTabTextActive]}>
-            📋 Menu
-          </Text>
-          <View style={[styles.subTabBadge, { backgroundColor: '#1e293b' }]}>
-            <Text style={[styles.subTabBadgeText, { color: '#94a3b8' }]}>{menuItems.length}</Text>
+            <View style={styles.headerRightActions}>
+              <TouchableOpacity
+                style={[styles.rushBtnHeader, rushModeActive && styles.rushBtnHeaderActive]}
+                onPress={toggleRushMode}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.rushBtnIcon}>{rushModeActive ? '🔥' : '⚡'}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.headerScanBtn}
+                onPress={async () => {
+                  setIsScanningActive(true);
+                  setIsCameraReady(false);
+                  if (!permission?.granted) {
+                    const res = await requestPermission();
+                    if (!res?.granted) {
+                      setQrScanModalVisible(true);
+                      return;
+                    }
+                  }
+                  setQrScanModalVisible(true);
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.headerScanBtnText}>📷 QR</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.subTabBtn, activeTab === 'analytics' && styles.subTabBtnActive]}
-          onPress={() => setActiveTab('analytics')}
-        >
-          <Text style={[styles.subTabText, activeTab === 'analytics' && styles.subTabTextActive]}>
-            📊 Stats
-          </Text>
-        </TouchableOpacity>
-      </View>
+          {/* Quick Stats: 2 Live kitchen, ₹0 Revenue, 2 Dishes */}
+          <View style={styles.statsRow}>
+            <View style={styles.statBox}>
+              <Text style={styles.statVal}>{activeOrders.length}</Text>
+              <Text style={styles.statLbl}>Live kitchen</Text>
+            </View>
+            <View style={styles.statBox}>
+              <Text style={styles.statVal}>₹{totalRevenue.toFixed(0)}</Text>
+              <Text style={styles.statLbl}>Revenue</Text>
+            </View>
+            <View style={styles.statBox}>
+              <Text style={styles.statVal}>{menuItems.length}</Text>
+              <Text style={styles.statLbl}>Dishes</Text>
+            </View>
+          </View>
+        </LinearGradient>
+
+        {/* POS Sub-Navigation — Segmented Control */}
+        <View style={styles.subTabBar}>
+          <TouchableOpacity
+            style={[styles.subTabBtn, activeTab === 'orders' && styles.subTabBtnActive]}
+            onPress={() => setActiveTab('orders')}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.subTabText, activeTab === 'orders' && styles.subTabTextActive]}>
+              Orders {activeOrders.length}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.subTabBtn, activeTab === 'menu' && styles.subTabBtnActive]}
+            onPress={() => setActiveTab('menu')}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.subTabText, activeTab === 'menu' && styles.subTabTextActive]}>
+              Menu {menuItems.length}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.subTabBtn, activeTab === 'analytics' && styles.subTabBtnActive]}
+            onPress={() => setActiveTab('analytics')}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.subTabText, activeTab === 'analytics' && styles.subTabTextActive]}>
+              Stats
+            </Text>
+          </TouchableOpacity>
+        </View>
 
       {/* ═══════════════════════════════════════════════════ */}
       {/* TAB 1: KITCHEN DISPLAY SYSTEM (KDS) — ORDERS       */}
@@ -363,206 +463,127 @@ export default function SellerPosView({
                 ? Math.max(1, Math.round((Date.now() - new Date(order.timestamp).getTime()) / 60000))
                 : 1;
 
+              const isCash = order.paymentMethod === 'Cash';
+              const dueAmount = order.dueAtCounter !== undefined
+                ? order.dueAtCounter
+                : Math.max(0, order.totalAmount - (order.upfrontPaid || Math.ceil(order.totalAmount * 0.1)));
+
               return (
                 <View
                   key={order.id}
                   style={[
                     styles.kdsCard,
-                    isReady && styles.kdsReadyCard,
-                    isCompleted && styles.kdsCompletedCard,
-                    isCancelled && styles.kdsCancelledCard,
-                    isAbandoned && styles.kdsAbandonedCard
+                    isCash ? styles.kdsCardCashEdge : styles.kdsCardOnlineEdge
                   ]}
                 >
-                  {/* Token + Status Header */}
-                  <View style={styles.kdsCardHeader}>
-                    <View style={{ flex: 1 }}>
-                      <View style={styles.tokenRow}>
-                        <View style={[styles.tokenPill, isReady && styles.tokenPillReady]}>
-                          <Text style={[styles.tokenText, isReady && styles.tokenTextReady]}>
-                            #{order.tokenNumber || 'SQ-00'}
-                          </Text>
-                        </View>
-                        {isPreparing && (
-                          <View style={styles.urgencyTag}>
-                            <Text style={styles.urgencyText}>🔥 {elapsedMins}m ago</Text>
-                          </View>
-                        )}
-                        {isReady && (
-                          <View style={[styles.urgencyTag, styles.urgencyTagReady]}>
-                            <Text style={styles.urgencyTextReady}>🔔 Awaiting PIN</Text>
-                          </View>
-                        )}
-                      </View>
-                      <Text style={styles.orderStudentName}>
-                        👤 {order.buyerName || 'Campus Student'}{' '}
-                        {order.buyerRollNo ? `(${order.buyerRollNo})` : ''}
+                  {/* Card Top: Token Pill + Price */}
+                  <View style={styles.kdsCardHeaderRow}>
+                    <View style={styles.tokenPill}>
+                      <Text style={styles.tokenPillText}>#{order.tokenNumber || 'SQ-00'}</Text>
+                    </View>
+                    <Text style={styles.kdsPriceText}>₹{order.totalAmount}</Text>
+                  </View>
+
+                  {/* Customer Name & Items */}
+                  <View style={styles.customerRow}>
+                    <Text style={styles.customerName}>{order.buyerName || 'Satyam'}</Text>
+                    <Text style={styles.itemSummaryText}>
+                      {' • '}
+                      {(order.items || []).map(i => `${i.name} x${i.qty}`).join(', ') || 'Items'}
+                    </Text>
+                  </View>
+
+                  {/* Payment Status Pill */}
+                  {isCash ? (
+                    <View style={styles.cashPill}>
+                      <Text style={styles.cashPillText}>Collect ₹{dueAmount} cash</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.onlinePill}>
+                      <Text style={styles.onlinePillText}>
+                        {order.paymentMethod || 'PhonePe'} • 100% paid
                       </Text>
                     </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={styles.orderTotalAmount}>₹{order.totalAmount}</Text>
-                      <View style={styles.paymentChip}>
-                        <Text style={styles.paymentChipText}>
-                          {order.paymentMethod === 'Cash'
-                            ? `💵 Collect ₹${order.dueAtCounter !== undefined ? order.dueAtCounter : Math.max(0, order.totalAmount - (order.upfrontPaid || Math.ceil(order.totalAmount * 0.1)))} Cash`
-                            : `⚡ ${order.paymentMethod} (100% Paid)`}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
+                  )}
 
-                  {/* Items list */}
-                  <View style={styles.itemsList}>
-                    {(order.items || []).map((i, idx) => (
-                      <View key={idx} style={styles.itemLine}>
-                        <View style={styles.itemQtyBadge}>
-                          <Text style={styles.itemQtyText}>x{i.qty}</Text>
-                        </View>
-                        <Text style={styles.itemText}>{i.name}</Text>
-                        <Text style={styles.itemPriceSub}>₹{i.price * i.qty}</Text>
-                      </View>
-                    ))}
+                  {/* Pickup Slot / Timing */}
+                  <Text style={styles.slotTimeText}>
+                    {order.pickupSlot && order.pickupSlot !== 'ASAP'
+                      ? order.pickupSlot
+                      : '01:10 PM • Lunch break'}
+                    {order.isFacultyExpress ? ' • ⭐ Faculty Express' : ''}
+                    {order.groupCollectorName ? ` • 👥 ${order.groupCollectorName}` : ''}
+                  </Text>
 
-                    {/* Special Instructions */}
-                    {order.specialInstructions ? (
-                      <View style={styles.notesBox}>
-                        <Text style={styles.notesLabel}>📝 CHEF NOTE</Text>
-                        <Text style={styles.notesText}>{order.specialInstructions}</Text>
-                      </View>
-                    ) : null}
-
-                    {order.paymentMethod === 'Cash' ? (
-                      <Text style={[styles.depositNotice, { color: '#0284c7' }]}>
-                        ⚡ 10% UPI Token Paid: ₹{order.upfrontPaid || order.heldDepositAmount || Math.ceil(order.totalAmount * 0.1)} • Collect ₹{order.dueAtCounter !== undefined ? order.dueAtCounter : Math.max(0, order.totalAmount - (order.upfrontPaid || Math.ceil(order.totalAmount * 0.1)))} Cash at Counter
-                      </Text>
-                    ) : (
-                      <Text style={[styles.depositNotice, { color: '#16a34a' }]}>
-                        ⚡ 100% Online UPI Paid (₹{order.upfrontPaid || order.totalAmount})
-                      </Text>
-                    )}
-                  </View>
-
-                  {/* Faculty & Timing Badges */}
-                  <View style={styles.kdsBadgeTagsRow}>
-                    {order.isFacultyExpress && (
-                      <View style={styles.facultyOrderTag}>
-                        <Text style={styles.facultyOrderTagText}>⭐ FACULTY EXPRESS PRIORITY</Text>
-                      </View>
-                    )}
-                    {order.pickupSlot && order.pickupSlot !== 'ASAP' && (
-                      <View style={styles.orderSlotTag}>
-                        <Text style={styles.orderSlotTagText}>⏰ {order.pickupSlot}</Text>
-                      </View>
-                    )}
-                    {order.groupCollectorName ? (
-                      <View style={styles.orderCollectorTag}>
-                        <Text style={styles.orderCollectorTagText}>👥 Collector: {order.groupCollectorName}</Text>
-                      </View>
-                    ) : null}
-                  </View>
-
-                  {order.facultyRoomNote ? (
-                    <View style={styles.facultyDeliveryBox}>
-                      <Text style={styles.facultyDeliveryText}>🏫 Staff Room: {order.facultyRoomNote}</Text>
+                  {/* Special Chef Instructions */}
+                  {order.specialInstructions ? (
+                    <View style={styles.notesBox}>
+                      <Text style={styles.notesText}>📝 {order.specialInstructions}</Text>
                     </View>
                   ) : null}
 
-                  {/* Action Buttons */}
-                  <View style={styles.kdsActionsColumn}>
-                    {order.paymentStatus === 'PENDING_MERCHANT_CONFIRMATION' && (
+                  {/* Action Buttons Row */}
+                  {!isCompleted && !isCancelled && !isAbandoned ? (
+                    <View style={styles.kdsActionsRow}>
                       <TouchableOpacity
-                        style={styles.kdsActionBtnVerify}
-                        onPress={() => Alert.alert(
-                          'Confirm UPI payment',
-                          `Confirm that ₹${order.totalAmount} has arrived in your UPI app before preparing this order.`,
-                          [
-                            { text: 'Not yet', style: 'cancel' },
-                            { text: 'Payment received', onPress: async () => {
-                              try {
-                                await confirmUpiPayment(order.id);
-                                Alert.alert('Payment confirmed', 'The student has been notified that you confirmed payment.');
-                              } catch (e) { Alert.alert('Could not confirm', e.message || 'Please try again.'); }
-                            } }
-                          ]
-                        )}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={styles.kdsBtnTextPrimary}>💳 Confirm UPI Payment</Text>
-                      </TouchableOpacity>
-                    )}
-                    {isPreparing && (
-                      <TouchableOpacity
-                        style={styles.kdsActionBtnPrimary}
+                        style={styles.btnVerifyPin}
                         onPress={() => {
-                          announceTokenReady(order.tokenNumber, currentShop.name);
-                          markOrderReady(order.id);
-                        }}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={styles.kdsBtnTextPrimary}>🔔  Call Token & Mark Ready</Text>
-                      </TouchableOpacity>
-                    )}
-
-                    {isReady && (
-                      <View style={styles.verifyButtonPair}>
-                        <TouchableOpacity
-                          style={styles.kdsActionBtnVerify}
-                          onPress={() => {
+                          if (isPreparing) {
+                            announceTokenReady(order.tokenNumber, currentShop.name);
+                            markOrderReady(order.id);
+                          } else {
                             setOrderToVerify(order);
                             setPinInput('');
                             setPinError('');
                             setVerifyModalVisible(true);
-                          }}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={styles.kdsBtnTextPrimary}>✅  Verify PIN</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={styles.kdsActionBtnScan}
-                          onPress={() => {
-                            setOrderToVerify(order);
-                            setQrScanModalVisible(true);
-                          }}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={styles.kdsBtnTextScan}>📷  Scan QR</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-
-                    {!isCompleted && !isCancelled && !isAbandoned && (
-                      <View style={styles.kdsSecondaryRow}>
-                        <TouchableOpacity
-                          style={styles.kdsActionBtnCancel}
-                          onPress={() => handleSellerCancel(order.id)}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={styles.kdsBtnTextCancel}>❌ Cancel</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={styles.kdsActionBtnNoShow}
-                          onPress={() => handleMarkAbandoned(order.id, order.buyerName)}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={styles.kdsBtnTextNoShow}>🚨 No-Show</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-
-                    {(isCompleted || isCancelled || isAbandoned) && (
-                      <View style={styles.completedStatusChip}>
-                        <Text style={styles.completedStatus}>
-                          {isCompleted
-                            ? '✅ Completed & Picked Up'
-                            : isCancelled
-                              ? '❌ Cancelled & Refunded'
-                              : '🚨 Abandoned (No-Show Penalty)'}
+                          }
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.btnVerifyPinText}>
+                          {isPreparing ? 'Call & Ready' : 'Verify PIN'}
                         </Text>
-                      </View>
-                    )}
-                  </View>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.btnScanQr}
+                        onPress={async () => {
+                          setOrderToVerify(order);
+                          setIsScanningActive(true);
+                          setIsCameraReady(false);
+                          if (!permission?.granted) {
+                            const res = await requestPermission();
+                            if (!res?.granted) {
+                              setQrScanModalVisible(true);
+                              return;
+                            }
+                          }
+                          setQrScanModalVisible(true);
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.btnScanQrText}>Scan QR</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.btnMoreActions}
+                        onPress={() => setSelectedOrderActionSheet(order)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.btnMoreActionsText}>•••</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.completedStatusChip}>
+                      <Text style={styles.completedStatus}>
+                        {isCompleted
+                          ? '✅ Completed & Picked Up'
+                          : isCancelled
+                            ? '❌ Cancelled & Refunded'
+                            : '🚨 Abandoned (No-Show)'}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               );
             })
@@ -782,52 +803,7 @@ export default function SellerPosView({
           </TouchableOpacity>
         </View>
       )}
-
-      {/* Canteen Switcher Modal */}
-      <Modal visible={canteenPickerVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Canteen Stall to Manage</Text>
-              <TouchableOpacity onPress={() => setCanteenPickerVisible(false)}>
-                <Text style={styles.closeBtn}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <FlatList
-              data={campusCanteens}
-              keyExtractor={item => item.id}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[styles.canteenChoice, sellerShopId === item.id && styles.canteenChoiceActive]}
-                  onPress={() => {
-                    setSellerShopId(item.id);
-                    setCanteenPickerVisible(false);
-                  }}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.canteenChoiceName, sellerShopId === item.id && styles.canteenChoiceNameActive]}>
-                      🏪 {item.name}
-                    </Text>
-                    <Text style={styles.canteenChoiceLoc}>📍 {item.location}</Text>
-                  </View>
-                  {sellerShopId === item.id && <Text style={styles.checkmark}>✓</Text>}
-                </TouchableOpacity>
-              )}
-            />
-
-            <TouchableOpacity
-              style={styles.modalCreateBtn}
-              onPress={() => {
-                setCanteenPickerVisible(false);
-                onOpenCreateCanteenModal();
-              }}
-            >
-              <Text style={styles.modalCreateText}>+ Register New Campus Canteen</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      </ScrollView>
 
       {/* Handover PIN Verification Modal */}
       <Modal visible={verifyModalVisible} transparent animationType="fade" onRequestClose={() => setVerifyModalVisible(false)}>
@@ -881,104 +857,269 @@ export default function SellerPosView({
               >
                 <Text style={styles.verifyConfirmText}>Verify PIN & Complete 🚀</Text>
               </TouchableOpacity>
-
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* Fast QR Scan & Handover Modal */}
-      <Modal visible={qrScanModalVisible} transparent animationType="slide" onRequestClose={() => setQrScanModalVisible(false)}>
-        <View style={[styles.modalOverlay, { justifyContent: 'center', alignItems: 'center' }]}>
-          <View style={styles.qrModalContent}>
-            <View style={styles.verifyModalHeader}>
-              <View>
-                <Text style={styles.verifyModalTitle}>📷 QR Fast Scan & Handover</Text>
-                <Text style={styles.verifyModalSub}>Point counter camera or tap ready ticket</Text>
+      {/* Quick Action Sheet Modal for Cancel / No-Show (...) */}
+      <Modal
+        visible={!!selectedOrderActionSheet}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setSelectedOrderActionSheet(null)}
+      >
+        <TouchableOpacity
+          style={styles.actionSheetOverlay}
+          activeOpacity={1}
+          onPress={() => setSelectedOrderActionSheet(null)}
+        >
+          <View style={styles.actionSheetCard}>
+            <Text style={styles.actionSheetTitle}>
+              Order #{selectedOrderActionSheet?.tokenNumber} Options
+            </Text>
+            <Text style={styles.actionSheetSub}>
+              {selectedOrderActionSheet?.buyerName || 'Student'} • ₹{selectedOrderActionSheet?.totalAmount}
+            </Text>
+
+            <TouchableOpacity
+              style={styles.actionSheetBtnCancel}
+              onPress={() => {
+                const oId = selectedOrderActionSheet?.id;
+                setSelectedOrderActionSheet(null);
+                if (oId) handleSellerCancel(oId);
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.actionSheetBtnCancelText}>❌ Cancel Order (Refund UPI)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionSheetBtnNoShow}
+              onPress={() => {
+                const oId = selectedOrderActionSheet?.id;
+                const bName = selectedOrderActionSheet?.buyerName;
+                setSelectedOrderActionSheet(null);
+                if (oId) handleMarkAbandoned(oId, bName);
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.actionSheetBtnNoShowText}>🚨 Mark No-Show Strike</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionSheetBtnClose}
+              onPress={() => setSelectedOrderActionSheet(null)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.actionSheetBtnCloseText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Full-Screen Fast QR Scan & Handover Modal */}
+      <Modal
+        visible={qrScanModalVisible}
+        animationType="slide"
+        transparent={true}
+        statusBarTranslucent={true}
+        onRequestClose={() => {
+          setQrScanModalVisible(false);
+          setTorchOn(false);
+          setIsCameraReady(false);
+        }}
+      >
+        <View style={[styles.scannerFullScreenContainer, { width: screenWidth, height: screenHeight }]}>
+          {permission?.granted ? (
+            <View style={[styles.cameraContainer, { width: screenWidth, height: screenHeight }]}>
+              <CameraView
+                style={[styles.cameraView, { width: screenWidth, height: screenHeight }]}
+                facing="back"
+                enableTorch={torchOn}
+                barcodeScannerSettings={{
+                  barcodeTypes: ['qr']
+                }}
+                onCameraReady={() => {
+                  setIsCameraReady(true);
+                }}
+                onBarcodeScanned={isScanningActive ? handleBarcodeScanned : undefined}
+              />
+
+              {/* Full Screen Scanner Overlay */}
+              <View style={[styles.scannerOverlay, { width: screenWidth, height: screenHeight }]}>
+                {/* Top Campus Bar & Navigation Header */}
+                <View style={styles.scannerHeaderRow}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.scannerCampusBadge}>
+                      <View style={styles.scannerCampusDot} />
+                      <Text style={styles.scannerCampusText}>SILVER OAK UNIVERSITY • VENDOR KDS</Text>
+                    </View>
+                    <Text style={styles.scannerHeaderTitle}>📷 Scan Student Pass</Text>
+                    <Text style={styles.scannerHeaderSub}>Align student's digital pass QR inside viewfinder</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.scannerCloseCircle}
+                    onPress={() => {
+                      setQrScanModalVisible(false);
+                      setTorchOn(false);
+                      setIsCameraReady(false);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.scannerCloseCircleText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Viewfinder Target Reticle Frame */}
+                <View style={styles.reticleWrapper}>
+                  <View style={styles.reticleFrame}>
+                    <View style={styles.cornerTL} />
+                    <View style={styles.cornerTR} />
+                    <View style={styles.cornerBL} />
+                    <View style={styles.cornerBR} />
+                    <View style={styles.laserScanLine} />
+                  </View>
+                  <View style={styles.reticleHintBox}>
+                    <Text style={styles.reticleHintText}>
+                      {isScanningActive
+                        ? '🎯 Holding student pass within frame auto-verifies'
+                        : '⚡ Verifying token handover...'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Bottom Quick Controls Deck */}
+                <View style={styles.scannerBottomDeck}>
+                  <View style={styles.scannerControlsRow}>
+                    {/* Torch Toggle */}
+                    <TouchableOpacity
+                      style={[styles.scannerCtrlBtn, torchOn && styles.scannerCtrlBtnActive]}
+                      onPress={() => setTorchOn(prev => !prev)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.scannerCtrlIcon, torchOn && styles.scannerCtrlIconActive]}>
+                        {torchOn ? '🔦 Torch ON' : '🔦 Torch'}
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Manual 4-Digit PIN Button */}
+                    <TouchableOpacity
+                      style={styles.scannerManualPinBtn}
+                      onPress={() => {
+                        setQrScanModalVisible(false);
+                        setTorchOn(false);
+                        setIsCameraReady(false);
+                        setPinInput('');
+                        setPinError('');
+                        if (activeOrders.length > 0) {
+                          setOrderToVerify(activeOrders[0]);
+                        }
+                        setVerifyModalVisible(true);
+                      }}
+                      activeOpacity={0.85}
+                    >
+                      <LinearGradient
+                        colors={['#0747a6', '#0070d2', '#00a3c4']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.scannerManualPinGradient}
+                      >
+                        <Text style={styles.scannerManualPinText}>🔢 Enter 4-Digit PIN</Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Ready Orders Quick Pick Drawer */}
+                  {activeOrders.filter(o => o.orderStatus === 'Ready for Pickup' || o.orderStatus === 'Ready').length > 0 && (
+                    <View style={styles.readyTokensDrawer}>
+                      <View style={styles.readyTokensDrawerHeader}>
+                        <Text style={styles.readyTokensDrawerTitle}>READY FOR HANDOVER:</Text>
+                        <Text style={styles.readyTokensDrawerCount}>
+                          {activeOrders.filter(o => o.orderStatus === 'Ready for Pickup' || o.orderStatus === 'Ready').length} tokens
+                        </Text>
+                      </View>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
+                        {activeOrders
+                          .filter(o => o.orderStatus === 'Ready for Pickup' || o.orderStatus === 'Ready')
+                          .map(rOrd => (
+                            <TouchableOpacity
+                              key={rOrd.id}
+                              style={styles.readyTokenChip}
+                              onPress={() => {
+                                setOrderToVerify(rOrd);
+                                setQrScanModalVisible(false);
+                                setTorchOn(false);
+                                setIsCameraReady(false);
+                                setPinInput('');
+                                setPinError('');
+                                setVerifyModalVisible(true);
+                              }}
+                              activeOpacity={0.8}
+                            >
+                              <View style={styles.readyTokenChipBadge}>
+                                <Text style={styles.readyTokenChipNum}>#{rOrd.tokenNumber}</Text>
+                              </View>
+                              <Text style={styles.readyTokenChipName} numberOfLines={1}>{rOrd.buyerName}</Text>
+                            </TouchableOpacity>
+                          ))}
+                      </ScrollView>
+                    </View>
+                  )}
+                </View>
               </View>
-              <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setQrScanModalVisible(false)}>
-                <Text style={styles.modalCloseBtnText}>✕</Text>
+            </View>
+          ) : (
+            <View style={[styles.scannerNoPermissionBox, { width: screenWidth, height: screenHeight }]}>
+              <View style={styles.scannerCampusBadge}>
+                <View style={styles.scannerCampusDot} />
+                <Text style={styles.scannerCampusText}>SILVER OAK UNIVERSITY • VENDOR KDS</Text>
+              </View>
+              <Text style={styles.scannerNoPermEmoji}>📷</Text>
+              <Text style={styles.scannerNoPermTitle}>Camera Access Required</Text>
+              <Text style={styles.scannerNoPermSub}>
+                To scan student pickup passes and complete queue-free handovers instantly, please allow SkipQ to access your camera.
+              </Text>
+              <TouchableOpacity style={styles.enableCameraBtn} onPress={requestPermission} activeOpacity={0.85}>
+                <Text style={styles.enableCameraBtnText}>Enable Camera Access</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.closeNoPermBtn}
+                onPress={() => {
+                  setQrScanModalVisible(false);
+                  setTorchOn(false);
+                  setIsCameraReady(false);
+                }}
+              >
+                <Text style={styles.closeNoPermBtnText}>Back to Kitchen KDS</Text>
               </TouchableOpacity>
             </View>
-
-            {/* QR capture is intentionally unavailable until a real camera flow is added. */}
-            <View style={styles.viewfinderBox}>
-              <View style={styles.cornerTL} />
-              <View style={styles.cornerTR} />
-              <View style={styles.cornerBL} />
-              <View style={styles.cornerBR} />
-              <View style={styles.laserScanLine} />
-              <Text style={styles.viewfinderText}>QR scanning is unavailable. Use the pickup PIN.</Text>
-            </View>
-
-            {/* QR scanning is not enabled yet; every handover still requires the pickup PIN. */}
-            {orderToVerify && (
-              <View style={styles.fastMatchCard}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.fastMatchToken}>TOKEN #{orderToVerify.tokenNumber}</Text>
-                  <Text style={styles.fastMatchBuyer}>{orderToVerify.buyerName} • ₹{orderToVerify.totalAmount}</Text>
-                  <Text style={styles.fastMatchPin}>PIN: {orderToVerify.pickupPin}</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.fastMatchBtn}
-                  onPress={() => {
-                    setQrScanModalVisible(false);
-                    setPinInput('');
-                    setPinError('');
-                    setVerifyModalVisible(true);
-                  }}
-                >
-                  <Text style={styles.fastMatchBtnText}>Enter Pickup PIN</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Quick list of other ready tokens */}
-            <Text style={styles.readyListHeader}>OR TAP OTHER READY ORDERS:</Text>
-            <ScrollView style={{ maxHeight: 140 }}>
-              {activeOrders.filter(o => o.orderStatus === 'Ready for Pickup' || o.orderStatus === 'Ready').map(rOrd => (
-                <TouchableOpacity
-                  key={rOrd.id}
-                  style={styles.quickReadyRow}
-                  onPress={() => {
-                    setOrderToVerify(rOrd);
-                    setQrScanModalVisible(false);
-                    setPinInput('');
-                    setPinError('');
-                    setVerifyModalVisible(true);
-                  }}
-                >
-                  <Text style={styles.quickReadyToken}>#{rOrd.tokenNumber}</Text>
-                  <Text style={styles.quickReadyBuyer} numberOfLines={1}>{rOrd.buyerName}</Text>
-                  <Text style={styles.quickReadyAction}>Collect ➔</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
+          )}
         </View>
       </Modal>
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+
   container: {
     flex: 1,
-    backgroundColor: '#f5f3ee',
+    backgroundColor: '#edf3f8',
     padding: 16,
   },
   emptyContainer: {
     flex: 1,
-    backgroundColor: '#f5f3ee',
+    backgroundColor: '#edf3f8',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
   },
   emptyEmoji: { fontSize: 48, marginBottom: 12 },
-  emptyTitle: { color: '#1c2521', fontSize: 18, fontWeight: '800' },
-  emptySub: { color: '#65736a', fontSize: 12, textAlign: 'center', marginVertical: 8 },
+  emptyTitle: { color: '#0f172a', fontSize: 18, fontWeight: '800' },
+  emptySub: { color: '#64748b', fontSize: 12, textAlign: 'center', marginVertical: 8 },
   createFirstBtn: {
-    backgroundColor: '#1c2521',
+    backgroundColor: '#0c52a3',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 12,
@@ -986,446 +1127,418 @@ const styles = StyleSheet.create({
   },
   createFirstBtnText: { color: '#ffffff', fontWeight: '800', fontSize: 14 },
 
-  // — Seller Header —
+  // — Seller Header: Ocean Breeze Hero Card —
   sellerHeader: {
-    backgroundColor: '#1c2521',
     borderRadius: 24,
-    padding: 18,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#314238',
+    padding: 20,
+    marginBottom: 16,
+    shadowColor: '#0070d2',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    elevation: 8,
   },
   headerTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
   },
-  sellerCampusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  sellerSubtitle: {
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontSize: 13,
+    fontWeight: '700',
     marginBottom: 4,
-  },
-  sellerCampusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10b981',
-  },
-  sellerCampusText: {
-    color: '#10b981',
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-  },
-  canteenSelectorBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginVertical: 3,
-    flexWrap: 'wrap',
   },
   shopTitle: {
     color: '#ffffff',
-    fontSize: 20,
+    fontSize: 26,
     fontWeight: '900',
+    marginBottom: 2,
     letterSpacing: -0.3,
   },
-  switchPill: {
-    backgroundColor: '#314238',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#4d8062',
-  },
-  switchPillText: {
-    color: '#c3d0c7',
-    fontSize: 10,
-    fontWeight: '800',
-  },
   shopLoc: {
-    color: '#aab9ae',
-    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 13,
+    fontWeight: '600',
   },
-  newCanteenBtn: {
-    backgroundColor: '#e9b95a',
+  headerRightActions: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  rushBtnHeader: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  rushBtnHeaderActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.4)',
+    borderColor: '#f59e0b',
+  },
+  rushBtnIcon: {
+    fontSize: 14,
+  },
+  headerScanBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
-  newCanteenBtnText: {
-    color: '#1c2521',
-    fontSize: 11,
+  headerScanBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
     fontWeight: '900',
   },
   statsRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 14,
+    gap: 10,
+    marginTop: 18,
   },
   statBox: {
     flex: 1,
-    backgroundColor: '#26332b',
-    padding: 10,
-    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    paddingVertical: 14,
+    paddingHorizontal: 6,
+    borderRadius: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#314238',
-  },
-  statBoxActive: {
-    borderColor: 'rgba(245, 158, 11, 0.3)',
-    backgroundColor: 'rgba(245, 158, 11, 0.06)',
-  },
-  statBoxRevenue: {
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-    backgroundColor: 'rgba(16, 185, 129, 0.06)',
-  },
-  statBoxMenu: {
-    borderColor: 'rgba(56, 189, 248, 0.3)',
-    backgroundColor: 'rgba(56, 189, 248, 0.06)',
+    borderColor: 'rgba(255, 255, 255, 0.22)',
   },
   statVal: {
-    fontSize: 17,
+    color: '#ffffff',
+    fontSize: 22,
     fontWeight: '900',
   },
   statLbl: {
-    color: '#aab9ae',
-    fontSize: 9,
-    fontWeight: '700',
-    marginTop: 2,
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 3,
   },
 
   // — Segmented Sub-Tab Bar —
   subTabBar: {
     flexDirection: 'row',
-    backgroundColor: '#e5eee8',
-    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
     padding: 4,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#c7d8cc',
+    marginBottom: 16,
+    overflow: 'hidden',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 0,
   },
   subTabBtn: {
     flex: 1,
-    flexDirection: 'row',
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    paddingVertical: 9,
-    borderRadius: 10,
+    borderRadius: 20,
+    overflow: 'hidden',
   },
   subTabBtnActive: {
-    backgroundColor: '#1c2521',
+    backgroundColor: '#0c52a3',
   },
   subTabText: {
-    color: '#65736a',
-    fontSize: 12,
+    color: '#475569',
+    fontSize: 13.5,
     fontWeight: '700',
   },
   subTabTextActive: {
     color: '#ffffff',
-    fontWeight: '800',
-  },
-  subTabBadge: {
-    backgroundColor: 'rgba(245, 158, 11, 0.8)',
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  subTabBadgeText: {
-    color: '#ffffff',
-    fontSize: 10,
+    fontSize: 13.5,
     fontWeight: '900',
   },
 
   // — Panel —
   panel: {
-    backgroundColor: '#fffdf9',
-    borderRadius: 22,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#e2ded5',
+    backgroundColor: 'transparent',
+    padding: 0,
+    borderWidth: 0,
   },
 
   // — Filter Pills —
   filterPillsRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   filterPill: {
-    backgroundColor: '#f0eee8',
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    overflow: 'hidden',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 0,
   },
   filterPillActive: {
-    backgroundColor: '#1c2521',
+    backgroundColor: '#0c52a3',
+    borderColor: '#0c52a3',
   },
   filterPillText: {
-    color: '#65736a',
+    color: '#475569',
     fontSize: 12,
     fontWeight: '700',
   },
   filterPillTextActive: {
     color: '#ffffff',
+    fontWeight: '800',
   },
 
   // — No Orders —
   noOrdersBox: {
     alignItems: 'center',
-    paddingVertical: 30,
+    paddingVertical: 36,
   },
-  noOrdersEmoji: { fontSize: 32, marginBottom: 6 },
-  noOrdersText: { color: '#65736a', fontSize: 12 },
+  noOrdersEmoji: { fontSize: 36, marginBottom: 8 },
+  noOrdersText: { color: '#64748b', fontSize: 13, textAlign: 'center' },
   addFirstDishBtn: {
-    backgroundColor: '#e9b95a',
+    backgroundColor: '#0c52a3',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 10,
     marginTop: 10,
   },
-  addFirstDishText: { color: '#1c2521', fontWeight: '800', fontSize: 12 },
+  addFirstDishText: { color: '#ffffff', fontWeight: '800', fontSize: 12 },
 
   // ═══════════════════════════
   // KDS Order Cards
   // ═══════════════════════════
   kdsCard: {
-    backgroundColor: '#f9f8f4',
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#f59e0b',
+    backgroundColor: '#ffffff',
+    borderRadius: 22,
+    padding: 18,
+    marginBottom: 16,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 3,
     borderWidth: 1,
-    borderColor: '#e2ded5',
+    borderColor: 'rgba(226, 232, 240, 0.8)',
   },
-  kdsReadyCard: {
-    borderLeftColor: '#10b981',
-    backgroundColor: 'rgba(16, 185, 129, 0.06)',
-    borderColor: 'rgba(16, 185, 129, 0.25)',
-  },
-  kdsCompletedCard: {
-    borderLeftColor: '#475569',
-    opacity: 0.7,
-  },
-  kdsCancelledCard: {
-    borderLeftColor: '#f43f5e',
-    opacity: 0.7,
-  },
-  kdsAbandonedCard: {
+  kdsCardCashEdge: {
+    borderLeftWidth: 5,
     borderLeftColor: '#f59e0b',
-    opacity: 0.7,
   },
-  kdsCardHeader: {
+  kdsCardOnlineEdge: {
+    borderLeftWidth: 5,
+    borderLeftColor: '#00a3c4',
+  },
+  kdsCardHeaderRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  tokenRow: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
+    marginBottom: 8,
   },
   tokenPill: {
-    backgroundColor: 'rgba(6, 182, 212, 0.15)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(6, 182, 212, 0.35)',
+    backgroundColor: '#e6f2fb',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 10,
   },
-  tokenPillReady: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderColor: 'rgba(16, 185, 129, 0.35)',
-  },
-  tokenText: {
-    color: '#22d3ee',
+  tokenPillText: {
+    color: '#0c52a3',
     fontSize: 16,
     fontWeight: '900',
-    letterSpacing: 0.5,
   },
-  tokenTextReady: {
-    color: '#34d399',
-  },
-  urgencyTag: {
-    backgroundColor: 'rgba(245, 158, 11, 0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.3)',
-  },
-  urgencyTagReady: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderColor: 'rgba(16, 185, 129, 0.35)',
-  },
-  urgencyText: {
-    color: '#fbbf24',
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  urgencyTextReady: {
-    color: '#34d399',
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  orderStudentName: {
-    color: '#1c2521',
-    fontSize: 13,
-    fontWeight: '700',
-    marginTop: 3,
-  },
-  orderTotalAmount: {
-    color: '#1c2521',
-    fontSize: 18,
+  kdsPriceText: {
+    color: '#0f172a',
+    fontSize: 24,
     fontWeight: '900',
+    letterSpacing: -0.5,
   },
-  paymentChip: {
-    backgroundColor: 'rgba(99, 102, 241, 0.12)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginTop: 4,
-  },
-  paymentChipText: {
-    color: '#a5b4fc',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-
-  // Items in order
-  itemsList: {
-    backgroundColor: '#f0eee8',
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 12,
-  },
-  itemLine: {
+  customerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
+    marginBottom: 6,
+    flexWrap: 'wrap',
   },
-  itemQtyBadge: {
-    backgroundColor: 'rgba(99, 102, 241, 0.2)',
-    borderColor: 'rgba(99, 102, 241, 0.4)',
-    borderWidth: 1,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginRight: 10,
+  customerName: {
+    color: '#0f172a',
+    fontSize: 15,
+    fontWeight: '800',
   },
-  itemQtyText: {
-    color: '#c7d2fe',
-    fontWeight: '900',
-    fontSize: 11,
+  itemSummaryText: {
+    color: '#475569',
+    fontSize: 14,
+    fontWeight: '500',
   },
-  itemText: {
-    color: '#1c2521',
-    fontSize: 13,
-    fontWeight: '600',
-    flex: 1,
+  cashPill: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    alignSelf: 'flex-start',
+    marginBottom: 6,
   },
-  itemPriceSub: {
-    color: '#65736a',
+  cashPillText: {
+    color: '#b45309',
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '800',
+  },
+  onlinePill: {
+    backgroundColor: '#ccfbf1',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    alignSelf: 'flex-start',
+    marginBottom: 6,
+  },
+  onlinePillText: {
+    color: '#0f766e',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  slotTimeText: {
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 14,
   },
   notesBox: {
-    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    backgroundColor: '#f8fafc',
     borderLeftWidth: 3,
-    borderLeftColor: '#f59e0b',
+    borderLeftColor: '#00a3c4',
     padding: 8,
     borderRadius: 8,
-    marginTop: 8,
-  },
-  notesLabel: {
-    color: '#f59e0b',
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.5,
+    marginBottom: 10,
   },
   notesText: {
-    color: '#fef08a',
+    color: '#334155',
     fontSize: 12,
-    marginTop: 2,
+    fontWeight: '600',
   },
-  depositNotice: {
-    color: '#22d3ee',
-    fontSize: 10,
-    marginTop: 8,
-    fontWeight: '700',
+  kdsActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
-
-  // KDS Action Buttons
-  kdsActionsColumn: {
-    gap: 8,
-  },
-  kdsActionBtnPrimary: {
-    backgroundColor: '#10b981',
+  btnVerifyPin: {
+    flex: 1,
+    backgroundColor: '#0c52a3',
+    borderRadius: 16,
     paddingVertical: 14,
-    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#0070d2',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 4,
   },
-  kdsActionBtnVerify: {
-    backgroundColor: '#6366f1',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  kdsBtnTextPrimary: {
+  btnVerifyPinText: {
     color: '#ffffff',
     fontSize: 14,
+    fontWeight: '800',
+  },
+  btnScanQr: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#00a3c4',
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnScanQrText: {
+    color: '#0070d2',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  btnMoreActions: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnMoreActionsText: {
+    color: '#475569',
+    fontSize: 16,
     fontWeight: '900',
-  },
-  kdsSecondaryRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  kdsActionBtnCancel: {
-    flex: 1,
-    paddingVertical: 11,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: 'rgba(244, 63, 94, 0.12)',
-    borderWidth: 1,
-    borderColor: '#f43f5e',
-  },
-  kdsBtnTextCancel: {
-    color: '#f43f5e',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  kdsActionBtnNoShow: {
-    flex: 1,
-    paddingVertical: 11,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
-    borderWidth: 1,
-    borderColor: '#f59e0b',
-  },
-  kdsBtnTextNoShow: {
-    color: '#f59e0b',
-    fontSize: 12,
-    fontWeight: '800',
   },
   completedStatusChip: {
     alignItems: 'center',
-    paddingVertical: 6,
+    paddingVertical: 8,
   },
   completedStatus: {
-    color: '#94a3b8',
-    fontSize: 12,
+    color: '#64748b',
+    fontSize: 13,
     fontWeight: '700',
+  },
+  actionSheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'flex-end',
+  },
+  actionSheetCard: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+  },
+  actionSheetTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0f172a',
+  },
+  actionSheetSub: {
+    fontSize: 13,
+    color: '#64748b',
+    marginBottom: 18,
+  },
+  actionSheetBtnCancel: {
+    backgroundColor: '#fee2e2',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  actionSheetBtnCancelText: {
+    color: '#dc2626',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  actionSheetBtnNoShow: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  actionSheetBtnNoShowText: {
+    color: '#b45309',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  actionSheetBtnClose: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  actionSheetBtnCloseText: {
+    color: '#475569',
+    fontWeight: '800',
+    fontSize: 13,
   },
 
   // ═══════════════════════════
@@ -1435,26 +1548,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   panelTitle: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '800',
+    color: '#0f172a',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: -0.2,
   },
   panelSub: {
-    color: '#94a3b8',
-    fontSize: 11,
-    marginTop: 2,
+    color: '#64748b',
+    fontSize: 12,
+    marginTop: 3,
   },
   addDishBtn: {
-    backgroundColor: '#06b6d4',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
+    backgroundColor: '#0c52a3',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 12,
   },
   addDishBtnText: {
-    color: '#090d16',
+    color: '#ffffff',
     fontSize: 12,
     fontWeight: '900',
   },
@@ -1463,12 +1577,12 @@ const styles = StyleSheet.create({
   searchBarWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0b1120',
-    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    paddingHorizontal: 12,
-    marginBottom: 10,
+    borderColor: '#e2e8f0',
+    paddingHorizontal: 14,
+    marginBottom: 12,
   },
   searchIcon: {
     fontSize: 14,
@@ -1476,42 +1590,45 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 13,
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
   searchClearBtn: {
     padding: 4,
   },
   searchClearText: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 14,
     fontWeight: '800',
   },
 
   // Category Filter
   categoryScrollRow: {
-    marginBottom: 10,
-    maxHeight: 36,
+    marginBottom: 12,
+    maxHeight: 38,
   },
   categoryPill: {
-    backgroundColor: '#1e293b',
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 20,
     marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   categoryPillActive: {
-    backgroundColor: '#6366f1',
+    backgroundColor: '#0c52a3',
+    borderColor: '#0c52a3',
   },
   categoryPillText: {
-    color: '#94a3b8',
+    color: '#475569',
     fontSize: 12,
     fontWeight: '700',
   },
   categoryPillTextActive: {
     color: '#ffffff',
-    fontWeight: '800',
+    fontWeight: '900',
   },
 
   // Inventory Health Stats
@@ -1522,37 +1639,42 @@ const styles = StyleSheet.create({
   },
   inventoryStatChip: {
     flex: 1,
-    backgroundColor: '#0b1120',
-    borderRadius: 10,
-    paddingVertical: 8,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    paddingVertical: 10,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: '#e2e8f0',
   },
   inventoryStatNum: {
-    color: '#ffffff',
-    fontSize: 16,
+    color: '#0c52a3',
+    fontSize: 18,
     fontWeight: '900',
   },
   inventoryStatLabel: {
-    color: '#94a3b8',
-    fontSize: 9,
+    color: '#64748b',
+    fontSize: 10,
     fontWeight: '700',
     marginTop: 2,
   },
 
   // Menu Card
   menuCard: {
-    backgroundColor: '#111a2f',
-    borderRadius: 16,
-    padding: 14,
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: '#e2e8f0',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
   menuCardSoldOut: {
     opacity: 0.6,
-    borderColor: 'rgba(244, 63, 94, 0.2)',
+    borderColor: 'rgba(244, 63, 94, 0.3)',
   },
   menuCardTopRow: {
     flexDirection: 'row',
@@ -1563,13 +1685,13 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 12,
-    backgroundColor: '#1e293b',
+    backgroundColor: '#f1f5f9',
   },
   menuCardImagePlaceholder: {
     width: 60,
     height: 60,
     borderRadius: 12,
-    backgroundColor: '#1e293b',
+    backgroundColor: '#f1f5f9',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1584,25 +1706,25 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   menuCardName: {
-    color: '#f8fafc',
+    color: '#0f172a',
     fontSize: 15,
     fontWeight: '800',
     flex: 1,
   },
   dietTag: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    backgroundColor: '#ecfdf5',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 5,
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderColor: '#a7f3d0',
   },
   dietTagNonVeg: {
-    backgroundColor: 'rgba(244, 63, 94, 0.12)',
-    borderColor: 'rgba(244, 63, 94, 0.3)',
+    backgroundColor: '#fff1f2',
+    borderColor: '#fecdd3',
   },
   dietTagText: {
-    color: '#e2e8f0',
+    color: '#065f46',
     fontSize: 9,
     fontWeight: '700',
   },
@@ -1613,13 +1735,13 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   categoryChip: {
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    backgroundColor: '#e6f2fb',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
   },
   categoryChipText: {
-    color: '#a5b4fc',
+    color: '#0c52a3',
     fontSize: 10,
     fontWeight: '700',
   },
@@ -1634,7 +1756,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    backgroundColor: '#f8fafc',
     borderRadius: 10,
     paddingVertical: 8,
     paddingHorizontal: 12,
@@ -1646,13 +1768,13 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   priceLabel: {
-    color: '#10b981',
+    color: '#0c52a3',
     fontSize: 16,
     fontWeight: '900',
   },
   priceInput: {
-    backgroundColor: '#090d16',
-    color: '#ffffff',
+    backgroundColor: '#ffffff',
+    color: '#0f172a',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
@@ -1661,7 +1783,7 @@ const styles = StyleSheet.create({
     minWidth: 55,
     textAlign: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: '#e2e8f0',
   },
   stockSwitchWrap: {
     flexDirection: 'row',
@@ -1680,29 +1802,29 @@ const styles = StyleSheet.create({
   },
   editDishBtn: {
     flex: 1,
-    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    backgroundColor: '#eef2ff',
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.3)',
+    borderColor: 'rgba(99, 102, 241, 0.25)',
     borderRadius: 10,
     paddingVertical: 9,
     alignItems: 'center',
   },
   editDishBtnText: {
-    color: '#a5b4fc',
+    color: '#4f46e5',
     fontSize: 12,
     fontWeight: '800',
   },
   deleteDishBtn: {
     flex: 1,
-    backgroundColor: 'rgba(244, 63, 94, 0.1)',
+    backgroundColor: '#fee2e2',
     borderWidth: 1,
-    borderColor: 'rgba(244, 63, 94, 0.25)',
+    borderColor: 'rgba(244, 63, 94, 0.2)',
     borderRadius: 10,
     paddingVertical: 9,
     alignItems: 'center',
   },
   deleteDishBtnText: {
-    color: '#f87171',
+    color: '#dc2626',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -1718,31 +1840,38 @@ const styles = StyleSheet.create({
   },
   analyticsCard: {
     flexBasis: '48%',
-    backgroundColor: '#1a233a',
+    backgroundColor: '#ffffff',
     padding: 14,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.04)',
+    borderColor: '#e2e8f0',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 1,
   },
   analyticsVal: {
-    color: '#ffffff',
+    color: '#0c52a3',
     fontSize: 22,
     fontWeight: '900',
   },
   analyticsLabel: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 10,
     marginTop: 2,
   },
   canteenInfoCard: {
-    backgroundColor: '#1a233a',
+    backgroundColor: '#ffffff',
     padding: 14,
     borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
     marginTop: 8,
     gap: 8,
   },
   infoLine: {
-    color: '#cbd5e1',
+    color: '#334155',
     fontSize: 12,
   },
   deleteCanteenBtn: {
@@ -1752,9 +1881,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     marginTop: 20,
+    backgroundColor: '#fff1f2',
   },
   deleteCanteenText: {
-    color: '#f87171',
+    color: '#e11d48',
     fontWeight: '700',
     fontSize: 12,
   },
@@ -1764,15 +1894,17 @@ const styles = StyleSheet.create({
   // ═══════════════════════════
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.82)',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#ffffff',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
     maxHeight: '75%',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1781,12 +1913,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   modalTitle: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 16,
     fontWeight: '800',
   },
   closeBtn: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 16,
     padding: 4,
   },
@@ -1794,23 +1926,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#1e293b',
+    backgroundColor: '#f8fafc',
     padding: 12,
     borderRadius: 12,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   canteenChoiceActive: {
-    borderColor: '#6366f1',
+    borderColor: '#0c52a3',
     borderWidth: 1,
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    backgroundColor: '#e6f2fb',
   },
   canteenChoiceName: {
-    color: '#cbd5e1',
+    color: '#334155',
     fontSize: 14,
     fontWeight: '700',
   },
   canteenChoiceNameActive: {
-    color: '#ffffff',
+    color: '#0c52a3',
   },
   canteenChoiceLoc: {
     color: '#64748b',
@@ -1818,12 +1952,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   checkmark: {
-    color: '#6366f1',
+    color: '#0c52a3',
     fontWeight: '900',
     fontSize: 16,
   },
   modalCreateBtn: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#0c52a3',
     padding: 14,
     borderRadius: 12,
     alignItems: 'center',
@@ -1831,7 +1965,7 @@ const styles = StyleSheet.create({
   },
   modalCreateText: {
     color: '#ffffff',
-    fontWeight: '800',
+    fontWeight: '900',
     fontSize: 13,
   },
 
@@ -1840,23 +1974,30 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#1e293b',
+    backgroundColor: '#f1f5f9',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   modalCloseBtnText: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 14,
     fontWeight: '800',
   },
   verifyModalContent: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#ffffff',
     borderRadius: 20,
     padding: 20,
     width: '90%',
     maxWidth: 420,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: '#e2e8f0',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 6,
   },
   verifyModalHeader: {
     flexDirection: 'row',
@@ -1865,36 +2006,38 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   verifyModalTitle: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 17,
     fontWeight: '800',
   },
   verifyModalSub: {
-    color: '#06b6d4',
+    color: '#0c52a3',
     fontSize: 12,
     fontWeight: '700',
     marginTop: 3,
   },
   verifyPinBox: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#f8fafc',
     borderRadius: 14,
     padding: 18,
     alignItems: 'center',
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   verifyInstruction: {
-    color: '#94a3b8',
+    color: '#475569',
     fontSize: 12,
     fontWeight: '600',
     marginBottom: 12,
     textAlign: 'center',
   },
   pinInputField: {
-    backgroundColor: '#0b1120',
+    backgroundColor: '#ffffff',
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: '#6366f1',
-    color: '#ffffff',
+    borderColor: '#0c52a3',
+    color: '#0f172a',
     fontSize: 26,
     fontWeight: '900',
     letterSpacing: 8,
@@ -1925,52 +2068,23 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   bypassBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: '#f1f5f9',
     padding: 10,
     borderRadius: 10,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   bypassBtnText: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 12,
     fontWeight: '700',
   },
-  headerRightActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  rushBtnHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#1e293b',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  rushBtnHeaderActive: {
-    backgroundColor: 'rgba(245, 158, 11, 0.2)',
-    borderColor: '#f59e0b',
-  },
-  rushBtnIcon: {
-    fontSize: 12,
-  },
-  rushBtnText: {
-    color: '#94a3b8',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  rushBtnTextActive: {
-    color: '#f59e0b',
-  },
   batchBanner: {
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    backgroundColor: '#fef3c7',
     borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.35)',
+    borderWidth: 1.5,
+    borderColor: '#fde68a',
     padding: 12,
     marginBottom: 12,
   },
@@ -1988,24 +2102,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   batchTitle: {
-    color: '#f59e0b',
+    color: '#92400e',
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   batchCountBadge: {
-    backgroundColor: 'rgba(245, 158, 11, 0.25)',
+    backgroundColor: '#fde68a',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
   },
   batchCountText: {
-    color: '#fde68a',
+    color: '#92400e',
     fontSize: 10,
     fontWeight: '800',
   },
   batchToggle: {
-    color: '#cbd5e1',
+    color: '#b45309',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -2016,26 +2130,26 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(245, 158, 11, 0.2)',
+    borderTopColor: 'rgba(217, 119, 6, 0.2)',
   },
   batchPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#ffffff',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.4)',
+    borderColor: '#fde68a',
   },
   batchPillQty: {
-    color: '#f59e0b',
+    color: '#b45309',
     fontSize: 12,
     fontWeight: '900',
   },
   batchPillName: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -2046,38 +2160,38 @@ const styles = StyleSheet.create({
     marginVertical: 6,
   },
   facultyOrderTag: {
-    backgroundColor: 'rgba(168, 85, 247, 0.22)',
+    backgroundColor: 'rgba(168, 85, 247, 0.12)',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#c084fc',
+    borderColor: 'rgba(192, 132, 252, 0.35)',
   },
   facultyOrderTagText: {
-    color: '#f3e8ff',
+    color: '#e9d5ff',
     fontSize: 10,
     fontWeight: '900',
   },
   orderSlotTag: {
-    backgroundColor: 'rgba(56, 189, 248, 0.18)',
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: 'rgba(56, 189, 248, 0.3)',
   },
   orderSlotTagText: {
-    color: '#e0f2fe',
+    color: '#bae6fd',
     fontSize: 10,
     fontWeight: '800',
   },
   orderCollectorTag: {
-    backgroundColor: 'rgba(16, 185, 129, 0.18)',
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#10b981',
+    borderColor: 'rgba(16, 185, 129, 0.3)',
   },
   orderCollectorTagText: {
     color: '#a7f3d0',
@@ -2085,111 +2199,375 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   facultyDeliveryBox: {
-    backgroundColor: 'rgba(147, 51, 234, 0.15)',
+    backgroundColor: 'rgba(168, 85, 247, 0.1)',
     padding: 8,
     borderRadius: 8,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: 'rgba(192, 132, 252, 0.3)',
+    borderColor: 'rgba(192, 132, 252, 0.25)',
   },
   facultyDeliveryText: {
-    color: '#f3e8ff',
+    color: '#e9d5ff',
     fontSize: 11,
     fontWeight: '700',
   },
   verifyButtonPair: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
   },
   kdsActionBtnScan: {
     flex: 1,
-    backgroundColor: '#0284c7',
-    paddingVertical: 12,
+    backgroundColor: '#0c52a3',
+    paddingVertical: 13,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 0,
   },
   kdsBtnTextScan: {
     color: '#ffffff',
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '900',
+    letterSpacing: 0.2,
   },
-  qrModalContent: {
-    backgroundColor: '#0c1222',
-    borderRadius: 20,
-    padding: 18,
-    width: '92%',
-    maxWidth: 420,
-    borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.3)',
+  rootWrapper: {
+    flex: 1,
+    backgroundColor: '#edf3f8',
   },
-  viewfinderBox: {
-    height: 160,
-    backgroundColor: '#070b14',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#1e293b',
+  scannerFullScreenContainer: {
+    backgroundColor: 'transparent',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  cameraContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+  },
+  cameraView: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    backgroundColor: 'transparent',
+  },
+  scannerNoPermissionBox: {
+    backgroundColor: '#0f172a',
     alignItems: 'center',
     justifyContent: 'center',
+    padding: 28,
+  },
+  scannerNoPermEmoji: {
+    fontSize: 54,
+    marginVertical: 16,
+  },
+  scannerNoPermTitle: {
+    color: '#ffffff',
+    fontSize: 20,
+    fontWeight: '900',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  scannerNoPermSub: {
+    color: '#94a3b8',
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  enableCameraBtn: {
+    backgroundColor: '#0c52a3',
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    borderRadius: 14,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 12,
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  enableCameraBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  closeNoPermBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  closeNoPermBtnText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  scannerOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    backgroundColor: 'transparent',
+    justifyContent: 'space-between',
+  },
+  scannerHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 16 : 56,
+    paddingBottom: 16,
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
+    borderBottomWidth: 1.5,
+    borderBottomColor: 'rgba(0, 163, 196, 0.25)',
+  },
+  scannerCampusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  scannerCampusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#00a3c4',
+  },
+  scannerCampusText: {
+    color: '#00a3c4',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  scannerHeaderTitle: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+  },
+  scannerHeaderSub: {
+    color: '#94a3b8',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  scannerCloseCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scannerCloseCircleText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  reticleWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 20,
+  },
+  reticleFrame: {
+    width: 270,
+    height: 270,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: 'rgba(0, 163, 196, 0.35)',
     position: 'relative',
-    marginVertical: 12,
+    backgroundColor: 'transparent',
     overflow: 'hidden',
   },
   cornerTL: {
     position: 'absolute',
-    top: 10,
-    left: 10,
-    width: 20,
-    height: 20,
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
-    borderColor: '#38bdf8',
+    top: 0,
+    left: 0,
+    width: 36,
+    height: 36,
+    borderTopWidth: 4,
+    borderLeftWidth: 4,
+    borderColor: '#00a3c4',
+    borderTopLeftRadius: 22,
   },
   cornerTR: {
     position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 20,
-    height: 20,
-    borderTopWidth: 3,
-    borderRightWidth: 3,
-    borderColor: '#38bdf8',
+    top: 0,
+    right: 0,
+    width: 36,
+    height: 36,
+    borderTopWidth: 4,
+    borderRightWidth: 4,
+    borderColor: '#00a3c4',
+    borderTopRightRadius: 22,
   },
   cornerBL: {
     position: 'absolute',
-    bottom: 10,
-    left: 10,
-    width: 20,
-    height: 20,
-    borderBottomWidth: 3,
-    borderLeftWidth: 3,
-    borderColor: '#38bdf8',
+    bottom: 0,
+    left: 0,
+    width: 36,
+    height: 36,
+    borderBottomWidth: 4,
+    borderLeftWidth: 4,
+    borderColor: '#00a3c4',
+    borderBottomLeftRadius: 22,
   },
   cornerBR: {
     position: 'absolute',
-    bottom: 10,
-    right: 10,
-    width: 20,
-    height: 20,
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
-    borderColor: '#38bdf8',
+    bottom: 0,
+    right: 0,
+    width: 36,
+    height: 36,
+    borderBottomWidth: 4,
+    borderRightWidth: 4,
+    borderColor: '#00a3c4',
+    borderBottomRightRadius: 22,
   },
   laserScanLine: {
     position: 'absolute',
-    width: '80%',
-    height: 2,
-    backgroundColor: '#38bdf8',
-    shadowColor: '#38bdf8',
+    top: '50%',
+    left: '8%',
+    width: '84%',
+    height: 3,
+    backgroundColor: '#00a3c4',
+    shadowColor: '#00a3c4',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
+    shadowOpacity: 0.95,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  reticleHintBox: {
+    marginTop: 18,
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(0, 163, 196, 0.4)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  reticleHintText: {
+    color: '#f8fafc',
+    fontSize: 12.5,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  scannerBottomDeck: {
+    backgroundColor: 'rgba(15, 23, 42, 0.96)',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: Platform.OS === 'android' ? 34 : 44,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    borderTopWidth: 1.5,
+    borderColor: 'rgba(0, 163, 196, 0.25)',
+  },
+  scannerControlsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  scannerCtrlBtn: {
+    backgroundColor: '#1e293b',
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scannerCtrlBtnActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    borderColor: '#f59e0b',
+  },
+  scannerCtrlIcon: {
+    color: '#f8fafc',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  scannerCtrlIconActive: {
+    color: '#fbbf24',
+  },
+  scannerManualPinBtn: {
+    flex: 1,
+    borderRadius: 14,
+    overflow: 'hidden',
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
   },
-  viewfinderText: {
-    color: '#64748b',
+  scannerManualPinGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+  },
+  scannerManualPinText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 0.3,
+  },
+  readyTokensDrawer: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  readyTokensDrawerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  readyTokensDrawerTitle: {
+    color: '#94a3b8',
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  readyTokensDrawerCount: {
+    color: '#00a3c4',
+    fontSize: 10.5,
+    fontWeight: '900',
+  },
+  readyTokenChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#334155',
+  },
+  readyTokenChipBadge: {
+    backgroundColor: '#e0f2fe',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 0.8,
+    borderColor: '#bae6fd',
+  },
+  readyTokenChipNum: {
+    color: '#0284c7',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  readyTokenChipName: {
+    color: '#f8fafc',
     fontSize: 11,
-    marginTop: 60,
+    maxWidth: 90,
+    fontWeight: '700',
   },
   fastMatchCard: {
     flexDirection: 'row',

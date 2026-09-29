@@ -1,7 +1,8 @@
 import { Platform, Vibration } from 'react-native';
+import * as Speech from 'expo-speech';
 
-// Universal Web Audio API Synthesizer & Speech Announcer for chimes and buzzer alerts
-// Works seamlessly in mobile (Vibration + fallback) and web browsers (Web Audio + Speech Synthesis)
+// Universal Audio Synthesizer & Speech Announcer for chimes and buzzer alerts
+// Works seamlessly across mobile (expo-speech + Vibration) and web (Web Audio + Speech Synthesis)
 
 let audioCtx = null;
 
@@ -114,11 +115,27 @@ export const announceTokenReady = (tokenNumber, shopName = 'Central Canteen') =>
   // First trigger loud buzzer + vibration
   playOrderReadyBuzzer();
 
-  // If Web Speech API is supported, speak the token number aloud!
+  const cleanToken = String(tokenNumber || '').replace(/[^\d]/g, '') || tokenNumber;
+  const text = `Attention please! Token number ${cleanToken} is ready for pickup at ${shopName}`;
+
+  // 1. Try native expo-speech first (works reliably across iOS and Android)
+  try {
+    if (Speech && typeof Speech.speak === 'function') {
+      Speech.speak(text, {
+        language: 'en-IN',
+        pitch: 1.05,
+        rate: 0.95,
+        onError: (err) => console.log('expo-speech error:', err)
+      });
+      return;
+    }
+  } catch (err) {
+    console.log('expo-speech note:', err);
+  }
+
+  // 2. Web Speech API fallback for web browsers
   try {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const cleanToken = String(tokenNumber || '').replace(/[^\d]/g, '') || tokenNumber;
-      const text = `Attention please! Token number ${cleanToken} is ready for pickup at ${shopName}`;
       const utterance = new window.SpeechSynthesisUtterance(text);
       utterance.rate = 0.95;
       utterance.pitch = 1.05;
@@ -126,7 +143,7 @@ export const announceTokenReady = (tokenNumber, shopName = 'Central Canteen') =>
       window.speechSynthesis.speak(utterance);
     }
   } catch (err) {
-    console.log('TTS announce note:', err);
+    console.log('Web TTS announce note:', err);
   }
 };
 

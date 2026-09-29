@@ -418,29 +418,26 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
               </TouchableOpacity>
             )}
 
-            {/* 2-Minute Cancellation Grace Countdown */}
+            {/* 2-Minute Cancellation Grace Countdown Banner */}
             {!isCancelled && !isCompleted && !isAbandoned && !isReady && (
               <View style={[styles.cancelGraceBanner, canCancel ? styles.cancelGraceActive : styles.cancelGraceLocked]}>
                 <Text style={[styles.cancelGraceText, canCancel ? styles.cancelGraceTextActive : styles.cancelGraceTextLocked]}>
                   {canCancel
-                    ? `⏱️ Cancellation Window: ${formatTimer(cancelSecondsLeft)} left for 100% instant UPI refund`
+                    ? `⏱️ Cancellation Window: ${formatTimer(cancelSecondsLeft)} left for 100% instant refund`
                     : '🔒 Cancellation Closed: Food is on the prep line to avoid canteen waste.'}
                 </Text>
               </View>
             )}
 
-            {/* Cancel Action */}
-            {!isCancelled && !isCompleted && !isAbandoned && (
+            {/* Cancel Action Button — Only shown when within the active cancellation grace window */}
+            {!isCancelled && !isCompleted && !isAbandoned && !isReady && canCancel && (
               <TouchableOpacity
-                style={[styles.cancelBtn, !canCancel && styles.cancelBtnDisabled]}
+                style={styles.cancelBtn}
                 onPress={handleCancelOrder}
-                disabled={!canCancel}
                 activeOpacity={0.85}
               >
-                <Text style={[styles.cancelBtnText, !canCancel && styles.cancelBtnTextDisabled]}>
-                  {canCancel
-                    ? `🚫 Cancel Order (Instant UPI Refund: ₹${refundAmount})`
-                    : '🔒 Cancellation Closed (Kitchen Preparing Food)'}
+                <Text style={styles.cancelBtnText}>
+                  🚫 Cancel Order (Instant Refund: ₹{refundAmount})
                 </Text>
               </TouchableOpacity>
             )}
@@ -459,17 +456,22 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(3, 7, 18, 0.88)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
     justifyContent: 'center',
     padding: 14,
   },
   modalContent: {
-    backgroundColor: '#0c1222',
+    backgroundColor: '#ffffff',
     borderRadius: 24,
     padding: 16,
     maxHeight: '92%',
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.25)',
+    borderColor: '#e2e8f0',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 10,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -478,61 +480,65 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: '#f1f5f9',
   },
   headerBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    backgroundColor: '#e6f2fb',
     paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
     marginBottom: 4,
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.3)',
+    borderColor: '#bae6fd',
   },
   headerBadgeText: {
-    color: '#818cf8',
-    fontSize: 9,
+    color: '#0c52a3',
+    fontSize: 9.5,
     fontWeight: '900',
     letterSpacing: 0.8,
   },
   modalTitle: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 18,
     fontWeight: '900',
     letterSpacing: -0.3,
   },
   modalSub: {
-    color: '#94a3b8',
-    fontSize: 11,
+    color: '#64748b',
+    fontSize: 11.5,
     marginTop: 1,
+    fontWeight: '600',
   },
   closeBtn: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#1e293b',
+    backgroundColor: '#f1f5f9',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   closeBtnText: {
-    color: '#94a3b8',
+    color: '#475569',
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '900',
   },
 
   /* TICKET WRAPPER */
   ticketWrapper: {
-    backgroundColor: '#11192e',
-    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    borderRadius: 22,
     overflow: 'hidden',
     borderWidth: 1.5,
-    borderColor: 'rgba(99, 102, 241, 0.35)',
+    borderColor: '#00a3c4',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 4,
   },
   ticketCancelled: {
-    borderColor: '#f43f5e',
+    borderColor: '#ef4444',
   },
   ticketCompleted: {
     borderColor: '#10b981',
@@ -541,12 +547,12 @@ const styles = StyleSheet.create({
     borderColor: '#f59e0b',
   },
   ticketReady: {
-    borderColor: '#10b981',
+    borderColor: '#00a3c4',
   },
 
   ticketTopHalf: {
     padding: 16,
-    backgroundColor: '#131e38',
+    backgroundColor: '#ffffff',
   },
   passHeaderRow: {
     flexDirection: 'row',
@@ -555,13 +561,13 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   passWatermark: {
-    color: '#818cf8',
-    fontSize: 9,
+    color: '#0c52a3',
+    fontSize: 9.5,
     fontWeight: '900',
     letterSpacing: 1.2,
   },
   shopName: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 17,
     fontWeight: '900',
     marginTop: 2,
@@ -571,12 +577,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    backgroundColor: '#ccfbf1',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#99f6e4',
   },
   liveDot: {
     width: 7,
@@ -584,7 +590,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   liveText: {
-    color: '#e2e8f0',
+    color: '#0f766e',
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 0.5,
@@ -597,59 +603,59 @@ const styles = StyleSheet.create({
   },
   tokenBox: {
     flex: 1,
-    backgroundColor: 'rgba(6, 182, 212, 0.1)',
+    backgroundColor: '#e6f2fb',
     borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 12,
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: 'rgba(6, 182, 212, 0.35)',
+    borderColor: '#bae6fd',
   },
   tokenLabel: {
-    color: '#06b6d4',
+    color: '#0c52a3',
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 0.8,
   },
   tokenNumber: {
-    color: '#22d3ee',
+    color: '#0c52a3',
     fontSize: 32,
     fontWeight: '900',
     marginVertical: 2,
     letterSpacing: -0.5,
   },
   tokenSub: {
-    color: '#94a3b8',
-    fontSize: 8,
+    color: '#64748b',
+    fontSize: 8.5,
     fontWeight: '700',
   },
 
   pinBox: {
     flex: 1,
-    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    backgroundColor: '#f8fafc',
     borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 12,
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: 'rgba(99, 102, 241, 0.4)',
+    borderColor: '#e2e8f0',
   },
   pinLabel: {
-    color: '#818cf8',
+    color: '#64748b',
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 0.8,
   },
   pinNumber: {
-    color: '#c7d2fe',
+    color: '#0f172a',
     fontSize: 32,
     fontWeight: '900',
     letterSpacing: 5,
     marginVertical: 2,
   },
   pinHint: {
-    color: '#a5b4fc',
-    fontSize: 8,
+    color: '#94a3b8',
+    fontSize: 8.5,
     fontWeight: '700',
   },
 
@@ -661,41 +667,41 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   statusPrep: {
-    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    backgroundColor: '#fef3c7',
     borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.3)',
+    borderColor: '#fde68a',
   },
   statusReady: {
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    backgroundColor: '#ccfbf1',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.4)',
+    borderColor: '#99f6e4',
   },
   statusCompleted: {
-    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    backgroundColor: '#e0f2fe',
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.3)',
+    borderColor: '#bae6fd',
   },
   statusCancel: {
-    backgroundColor: 'rgba(244, 63, 94, 0.15)',
+    backgroundColor: '#fee2e2',
     borderWidth: 1,
-    borderColor: 'rgba(244, 63, 94, 0.3)',
+    borderColor: '#fecaca',
   },
   statusText: {
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 0.3,
   },
-  statusPrepText: { color: '#fbbf24' },
-  statusReadyText: { color: '#34d399' },
-  statusCompletedText: { color: '#38bdf8' },
-  statusCancelText: { color: '#fb7185' },
+  statusPrepText: { color: '#b45309' },
+  statusReadyText: { color: '#0f766e' },
+  statusCompletedText: { color: '#0284c7' },
+  statusCancelText: { color: '#dc2626' },
 
   countdownCard: {
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    backgroundColor: '#f8fafc',
     borderRadius: 12,
     padding: 10,
     borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.2)',
+    borderColor: '#e2e8f0',
   },
   countdownHeader: {
     flexDirection: 'row',
@@ -705,29 +711,29 @@ const styles = StyleSheet.create({
   },
   clockIcon: { fontSize: 13 },
   countdownTitle: {
-    color: '#f59e0b',
+    color: '#0c52a3',
     fontSize: 11,
     fontWeight: '800',
   },
   countdownTimer: {
-    color: '#fbbf24',
+    color: '#0c52a3',
     fontSize: 15,
     fontWeight: '900',
   },
   progressTrack: {
     height: 7,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: '#e2e8f0',
     borderRadius: 4,
     overflow: 'hidden',
     marginVertical: 4,
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#00a3c4',
     borderRadius: 4,
   },
   countdownHint: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 9,
     fontWeight: '600',
     marginTop: 2,
@@ -737,7 +743,7 @@ const styles = StyleSheet.create({
   perforationContainer: {
     position: 'relative',
     height: 24,
-    backgroundColor: '#11192e',
+    backgroundColor: '#ffffff',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -748,7 +754,7 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#0c1222',
+    backgroundColor: '#edf3f8',
   },
   notchRight: {
     position: 'absolute',
@@ -756,20 +762,20 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#0c1222',
+    backgroundColor: '#edf3f8',
   },
   dashedDivider: {
     width: '84%',
     height: 1,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
+    borderColor: '#cbd5e1',
     borderStyle: 'dashed',
   },
 
   /* TICKET BOTTOM HALF */
   ticketBottomHalf: {
     padding: 16,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#ffffff',
   },
   metaRow: {
     flexDirection: 'row',
@@ -777,7 +783,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: '#f1f5f9',
   },
   metaLabel: {
     color: '#64748b',
@@ -786,28 +792,30 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   metaName: {
-    color: '#f8fafc',
+    color: '#0f172a',
     fontSize: 13,
     fontWeight: '800',
     marginTop: 2,
   },
   metaSubText: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 10,
     marginTop: 1,
   },
   metaAmount: {
-    color: '#10b981',
+    color: '#0c52a3',
     fontSize: 16,
     fontWeight: '900',
     marginTop: 2,
   },
 
   itemsBox: {
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    backgroundColor: '#f8fafc',
     borderRadius: 12,
     padding: 10,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   itemsBoxTitle: {
     color: '#64748b',
@@ -822,19 +830,19 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   itemBullet: {
-    color: '#6366f1',
+    color: '#0c52a3',
     fontWeight: '900',
     marginRight: 6,
   },
   itemLineName: {
-    color: '#e2e8f0',
+    color: '#0f172a',
     fontSize: 12,
     fontWeight: '600',
     flex: 1,
   },
   itemQtyBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    color: '#cbd5e1',
+    backgroundColor: '#e2e8f0',
+    color: '#334155',
     fontSize: 10,
     fontWeight: '800',
     paddingHorizontal: 6,
@@ -843,7 +851,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   itemLinePrice: {
-    color: '#f8fafc',
+    color: '#0c52a3',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -851,30 +859,30 @@ const styles = StyleSheet.create({
     marginTop: 6,
     paddingTop: 6,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    borderTopColor: '#e2e8f0',
   },
   instructionsLabel: {
-    color: '#f59e0b',
+    color: '#d97706',
     fontSize: 9,
     fontWeight: '800',
   },
   instructionsText: {
-    color: '#fef08a',
+    color: '#92400e',
     fontSize: 11,
     fontStyle: 'italic',
     marginTop: 1,
   },
 
   heldDepositPill: {
-    backgroundColor: 'rgba(6, 182, 212, 0.1)',
+    backgroundColor: '#ecfeff',
     borderRadius: 10,
     padding: 8,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(6, 182, 212, 0.25)',
+    borderColor: '#a5f3fc',
   },
   heldDepositText: {
-    color: '#22d3ee',
+    color: '#0891b2',
     fontSize: 10,
     fontWeight: '700',
     textAlign: 'center',
@@ -886,12 +894,14 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   barcodeBox: {
-    backgroundColor: '#ffffff',
-    borderRadius: 6,
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
     paddingVertical: 8,
     paddingHorizontal: 12,
     alignItems: 'center',
     width: '100%',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   barcodeLinesContainer: {
     flexDirection: 'row',
@@ -901,7 +911,7 @@ const styles = StyleSheet.create({
   },
   barcodeStripe: {
     height: '100%',
-    backgroundColor: '#000000',
+    backgroundColor: '#0f172a',
   },
   serialNumber: {
     color: '#0f172a',
@@ -919,8 +929,8 @@ const styles = StyleSheet.create({
   },
 
   cancelBtn: {
-    backgroundColor: 'rgba(244, 63, 94, 0.12)',
-    borderColor: '#f43f5e',
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderColor: '#fca5a5',
     borderWidth: 1,
     padding: 12,
     borderRadius: 12,
@@ -928,11 +938,11 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   cancelBtnDisabled: {
-    backgroundColor: 'rgba(100, 116, 139, 0.12)',
-    borderColor: '#475569',
+    backgroundColor: '#f1f5f9',
+    borderColor: '#e2e8f0',
   },
   cancelBtnText: {
-    color: '#f43f5e',
+    color: '#ef4444',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -947,12 +957,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelGraceActive: {
-    backgroundColor: 'rgba(56, 189, 248, 0.12)',
-    borderColor: '#38bdf8',
+    backgroundColor: '#e0f2fe',
+    borderColor: '#bae6fd',
   },
   cancelGraceLocked: {
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
-    borderColor: '#f59e0b',
+    backgroundColor: '#fef3c7',
+    borderColor: '#fde68a',
   },
   cancelGraceText: {
     fontSize: 11,
@@ -960,43 +970,43 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   cancelGraceTextActive: {
-    color: '#38bdf8',
+    color: '#0284c7',
   },
   cancelGraceTextLocked: {
-    color: '#fbbf24',
+    color: '#b45309',
   },
   refundBannerBox: {
-    backgroundColor: 'rgba(16, 185, 129, 0.14)',
-    borderColor: '#10b981',
+    backgroundColor: '#ecfdf5',
+    borderColor: '#6ee7b7',
     borderWidth: 1,
     borderRadius: 12,
     padding: 12,
     marginTop: 12,
   },
   refundBannerTitle: {
-    color: '#34d399',
+    color: '#059669',
     fontSize: 12,
     fontWeight: '900',
     textAlign: 'center',
   },
   refundBannerSub: {
-    color: '#a7f3d0',
+    color: '#047857',
     fontSize: 11,
     marginTop: 4,
     textAlign: 'center',
     lineHeight: 15,
   },
   doneBtn: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#f1f5f9',
     padding: 12,
     borderRadius: 12,
     alignItems: 'center',
     marginTop: 8,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#e2e8f0',
   },
   doneBtnText: {
-    color: '#cbd5e1',
+    color: '#334155',
     fontSize: 13,
     fontWeight: '800',
   },
@@ -1007,55 +1017,55 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   passFacultyBadge: {
-    backgroundColor: 'rgba(168, 85, 247, 0.22)',
+    backgroundColor: '#f3e8ff',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#c084fc',
+    borderColor: '#d8b4fe',
   },
   passFacultyBadgeText: {
-    color: '#f3e8ff',
+    color: '#7e22ce',
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   passSlotBadge: {
-    backgroundColor: 'rgba(56, 189, 248, 0.18)',
+    backgroundColor: '#e0f2fe',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: '#bae6fd',
   },
   passSlotBadgeText: {
-    color: '#e0f2fe',
+    color: '#0369a1',
     fontSize: 10,
     fontWeight: '800',
   },
   passCollectorBadge: {
-    backgroundColor: 'rgba(16, 185, 129, 0.18)',
+    backgroundColor: '#dcfce7',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#10b981',
+    borderColor: '#86efac',
   },
   passCollectorBadgeText: {
-    color: '#a7f3d0',
+    color: '#15803d',
     fontSize: 10,
     fontWeight: '800',
   },
   facultyRoomBox: {
-    backgroundColor: 'rgba(147, 51, 234, 0.15)',
+    backgroundColor: '#f3e8ff',
     padding: 8,
     borderRadius: 8,
     marginTop: 6,
     borderWidth: 1,
-    borderColor: 'rgba(192, 132, 252, 0.3)',
+    borderColor: '#d8b4fe',
   },
   facultyRoomText: {
-    color: '#f3e8ff',
+    color: '#7e22ce',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -1070,19 +1080,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   qrPassScanHint: {
-    color: '#38bdf8',
+    color: '#0284c7',
     fontSize: 10,
     fontWeight: '700',
     marginTop: 6,
     textAlign: 'center',
   },
   sharePassBtn: {
-    backgroundColor: '#0284c7',
+    backgroundColor: '#0c52a3',
     paddingVertical: 12,
     borderRadius: 12,
     alignItems: 'center',
     marginTop: 14,
-    shadowColor: '#0284c7',
+    shadowColor: '#0c52a3',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 6,

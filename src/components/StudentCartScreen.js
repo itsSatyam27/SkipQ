@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { AppContext } from '../context/AppContext';
 import { playOrderPlacedSound } from '../utils/audio';
+import { getDistanceInMeters, formatDistance, isWithinOrderingPerimeter, MAX_ORDER_DISTANCE_METERS } from '../utils/distance';
 
 const BREAK_SLOTS = [
   { id: 'ASAP', label: '⚡ ASAP', sub: 'Cook Now' },
@@ -35,6 +36,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
     walletBalance,
     userProfile,
     canteens,
+    userLocation,
     reorderItems,
     rateOrder,
     rushModeActive
@@ -103,6 +105,18 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
   // Past orders (all orders except current active preparing one if any)
   const pastOrders = (orders || []).filter(o => o.id !== activeOrderId || !hasActivePass);
 
+  // Campus Geofence Calculation (<500m perimeter)
+  const matchedShop = (canteens || []).find(c => c.id === cart?.shopId) || {};
+  const shopLat = matchedShop.lat || 23.0917;
+  const shopLng = matchedShop.lng || 72.5349;
+  const hasUserLocation = Boolean(userLocation && userLocation.lat != null && userLocation.lng != null);
+  const stallDistanceMeters = hasUserLocation
+    ? getDistanceInMeters(userLocation.lat, userLocation.lng, shopLat, shopLng)
+    : null;
+  const isWithinStallPerimeter =
+    stallDistanceMeters != null &&
+    isWithinOrderingPerimeter(stallDistanceMeters, userLocation?.accuracy || 0);
+
   const handleUpdateQty = (itemId, delta) => {
     updateCartQty(itemId, delta);
   };
@@ -120,12 +134,41 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
       return;
     }
 
+    if (!hasUserLocation) {
+      Alert.alert(
+        '📍 GPS Location Required',
+        'Please enable device location permissions so SkipQ can verify you are physically on campus (<500m) before ordering.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    if (!isWithinStallPerimeter || (stallDistanceMeters != null && stallDistanceMeters > MAX_ORDER_DISTANCE_METERS)) {
+      Alert.alert(
+        '📍 Geofence Block — Off Campus',
+        `Hardware GPS detects you are ${formatDistance(stallDistanceMeters)} away from ${cart.shopName || 'Silver Oak University'} (>500m campus limit).\n\nSkipQ orders can only be placed while physically within the campus perimeter.`,
+        [{ text: 'Got it', style: 'cancel' }]
+      );
+      return;
+    }
+
+    if (paymentMethod === 'Wallet' && walletBalance < totalAmount) {
+      Alert.alert(
+        'Insufficient Wallet Balance',
+        `Your SkipQ Wallet has ₹${walletBalance.toFixed(0)}, but your order total is ₹${totalAmount}.\n\nPlease top up your wallet or choose UPI / Cash at Stall.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const isFaculty = userProfile?.userType === 'faculty';
+      const matchedShop = (canteens || []).find(c => c.id === cart.shopId) || {};
       const orderData = {
         shopId: cart.shopId,
         shopName: cart.shopName,
+        sellerId: matchedShop.ownerId || '',
         buyerName: userProfile?.name || (isFaculty ? 'University Faculty' : 'Campus Student'),
         buyerRollNo: userProfile?.rollNo || '',
         buyerPhone: userProfile?.phone || '',
@@ -145,12 +188,10 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
         groupCollectorName: isGroupOrder ? groupCollectorName.trim() : ''
       };
 
-      // Direct UPI deep-linking trigger if on mobile
-      const matchedShop = (canteens || []).find(c => c.id === cart.shopId) || {};
-      const shopUpiId = matchedShop.upiId || 'skipq.canteen@upi';
-      const upiUri = `upi://pay?pa=${shopUpiId}&pn=${encodeURIComponent(cart.shopName)}&am=${upfrontPayable}&cu=INR&tn=${encodeURIComponent(isCash ? 'SkipQ 10% Preorder Token' : 'SkipQ Order')}`;
-
-      if (Platform.OS !== 'web') {
+      // Direct UPI deep-linking trigger if on mobile (only when paying with UPI / Cash token)
+      if (paymentMethod !== 'Wallet' && Platform.OS !== 'web') {
+        const shopUpiId = matchedShop.upiId || 'skipq.canteen@upi';
+        const upiUri = `upi://pay?pa=${shopUpiId}&pn=${encodeURIComponent(cart.shopName)}&am=${upfrontPayable}&cu=INR&tn=${encodeURIComponent(isCash ? 'SkipQ 10% Preorder Token' : 'SkipQ Order')}`;
         Linking.openURL(upiUri).catch(() => {});
       }
 
@@ -164,9 +205,15 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
       }
 
       Alert.alert(
-        isCash ? '🎉 Pre-order Token Confirmed!' : '🎉 100% Online Order Placed!',
+        isCash
+          ? '🎉 Pre-order Token Confirmed!'
+          : paymentMethod === 'Wallet'
+          ? '🎉 Paid via SkipQ Wallet!'
+          : '🎉 100% Online Order Placed!',
         isCash
           ? `10% commitment token (₹${deposit10Percent}) submitted. Please pay remaining ₹${dueAtCounter} in cash at ${cart.shopName} counter.\n\n⏱️ You have 2 minutes to cancel for an instant UPI refund if needed.`
+          : paymentMethod === 'Wallet'
+          ? `₹${totalAmount} paid from your SkipQ Security Wallet. Digital pickup pass is generated below!\n\n⏱️ Free cancellation with 100% wallet refund available within 2 minutes.`
           : `Your payment of ₹${totalAmount} via ${paymentMethod} has been sent to ${cart.shopName}. Digital pickup pass is generated below!\n\n⏱️ Free cancellation with 100% instant UPI refund available within 2 minutes.`,
         [{ text: 'View Token Pass' }]
       );
@@ -208,6 +255,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
   };
 
   const paymentApps = [
+    { id: 'Wallet', label: `💳 SkipQ Wallet (₹${walletBalance.toFixed(0)})` },
     { id: 'PhonePe', label: '💜 PhonePe' },
     { id: 'GPay', label: '💙 GPay' },
     { id: 'Paytm', label: '🟦 Paytm / UPI' },
@@ -425,6 +473,15 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                       Pay only ₹{deposit10Percent} now via UPI to confirm kitchen prep. Pay remaining ₹{dueAtCounter} in cash at the canteen counter. ⏱️ 100% refundable if cancelled within 2 minutes.
                     </Text>
                   </View>
+                ) : paymentMethod === 'Wallet' ? (
+                  <View style={styles.onlineNoticeBox}>
+                    <Text style={styles.onlineNoticeTitle}>
+                      💳 SkipQ Security Wallet Payment
+                    </Text>
+                    <Text style={styles.onlineNoticeSub}>
+                      Available Balance: ₹{walletBalance.toFixed(0)}. Instant zero-friction pass generation with no UPI app switching.
+                    </Text>
+                  </View>
                 ) : (
                   <View style={styles.onlineNoticeBox}>
                     <Text style={styles.onlineNoticeTitle}>
@@ -458,6 +515,11 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                       <Text style={[styles.billValue, { color: '#b45309', fontWeight: '800' }]}>₹{dueAtCounter}</Text>
                     </View>
                   </>
+                ) : paymentMethod === 'Wallet' ? (
+                  <View style={[styles.billRow, styles.billRowTotal]}>
+                    <Text style={styles.billTotalLabel}>Deduct from Wallet</Text>
+                    <Text style={styles.billTotalValue}>₹{totalAmount}</Text>
+                  </View>
                 ) : (
                   <View style={[styles.billRow, styles.billRowTotal]}>
                     <Text style={styles.billTotalLabel}>Total Payable Now (UPI)</Text>
@@ -466,19 +528,60 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                 )}
               </View>
 
+              {/* Geofence Status Banner if Off Campus or GPS Pending */}
+              {!hasUserLocation ? (
+                <View style={styles.geofenceNoticeBoxPending}>
+                  <Text style={styles.geofenceNoticeIcon}>📍</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.geofenceNoticeTitle}>GPS Location Required</Text>
+                    <Text style={styles.geofenceNoticeSub}>Please enable location to verify campus perimeter.</Text>
+                  </View>
+                </View>
+              ) : !isWithinStallPerimeter ? (
+                <View style={styles.geofenceNoticeBoxBlocked}>
+                  <Text style={styles.geofenceNoticeIcon}>🚫</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.geofenceNoticeTitleBlocked}>
+                      Off Campus: {formatDistance(stallDistanceMeters)} Away
+                    </Text>
+                    <Text style={styles.geofenceNoticeSubBlocked}>
+                      Orders can only be placed inside the 500m Silver Oak campus perimeter.
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
               {/* Place Order CTA */}
               <TouchableOpacity
-                style={styles.placeOrderBtn}
+                style={[
+                  styles.placeOrderBtn,
+                  (!hasUserLocation || !isWithinStallPerimeter) && styles.placeOrderBtnBlocked
+                ]}
                 onPress={handlePlaceOrder}
                 disabled={isSubmitting}
                 activeOpacity={0.88}
               >
                 {isSubmitting ? (
                   <ActivityIndicator color="#ffffff" />
+                ) : !hasUserLocation ? (
+                  <>
+                    <Text style={styles.placeOrderBtnText}>📍 GPS Location Required</Text>
+                    <Text style={styles.placeOrderBtnSub}>Tap to check location</Text>
+                  </>
+                ) : !isWithinStallPerimeter ? (
+                  <>
+                    <Text style={styles.placeOrderBtnText}>🚫 Blocked: {formatDistance(stallDistanceMeters)} Away</Text>
+                    <Text style={styles.placeOrderBtnSub}>Must be within 500m of campus to order</Text>
+                  </>
                 ) : isCash ? (
                   <>
                     <Text style={styles.placeOrderBtnText}>💵 Pay ₹{deposit10Percent} UPI Token & Pre-order</Text>
                     <Text style={styles.placeOrderBtnSub}>Pay ₹{dueAtCounter} Cash at Stall • Instant Token</Text>
+                  </>
+                ) : paymentMethod === 'Wallet' ? (
+                  <>
+                    <Text style={styles.placeOrderBtnText}>⚡ Pay ₹{totalAmount} with SkipQ Wallet</Text>
+                    <Text style={styles.placeOrderBtnSub}>Instant Digital Pass • Wallet Bal: ₹{walletBalance.toFixed(0)}</Text>
                   </>
                 ) : (
                   <>
@@ -715,7 +818,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f7f4ee',
+    backgroundColor: '#edf3f8',
   },
   scrollContainer: {
     flex: 1,
@@ -733,12 +836,12 @@ const styles = StyleSheet.create({
     top: 10,
     left: 16,
     right: 16,
-    backgroundColor: '#059669',
-    borderRadius: 12,
+    backgroundColor: '#0c52a3',
+    borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 16,
     zIndex: 999,
-    shadowColor: '#000',
+    shadowColor: '#0c52a3',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -747,7 +850,7 @@ const styles = StyleSheet.create({
   toastNoticeText: {
     color: '#ffffff',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     textAlign: 'center',
   },
   header: {
@@ -757,34 +860,40 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   headerTitle: {
-    color: '#27221d',
+    color: '#0f172a',
     fontSize: 22,
     fontWeight: '900',
     letterSpacing: -0.5,
   },
   headerSub: {
-    color: '#766d63',
+    color: '#64748b',
     fontSize: 12,
     marginTop: 2,
+    fontWeight: '600',
   },
   clearCartBtn: {
     paddingVertical: 6,
     paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: '#eee7dc',
+    borderRadius: 10,
+    backgroundColor: '#fee2e2',
   },
   clearCartText: {
-    color: '#ef4444',
+    color: '#dc2626',
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   sectionCard: {
-    backgroundColor: '#fffdf9',
+    backgroundColor: '#ffffff',
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#e8e1d7',
+    borderColor: '#e2e8f0',
     padding: 16,
     marginBottom: 16,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 2,
   },
   sectionHeaderRow: {
     flexDirection: 'row',
@@ -801,49 +910,51 @@ const styles = StyleSheet.create({
     fontSize: 18,
   },
   sectionTitle: {
-    color: '#1c2521',
+    color: '#0f172a',
     fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: -0.15,
+    fontWeight: '900',
+    letterSpacing: -0.2,
   },
   badgePill: {
-    backgroundColor: '#10b98120',
+    backgroundColor: '#ccfbf1',
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#10b98140',
+    borderColor: '#99f6e4',
   },
   badgeText: {
-    color: '#10b981',
+    color: '#0f766e',
     fontSize: 12,
     fontWeight: '800',
   },
   badgePillSecondary: {
-    backgroundColor: '#e5eee8',
+    backgroundColor: '#e6f2fb',
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 20,
   },
   badgeTextSecondary: {
-    color: '#376048',
+    color: '#0c52a3',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   stallBanner: {
-    backgroundColor: '#f3eee6',
+    backgroundColor: '#f8fafc',
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 10,
+    borderRadius: 12,
     marginBottom: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   stallBannerText: {
-    color: '#b85c38',
+    color: '#0c52a3',
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   stallCampusTag: {
     color: '#64748b',
@@ -858,7 +969,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee7dc',
+    borderBottomColor: '#f1f5f9',
   },
   cartItemLeft: {
     flex: 1,
@@ -869,7 +980,7 @@ const styles = StyleSheet.create({
     width: 14,
     height: 14,
     borderWidth: 1.5,
-    borderColor: '#334155',
+    borderColor: '#cbd5e1',
     borderRadius: 3,
     alignItems: 'center',
     justifyContent: 'center',
@@ -881,22 +992,23 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   cartItemName: {
-    color: '#27221d',
+    color: '#0f172a',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   cartItemPrice: {
     color: '#64748b',
     fontSize: 12,
     marginTop: 2,
+    fontWeight: '600',
   },
   stepperWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f3eee6',
-    borderRadius: 8,
+    backgroundColor: '#e6f2fb',
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#dfd4c5',
+    borderColor: '#bae6fd',
     paddingHorizontal: 4,
     paddingVertical: 2,
     marginRight: 12,
@@ -906,21 +1018,21 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   stepperBtnText: {
-    color: '#b85c38',
+    color: '#0c52a3',
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   stepperQtyText: {
-    color: '#38bdf8',
+    color: '#0c52a3',
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '900',
     minWidth: 18,
     textAlign: 'center',
   },
   cartItemSubtotal: {
-    color: '#1c2521',
+    color: '#0f172a',
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '900',
     minWidth: 44,
     textAlign: 'right',
   },
@@ -929,21 +1041,22 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   inputLabel: {
-    color: '#65736a',
+    color: '#475569',
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.5,
     marginBottom: 6,
   },
   instructionInput: {
-    backgroundColor: '#f3eee6',
-    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#dfd4c5',
-    color: '#27221d',
+    borderColor: '#e2e8f0',
+    color: '#0f172a',
     fontSize: 13,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 10,
+    fontWeight: '600',
   },
   paymentSection: {
     marginBottom: 14,
@@ -956,72 +1069,77 @@ const styles = StyleSheet.create({
   },
   paymentPill: {
     paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: '#f3eee6',
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
     borderWidth: 1,
-    borderColor: '#dfd4c5',
+    borderColor: '#e2e8f0',
   },
   paymentPillSelected: {
-    backgroundColor: '#f8e8df',
-    borderColor: '#d76b43',
+    backgroundColor: '#e6f2fb',
+    borderColor: '#0c52a3',
+    borderWidth: 1.5,
   },
   paymentPillText: {
-    color: '#766d63',
+    color: '#64748b',
     fontSize: 12,
     fontWeight: '700',
   },
   paymentPillTextSelected: {
-    color: '#b85c38',
-    fontWeight: '800',
+    color: '#0c52a3',
+    fontWeight: '900',
   },
   cashNoticeBox: {
     marginTop: 8,
-    padding: 10,
-    borderRadius: 8,
-    backgroundColor: '#fff7e4',
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#fffbeb',
     borderWidth: 1,
-    borderColor: '#efd39a',
+    borderColor: '#fde68a',
   },
   cashNoticeAlert: {
     borderColor: '#f59e0b',
-    backgroundColor: '#78350f20',
+    backgroundColor: '#fef3c7',
   },
   cashNoticeTitle: {
     color: '#b45309',
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   cashNoticeSub: {
-    color: '#766d63',
+    color: '#92400e',
     fontSize: 11,
     marginTop: 2,
     lineHeight: 15,
+    fontWeight: '600',
   },
   onlineNoticeBox: {
     marginTop: 8,
-    padding: 10,
-    borderRadius: 8,
-    backgroundColor: '#f0fdf4',
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#ccfbf1',
     borderWidth: 1,
-    borderColor: '#bbf7d0',
+    borderColor: '#99f6e4',
   },
   onlineNoticeTitle: {
-    color: '#15803d',
+    color: '#0f766e',
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   onlineNoticeSub: {
-    color: '#475569',
+    color: '#134e4a',
     fontSize: 11,
     marginTop: 2,
     lineHeight: 15,
+    fontWeight: '600',
   },
   billBox: {
-    backgroundColor: '#f3eee6',
-    borderRadius: 12,
-    padding: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+    padding: 14,
     marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
     gap: 6,
   },
   billRow: {
@@ -1030,43 +1148,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   billLabel: {
-    color: '#65736a',
-    fontSize: 13,
-  },
-  billValue: {
-    color: '#1c2521',
+    color: '#64748b',
     fontSize: 13,
     fontWeight: '600',
   },
-  billRowTotal: {
-    borderTopWidth: 1,
-    borderTopColor: '#dfd8cb',
-    paddingTop: 8,
-    marginTop: 4,
-  },
-  billTotalLabel: {
-    color: '#27221d',
-    fontSize: 15,
+  billValue: {
+    color: '#0f172a',
+    fontSize: 13,
     fontWeight: '800',
   },
+  billRowTotal: {
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    paddingTop: 10,
+    marginTop: 6,
+  },
+  billTotalLabel: {
+    color: '#0f172a',
+    fontSize: 15,
+    fontWeight: '900',
+  },
   billTotalValue: {
-    color: '#10b981',
-    fontSize: 17,
+    color: '#0c52a3',
+    fontSize: 18,
     fontWeight: '900',
   },
   placeOrderBtn: {
-    backgroundColor: '#1c2521',
+    backgroundColor: '#0c52a3',
     borderRadius: 16,
     paddingVertical: 15,
     alignItems: 'center',
-    shadowColor: '#172019',
+    shadowColor: '#0c52a3',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.35,
     shadowRadius: 8,
     elevation: 4,
   },
   placeOrderBtnDisabled: {
     opacity: 0.5,
+    backgroundColor: '#cbd5e1',
   },
   placeOrderBtnText: {
     color: '#ffffff',
@@ -1074,9 +1194,57 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   placeOrderBtnSub: {
-    color: '#ecfdf5',
+    color: '#ccfbf1',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  placeOrderBtnBlocked: {
+    backgroundColor: '#dc2626',
+    shadowColor: '#dc2626',
+  },
+  geofenceNoticeBoxPending: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  geofenceNoticeBoxBlocked: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  geofenceNoticeIcon: {
+    fontSize: 20,
+    marginRight: 10,
+  },
+  geofenceNoticeTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#92400e',
+  },
+  geofenceNoticeSub: {
+    fontSize: 11,
+    color: '#b45309',
+    marginTop: 2,
+  },
+  geofenceNoticeTitleBlocked: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#991b1b',
+  },
+  geofenceNoticeSubBlocked: {
+    fontSize: 11,
+    color: '#b91c1c',
     marginTop: 2,
   },
   emptyCartBox: {
@@ -1089,9 +1257,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   emptyCartTitle: {
-    color: '#1c2521',
+    color: '#0f172a',
     fontSize: 17,
-    fontWeight: '800',
+    fontWeight: '900',
     marginBottom: 4,
   },
   emptyCartSub: {
@@ -1102,28 +1270,33 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   exploreDishesBtn: {
-    backgroundColor: '#d76b43',
+    backgroundColor: '#0c52a3',
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 18,
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    elevation: 2,
   },
   exploreDishesBtnText: {
     color: '#ffffff',
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   activePassCard: {
-    backgroundColor: '#1c2521',
+    backgroundColor: '#ffffff',
     borderRadius: 22,
     borderWidth: 1.5,
-    borderColor: '#4d8062',
+    borderColor: '#00a3c4',
     padding: 16,
     marginBottom: 16,
-    shadowColor: '#172019',
+    shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.1,
     shadowRadius: 10,
-    elevation: 6,
+    elevation: 4,
   },
   activePassTop: {
     flexDirection: 'row',
@@ -1135,34 +1308,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#06b6d420',
+    backgroundColor: '#ccfbf1',
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#06b6d440',
+    borderColor: '#99f6e4',
   },
   pulsingDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#06b6d4',
+    backgroundColor: '#0f766e',
   },
   activeStatusText: {
-    color: '#a8d0b4',
+    color: '#0f766e',
     fontSize: 11,
     fontWeight: '800',
   },
   timerPill: {
-    backgroundColor: '#314238',
+    backgroundColor: '#e6f2fb',
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#bae6fd',
   },
   timerText: {
-    color: '#fbbf24',
+    color: '#0c52a3',
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   activePassBody: {
     flexDirection: 'row',
@@ -1177,58 +1352,67 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   tokenNumber: {
-    color: '#ffffff',
+    color: '#0c52a3',
     fontSize: 26,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   activePassShop: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 12,
     marginTop: 2,
+    fontWeight: '600',
   },
   pinContainer: {
-    backgroundColor: '#162238',
+    backgroundColor: '#e6f2fb',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#bae6fd',
     paddingVertical: 8,
     paddingHorizontal: 14,
     alignItems: 'center',
   },
   pinLabel: {
-    color: '#64748b',
+    color: '#0c52a3',
     fontSize: 9,
     fontWeight: '800',
   },
   pinCode: {
-    color: '#10b981',
+    color: '#0c52a3',
     fontSize: 18,
     fontWeight: '900',
     letterSpacing: 2,
     marginTop: 2,
   },
   activePassItems: {
-    backgroundColor: '#26332b',
+    backgroundColor: '#f8fafc',
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 8,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   activeItemsSummary: {
-    color: '#94a3b8',
+    color: '#475569',
     fontSize: 12,
+    fontWeight: '600',
   },
   viewPassBtn: {
-    backgroundColor: '#0891b2',
-    borderRadius: 10,
-    paddingVertical: 10,
+    backgroundColor: '#0c52a3',
+    borderRadius: 12,
+    paddingVertical: 11,
     alignItems: 'center',
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    elevation: 2,
   },
   viewPassBtnText: {
     color: '#ffffff',
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   emptyHistoryBox: {
     alignItems: 'center',
@@ -1240,7 +1424,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   emptyHistoryTitle: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 15,
     fontWeight: '800',
     marginBottom: 4,
@@ -1255,11 +1439,16 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   pastOrderCard: {
-    backgroundColor: '#f3eee6',
-    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e8e1d7',
+    borderColor: '#e2e8f0',
     padding: 14,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 1,
   },
   pastOrderTop: {
     flexDirection: 'row',
@@ -1268,7 +1457,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   pastOrderShop: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 15,
     fontWeight: '800',
   },
@@ -1283,51 +1472,54 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   statusCompleted: {
-    backgroundColor: '#10b98120',
+    backgroundColor: '#ccfbf1',
   },
   statusCancelled: {
-    backgroundColor: '#ef444420',
+    backgroundColor: '#fee2e2',
   },
   statusReady: {
-    backgroundColor: '#06b6d420',
+    backgroundColor: '#e0f2fe',
   },
   orderStatusText: {
     fontSize: 11,
     fontWeight: '800',
   },
   statusTextCompleted: {
-    color: '#10b981',
+    color: '#0f766e',
   },
   statusTextCancelled: {
-    color: '#ef4444',
+    color: '#dc2626',
   },
   statusTextReady: {
-    color: '#38bdf8',
+    color: '#0284c7',
   },
   pastOrderItemsBox: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
     borderRadius: 8,
     padding: 8,
     marginBottom: 10,
     gap: 4,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
   },
   pastOrderItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   pastOrderItemQty: {
-    color: '#38bdf8',
+    color: '#0c52a3',
     fontSize: 12,
     fontWeight: '800',
     width: 24,
   },
   pastOrderItemName: {
     flex: 1,
-    color: '#cbd5e1',
+    color: '#334155',
     fontSize: 12,
+    fontWeight: '600',
   },
   pastOrderItemPrice: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1343,7 +1535,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   pastOrderTotalVal: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 15,
     fontWeight: '900',
   },
@@ -1356,50 +1548,55 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 8,
-    backgroundColor: '#1e293b',
+    backgroundColor: '#fffbeb',
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#fde68a',
   },
   rateBtnText: {
-    color: '#fbbf24',
+    color: '#b45309',
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   reorderBtn: {
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 8,
-    backgroundColor: '#d76b43',
+    backgroundColor: '#0c52a3',
   },
   reorderBtnText: {
     color: '#ffffff',
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   ratingModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.75)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
   ratingModalContent: {
-    backgroundColor: '#0d1527',
-    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#1e293b',
-    padding: 20,
+    borderColor: '#e2e8f0',
+    padding: 22,
     width: '100%',
     maxWidth: 380,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 18,
+    elevation: 8,
   },
   ratingModalTitle: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 18,
-    fontWeight: '800',
+    fontWeight: '900',
     textAlign: 'center',
   },
   ratingModalSub: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 13,
     textAlign: 'center',
     marginTop: 2,
@@ -1418,22 +1615,23 @@ const styles = StyleSheet.create({
     fontSize: 34,
   },
   starFilled: {
-    color: '#fbbf24',
+    color: '#f59e0b',
   },
   starEmpty: {
-    color: '#334155',
+    color: '#e2e8f0',
   },
   ratingInput: {
-    backgroundColor: '#162238',
-    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#334155',
-    color: '#ffffff',
+    borderColor: '#e2e8f0',
+    color: '#0f172a',
     fontSize: 13,
     padding: 12,
     height: 70,
     textAlignVertical: 'top',
     marginBottom: 16,
+    fontWeight: '600',
   },
   ratingModalButtons: {
     flexDirection: 'row',
@@ -1442,29 +1640,29 @@ const styles = StyleSheet.create({
   cancelRatingBtn: {
     flex: 1,
     paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
     alignItems: 'center',
   },
   cancelRatingText: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   submitRatingBtn: {
     flex: 1,
     paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: '#6366f1',
+    borderRadius: 12,
+    backgroundColor: '#0c52a3',
     alignItems: 'center',
   },
   submitRatingText: {
     color: '#ffffff',
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   cartRushNotice: {
-    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    backgroundColor: '#fef3c7',
     borderWidth: 1,
     borderColor: '#f59e0b',
     padding: 12,
@@ -1472,21 +1670,21 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   cartRushTitle: {
-    color: '#f59e0b',
+    color: '#b45309',
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '900',
     letterSpacing: 0.5,
   },
   cartRushSub: {
-    color: '#fde68a',
+    color: '#92400e',
     fontSize: 11,
     marginTop: 2,
     lineHeight: 16,
   },
   cartFacultyCard: {
-    backgroundColor: 'rgba(147, 51, 234, 0.12)',
+    backgroundColor: '#e6f2fb',
     borderWidth: 1,
-    borderColor: 'rgba(192, 132, 252, 0.3)',
+    borderColor: '#bae6fd',
     borderRadius: 12,
     padding: 12,
     marginBottom: 14,
@@ -1497,25 +1695,25 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   cartFacultyTitle: {
-    color: '#c084fc',
+    color: '#0c52a3',
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   cartFacultyDesc: {
-    color: '#e9d5ff',
+    color: '#334155',
     fontSize: 11,
     marginBottom: 8,
   },
   cartFacultyInput: {
-    backgroundColor: '#0f172a',
-    color: '#f3e8ff',
-    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    color: '#0f172a',
+    borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 12,
     borderWidth: 1,
-    borderColor: 'rgba(192, 132, 252, 0.25)',
+    borderColor: '#bae6fd',
   },
   slotContainer: {
     marginBottom: 14,
@@ -1527,23 +1725,24 @@ const styles = StyleSheet.create({
   },
   slotCard: {
     flexBasis: '48%',
-    backgroundColor: '#162238',
+    backgroundColor: '#f8fafc',
     padding: 10,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#243452',
+    borderColor: '#e2e8f0',
   },
   slotCardActive: {
-    borderColor: '#38bdf8',
-    backgroundColor: 'rgba(56, 189, 248, 0.14)',
+    borderColor: '#0c52a3',
+    backgroundColor: '#e6f2fb',
+    borderWidth: 1.5,
   },
   slotCardTitle: {
-    color: '#cbd5e1',
+    color: '#475569',
     fontSize: 12,
     fontWeight: '800',
   },
   slotCardTitleActive: {
-    color: '#38bdf8',
+    color: '#0c52a3',
   },
   slotCardSub: {
     color: '#64748b',
@@ -1551,12 +1750,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   roommateCard: {
-    backgroundColor: '#162238',
+    backgroundColor: '#f8fafc',
     padding: 12,
     borderRadius: 12,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#243452',
+    borderColor: '#e2e8f0',
   },
   roommateRow: {
     flexDirection: 'row',
@@ -1564,9 +1763,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   roommateTitle: {
-    color: '#f8fafc',
+    color: '#0f172a',
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   roommateSub: {
     color: '#64748b',
@@ -1574,14 +1773,14 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   collectorInput: {
-    backgroundColor: '#0b1120',
-    color: '#f8fafc',
-    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    color: '#0f172a',
+    borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 12,
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.3)',
+    borderColor: '#e2e8f0',
     marginTop: 8,
   },
 });

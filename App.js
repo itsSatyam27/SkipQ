@@ -70,7 +70,10 @@ function MainScreen() {
 
   return (
     <View style={styles.appContainer}>
-      <StatusBar barStyle="dark-content" backgroundColor="#f5f3ee" />
+      <StatusBar
+        barStyle="dark-content"
+        backgroundColor="#edf3f8"
+      />
 
       {/* Modern Top Header */}
       <Header
@@ -199,7 +202,7 @@ function MainScreen() {
                     currentTab === 'cart'
                       ? styles.tabLabelActiveCart
                       : cartTotalItems > 0
-                      ? { color: '#10b981', fontWeight: '800' }
+                      ? { color: '#00a3c4', fontWeight: '800' }
                       : null
                   ]}
                 >
@@ -261,7 +264,7 @@ function AppRoot() {
   if (isOnboardingComplete === null) {
     return (
       <View style={[styles.appContainer, { justifyContent: 'center', alignItems: 'center' }]}>
-        <StatusBar barStyle="light-content" backgroundColor="#070a13" />
+        <StatusBar barStyle="dark-content" backgroundColor="#edf3f8" />
         <View style={styles.loadingLogo}>
           <Text style={styles.loadingLogoText}>Q</Text>
         </View>
@@ -288,59 +291,65 @@ export default function App() {
 const styles = StyleSheet.create({
   appContainer: {
     flex: 1,
-    backgroundColor: '#f5f3ee',
+    backgroundColor: '#edf3f8',
   },
   bottomDockContainer: {
     paddingHorizontal: 20,
     paddingBottom: 16,
     paddingTop: 10,
-    backgroundColor: '#f5f3ee',
+    backgroundColor: '#edf3f8',
   },
   bottomBar: {
     flexDirection: 'row',
     width: '100%',
     maxWidth: 760,
     alignSelf: 'center',
-    backgroundColor: '#1c2521',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#2e3b34',
-    paddingVertical: 9,
-    paddingHorizontal: 8,
-    shadowColor: '#172019',
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    paddingVertical: 7,
+    paddingHorizontal: 7,
+    overflow: 'hidden',
+    shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 0,
   },
   bottomTab: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 7,
-    borderRadius: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    overflow: 'hidden',
   },
   bottomTabActive: {
-    backgroundColor: '#314238',
+    backgroundColor: '#0c52a3',
   },
   bottomTabActiveCart: {
-    backgroundColor: '#4d8062',
+    backgroundColor: '#0c52a3',
   },
   bottomTabActiveSeller: {
-    backgroundColor: '#4d8062',
+    backgroundColor: '#0c52a3',
+  },
+  tabLabelActiveSeller: {
+    color: '#ffffff',
+    fontWeight: '900',
   },
   tabIconWrap: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   tabIconWrapActive: {
-    transform: [{ scale: 1.1 }],
+    transform: [{ scale: 1.08 }],
   },
   tabIconWrapActiveCart: {
-    transform: [{ scale: 1.1 }],
+    transform: [{ scale: 1.08 }],
   },
   tabIconWrapActiveSeller: {
-    transform: [{ scale: 1.1 }],
+    transform: [{ scale: 1.08 }],
   },
   cartTabWrap: {
     position: 'relative',
@@ -352,28 +361,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   tabLabel: {
-    color: '#aab9ae',
+    color: '#64748b',
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
     letterSpacing: 0.1,
   },
   tabLabelActive: {
     color: '#ffffff',
-    fontWeight: '900',
+    fontWeight: '800',
   },
   tabLabelActiveCart: {
     color: '#ffffff',
-    fontWeight: '900',
-  },
-  tabLabelActiveSeller: {
-    color: '#ffffff',
-    fontWeight: '900',
+    fontWeight: '800',
   },
   cartTabBadge: {
     position: 'absolute',
     top: -5,
     right: -10,
-    backgroundColor: '#e9b95a',
+    backgroundColor: '#00a3c4',
     minWidth: 16,
     height: 16,
     borderRadius: 8,
@@ -381,7 +386,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 3,
     borderWidth: 1.5,
-    borderColor: '#1c2521',
+    borderColor: '#ffffff',
   },
   cartTabBadgeText: {
     color: '#ffffff',
@@ -392,23 +397,23 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -2,
     right: -6,
-    backgroundColor: '#e9b95a',
+    backgroundColor: '#00a3c4',
     width: 8,
     height: 8,
     borderRadius: 4,
     borderWidth: 1.5,
-    borderColor: '#1c2521',
+    borderColor: '#ffffff',
   },
   loadingLogo: {
     width: 56,
     height: 56,
-    borderRadius: 28,
-    backgroundColor: '#1c2521',
+    borderRadius: 18,
+    backgroundColor: '#0c52a3',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#172019',
+    shadowColor: '#0c52a3',
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
+    shadowOpacity: 0.35,
     shadowRadius: 12,
     elevation: 8,
   },
@@ -418,7 +423,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   loadingText: {
-    color: '#aab9ae',
+    color: '#64748b',
     fontSize: 13,
     marginTop: 14,
     fontWeight: '800',

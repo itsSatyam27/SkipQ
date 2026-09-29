@@ -37,8 +37,14 @@ async function orderRequest(path, body) {
 }
 
 // Subscribe to real-time orders across students and kitchen KDS
-export function subscribeToOrders(onUpdate) {
+// When filterOptions ({ role, uid, shopId }) is provided, scoped queries match Firestore security rules
+export function subscribeToOrders(filterOrUpdate, maybeUpdate) {
   if (!isFirebaseConfigured || !db) return () => {};
+
+  const onUpdate = typeof filterOrUpdate === 'function' ? filterOrUpdate : maybeUpdate;
+  const filter = typeof filterOrUpdate === 'object' && filterOrUpdate !== null ? filterOrUpdate : {};
+
+  if (typeof onUpdate !== 'function') return () => {};
 
   let unsubscribe = () => {};
 
@@ -53,9 +59,25 @@ export function subscribeToOrders(onUpdate) {
 
   try {
     const ordersRef = collection(db, 'orders');
-    // Listen to real-time orders collection directly
+    let ordersQuery = ordersRef;
+
+    const currentUid = filter.uid || auth?.currentUser?.uid;
+
+    if (filter.role === 'seller' && (filter.shopId || currentUid)) {
+      if (filter.shopId) {
+        ordersQuery = query(ordersRef, where('shopId', '==', filter.shopId));
+      } else if (currentUid) {
+        ordersQuery = query(ordersRef, where('sellerId', '==', currentUid));
+      }
+    } else if (filter.role === 'buyer' && currentUid) {
+      ordersQuery = query(ordersRef, where('buyerId', '==', currentUid));
+    } else if (currentUid) {
+      // General signed in user fallback: query by buyerId
+      ordersQuery = query(ordersRef, where('buyerId', '==', currentUid));
+    }
+
     unsubscribe = onSnapshot(
-      ordersRef,
+      ordersQuery,
       snapshot => {
         const list = normalizeSnapshot(snapshot);
         onUpdate(list.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp))));
@@ -88,6 +110,7 @@ export async function placeOrderInFirestore(orderData) {
         ...orderData,
         id: orderId,
         buyerId: buyerUid,
+        sellerId: orderData.sellerId || '',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       };

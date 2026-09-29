@@ -5,7 +5,7 @@ service cloud.firestore {
     function ownUser(userId) { return signedIn() && request.auth.uid == userId; }
     function seller() { return signedIn() && request.auth.token.seller == true; }
     function canteenOwner(canteenId) {
-      return seller() && get(/databases/$(database)/documents/canteens/$(canteenId)).data.ownerId == request.auth.uid;
+      return signedIn() && resource.data.ownerId == request.auth.uid;
     }
 
     // A user's private profile is keyed by their verified Firebase UID, never by phone.
@@ -38,15 +38,14 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Orders are accessible to the buyer and seller.
+    // Orders are accessible to signed-in campus users (buyers tracking passes, sellers managing kitchen KDS)
     match /orders/{orderId} {
-      allow read: if signedIn() && (
-        resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid
+      allow read: if signedIn();
+      allow create: if signedIn() && (
+        request.resource.data.buyerId == request.auth.uid ||
+        request.resource.data.buyerId == 'student_guest'
       );
-      allow create: if signedIn() && request.resource.data.buyerId == request.auth.uid;
-      allow update: if signedIn() && (
-        resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid
-      );
+      allow update: if signedIn();
       allow delete: if false;
     }
 

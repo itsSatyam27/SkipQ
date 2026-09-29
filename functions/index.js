@@ -246,5 +246,40 @@ exports.ordersApi = onRequest({ region: 'asia-south1' }, async (req, res) => {
     });
     return response(res, 200, { success: true, penalty });
   }
+
+  // Periodic cleanup / auto-abandon endpoint for orders uncollected for > 45 minutes
+  if (req.method === 'POST' && req.path.endsWith('/cleanup-abandoned')) {
+    const fortyFiveMinsAgo = new Date(Date.now() - 45 * 60 * 1000);
+    const staleOrdersSnap = await db.collection('orders')
+      .where('orderStatus', '==', 'Ready for Pickup')
+      .get();
+
+    let processedCount = 0;
+    for (const docSnap of staleOrdersSnap.docs) {
+      const ord = docSnap.data();
+      const readyAt = ord.updatedAt?.toDate?.() || ord.createdAt?.toDate?.() || (ord.timestamp ? new Date(ord.timestamp) : null);
+      if (readyAt && readyAt < fortyFiveMinsAgo) {
+        const orderRef = docSnap.ref;
+        const buyerRef = db.collection('users').doc(ord.buyerId);
+        try {
+          await db.runTransaction(async transaction => {
+            const buyerSnap = await transaction.get(buyerRef);
+            const buyer = buyerSnap.exists ? buyerSnap.data() : {};
+            const count = Number(buyer.unclaimedOrderCount || 0) + 1;
+            const banStatus = count >= 2 ? 'perm_ban' : 'temp_ban';
+            const banUntil = count >= 2 ? null : admin.firestore.Timestamp.fromMillis(Date.now() + 3 * 24 * 60 * 60 * 1000);
+
+            transaction.set(buyerRef, { unclaimedOrderCount: count, banStatus, banUntil, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+            transaction.update(orderRef, { orderStatus: 'Abandoned', depositForfeited: Number(ord.heldDepositAmount || 0), autoAbandonedByCron: true, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+          });
+          processedCount++;
+        } catch (e) {
+          console.error('Auto abandon note:', e.message);
+        }
+      }
+    }
+    return response(res, 200, { success: true, processedCount });
+  }
+
   return response(res, 404, { message: 'Not found.' });
 });

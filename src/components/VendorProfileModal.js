@@ -96,22 +96,6 @@ export default function VendorProfileModal({ visible, onClose }) {
     }
   };
 
-  const handleSwitchToStudent = () => {
-    Alert.alert(
-      'Switch to Student Mode',
-      'Leave the Canteen POS and browse student food radar?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Switch to Student View',
-          onPress: () => {
-            onClose();
-            setRole('buyer');
-          }
-        }
-      ]
-    );
-  };
 
   const handleRestartSetup = () => {
     Alert.alert(
@@ -311,35 +295,48 @@ export default function VendorProfileModal({ visible, onClose }) {
               </View>
             </View>
 
-            {/* Switch Role to Student */}
-            <View style={styles.switchRoleCard}>
-              <Text style={styles.switchRoleTitle}>🎓 Student Food Ordering</Text>
-              <Text style={styles.switchRoleSub}>
-                Order food or browse menus from other stalls across the campus food court.
-              </Text>
-              <TouchableOpacity
-                style={styles.switchRoleBtn}
-                onPress={handleSwitchToStudent}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.switchRoleBtnText}>Switch to Student View ➔</Text>
-              </TouchableOpacity>
-            </View>
+
 
             {/* Account Actions */}
-            <View style={styles.dangerCard}>
-              <Text style={styles.dangerTitle}>Merchant Account Actions</Text>
-              <View style={styles.dangerButtons}>
-                <TouchableOpacity style={styles.onboardBtn} onPress={sendSupportEmail}>
-                  <Text style={styles.onboardBtnText}>✉️ Feedback & Support</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.resetBtn} onPress={handleLogout}>
-                  <Text style={styles.resetBtnText}>🚪 Log Out</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.onboardBtn} onPress={handleRestartSetup}>
-                  <Text style={styles.onboardBtnText}>🏫 Change Role / Campus</Text>
-                </TouchableOpacity>
-              </View>
+            <View style={styles.actionListCard}>
+              <Text style={styles.actionListHeader}>MERCHANT CONTROLS</Text>
+
+              <TouchableOpacity style={styles.actionListRow} onPress={sendSupportEmail} activeOpacity={0.7}>
+                <View style={styles.actionListLeft}>
+                  <Text style={styles.actionListEmoji}>✉️</Text>
+                  <View>
+                    <Text style={styles.actionListTitle}>Feedback & Support</Text>
+                    <Text style={styles.actionListSub}>Contact the SkipQ team</Text>
+                  </View>
+                </View>
+                <Text style={styles.actionListArrow}>›</Text>
+              </TouchableOpacity>
+
+              <View style={styles.actionDivider} />
+
+              <TouchableOpacity style={styles.actionListRow} onPress={handleRestartSetup} activeOpacity={0.7}>
+                <View style={styles.actionListLeft}>
+                  <Text style={styles.actionListEmoji}>🏫</Text>
+                  <View>
+                    <Text style={styles.actionListTitle}>Change Role / Campus</Text>
+                    <Text style={styles.actionListSub}>Reconfigure initial setup</Text>
+                  </View>
+                </View>
+                <Text style={styles.actionListArrow}>›</Text>
+              </TouchableOpacity>
+
+              <View style={styles.actionDivider} />
+
+              <TouchableOpacity style={styles.actionListRow} onPress={handleLogout} activeOpacity={0.7}>
+                <View style={styles.actionListLeft}>
+                  <Text style={styles.actionListEmoji}>🚪</Text>
+                  <View>
+                    <Text style={[styles.actionListTitle, { color: '#ef4444' }]}>Log Out</Text>
+                    <Text style={styles.actionListSub}>Sign out of this merchant POS session</Text>
+                  </View>
+                </View>
+                <Text style={[styles.actionListArrow, { color: '#ef4444' }]}>›</Text>
+              </TouchableOpacity>
             </View>
 
             <View style={{ height: 40 }} />
@@ -353,46 +350,52 @@ export default function VendorProfileModal({ visible, onClose }) {
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(5, 8, 16, 0.82)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
     justifyContent: 'flex-end',
   },
   sheetContainer: {
-    backgroundColor: '#070a13',
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
-    borderTopWidth: 1.5,
-    borderColor: '#1e293b',
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderTopWidth: 1,
+    borderColor: '#e2e8f0',
     maxHeight: '92%',
-    paddingTop: 18,
-    paddingHorizontal: 16,
+    paddingTop: 20,
+    paddingHorizontal: 18,
+    shadowColor: '#64748b',
+    shadowOpacity: 0.15,
+    shadowRadius: 18,
+    elevation: 10,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     marginBottom: 16,
-    paddingHorizontal: 4,
+    paddingHorizontal: 2,
   },
   title: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 20,
     fontWeight: '900',
+    letterSpacing: -0.3,
   },
   subtitle: {
-    color: '#94a3b8',
-    fontSize: 12,
+    color: '#64748b',
+    fontSize: 12.5,
     marginTop: 2,
+    fontWeight: '600',
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#1e293b',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#f1f5f9',
     alignItems: 'center',
     justifyContent: 'center',
   },
   closeBtnText: {
-    color: '#94a3b8',
+    color: '#475569',
     fontSize: 14,
     fontWeight: '800',
   },
@@ -402,10 +405,10 @@ const styles = StyleSheet.create({
   merchantCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0d1527',
-    borderRadius: 18,
+    backgroundColor: '#f8fafc',
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: '#e2e8f0',
     padding: 16,
     marginBottom: 14,
   },
@@ -413,9 +416,9 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: '#162238',
+    backgroundColor: '#e6f2fb',
     borderWidth: 1.5,
-    borderColor: '#06b6d4',
+    borderColor: '#0c52a3',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
@@ -427,52 +430,56 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   merchantName: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 17,
     fontWeight: '900',
   },
   merchantSub: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 12,
     marginTop: 2,
+    fontWeight: '600',
   },
   roleChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     alignSelf: 'flex-start',
-    backgroundColor: '#064e3b30',
+    backgroundColor: '#e6f2fb',
     paddingVertical: 3,
     paddingHorizontal: 8,
-    borderRadius: 6,
+    borderRadius: 8,
     marginTop: 6,
     borderWidth: 1,
-    borderColor: '#10b98140',
+    borderColor: '#bae6fd',
   },
   activeDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#10b981',
+    backgroundColor: '#0c52a3',
   },
   roleChipText: {
-    color: '#34d399',
+    color: '#0c52a3',
     fontSize: 10,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   salesCard: {
-    backgroundColor: '#091e1d',
-    borderRadius: 18,
-    borderWidth: 1.5,
-    borderColor: '#059669',
-    padding: 16,
+    backgroundColor: '#0c52a3',
+    borderRadius: 20,
+    padding: 18,
     marginBottom: 14,
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 4,
   },
   salesCardLabel: {
-    color: '#34d399',
+    color: 'rgba(255, 255, 255, 0.85)',
     fontSize: 10.5,
-    fontWeight: '800',
-    letterSpacing: 0.5,
+    fontWeight: '900',
+    letterSpacing: 0.8,
     marginBottom: 10,
   },
   salesRow: {
@@ -488,32 +495,39 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   salesSub: {
-    color: '#94a3b8',
-    fontSize: 11.5,
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 12,
     marginTop: 2,
+    fontWeight: '600',
   },
   salesDivider: {
     width: 1,
     height: 36,
-    backgroundColor: '#05966940',
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
     marginHorizontal: 14,
   },
   payoutNotice: {
-    color: '#6ee7b7',
-    fontSize: 11,
-    lineHeight: 15,
+    color: '#ccfbf1',
+    fontSize: 11.5,
+    lineHeight: 16,
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#05966930',
+    borderTopColor: 'rgba(255, 255, 255, 0.2)',
+    fontWeight: '600',
   },
   sectionCard: {
-    backgroundColor: '#0d1527',
-    borderRadius: 18,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#1e293b',
-    padding: 16,
+    borderColor: '#e2e8f0',
+    padding: 18,
     marginBottom: 14,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   statusToggleRow: {
     flexDirection: 'row',
@@ -521,155 +535,183 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   statusToggleTitle: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 15,
     fontWeight: '800',
   },
   statusToggleSub: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 12,
     marginTop: 3,
     lineHeight: 16,
   },
   sectionTitle: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 16,
-    fontWeight: '800',
+    fontWeight: '900',
     marginBottom: 14,
   },
   fieldGroup: {
     marginBottom: 12,
   },
   fieldLabel: {
-    color: '#64748b',
+    color: '#475569',
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.5,
     marginBottom: 6,
   },
   textInput: {
-    backgroundColor: '#162238',
-    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1e293b',
-    color: '#ffffff',
+    borderColor: '#e2e8f0',
+    color: '#0f172a',
     fontSize: 13.5,
+    fontWeight: '600',
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 10,
   },
   saveStallBtn: {
-    backgroundColor: '#10b981',
-    borderRadius: 12,
-    paddingVertical: 12,
+    backgroundColor: '#0c52a3',
+    borderRadius: 14,
+    paddingVertical: 14,
     alignItems: 'center',
     marginTop: 8,
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 3,
   },
   saveStallBtnText: {
     color: '#ffffff',
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   cloudInfoBox: {
-    backgroundColor: '#162238',
+    backgroundColor: '#f8fafc',
     padding: 12,
-    borderRadius: 10,
-    marginBottom: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 6,
   },
   cloudInfoTitle: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 13,
     fontWeight: '800',
   },
   cloudInfoSub: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 11.5,
     marginTop: 3,
     lineHeight: 15,
   },
   configBtn: {
-    backgroundColor: '#1e293b',
+    backgroundColor: '#f1f5f9',
     borderRadius: 10,
     paddingVertical: 10,
     alignItems: 'center',
   },
   configBtnText: {
-    color: '#38bdf8',
+    color: '#0c52a3',
     fontSize: 13,
-    fontWeight: '700',
-  },
-  switchRoleCard: {
-    backgroundColor: '#1e1b4b',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#4338ca',
-    padding: 16,
-    marginBottom: 14,
-  },
-  switchRoleTitle: {
-    color: '#ffffff',
-    fontSize: 15,
     fontWeight: '800',
   },
+  switchRoleCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 18,
+    marginBottom: 14,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  switchRoleTitle: {
+    color: '#0f172a',
+    fontSize: 15,
+    fontWeight: '900',
+  },
   switchRoleSub: {
-    color: '#c7d2fe',
+    color: '#64748b',
     fontSize: 12,
     marginTop: 3,
     marginBottom: 12,
     lineHeight: 16,
   },
   switchRoleBtn: {
-    backgroundColor: '#4f46e5',
-    borderRadius: 10,
-    paddingVertical: 10,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#0c52a3',
+    paddingVertical: 12,
     alignItems: 'center',
   },
   switchRoleBtnText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '800',
+    color: '#0c52a3',
+    fontSize: 13.5,
+    fontWeight: '900',
   },
-  dangerCard: {
-    backgroundColor: '#181119',
-    borderRadius: 18,
+  actionListCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#451a24',
-    padding: 16,
+    borderColor: '#e2e8f0',
+    overflow: 'hidden',
     marginBottom: 14,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  dangerTitle: {
-    color: '#f87171',
-    fontSize: 13,
+  actionListHeader: {
+    color: '#64748b',
+    fontSize: 11,
     fontWeight: '800',
-    marginBottom: 10,
+    letterSpacing: 0.5,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 6,
   },
-  dangerButtons: {
+  actionListRow: {
     flexDirection: 'row',
-    gap: 10,
-  },
-  resetBtn: {
-    flex: 1,
-    backgroundColor: '#27191d',
-    paddingVertical: 9,
-    borderRadius: 10,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#ef444440',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
-  resetBtnText: {
-    color: '#fca5a5',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  onboardBtn: {
-    flex: 1,
-    backgroundColor: '#1e293b',
-    paddingVertical: 9,
-    borderRadius: 10,
+  actionListLeft: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
   },
-  onboardBtnText: {
+  actionListEmoji: {
+    fontSize: 18,
+  },
+  actionListTitle: {
+    color: '#0f172a',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  actionListSub: {
+    color: '#64748b',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  actionListArrow: {
     color: '#94a3b8',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '300',
+  },
+  actionDivider: {
+    height: 1,
+    backgroundColor: '#f1f5f9',
+    marginLeft: 46,
   },
 });

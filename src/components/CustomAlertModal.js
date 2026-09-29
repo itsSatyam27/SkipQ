@@ -17,9 +17,9 @@ export default function CustomAlertModal({ alertData, onClose }) {
   // Determine Alert Category & Theme Colors
   const fullText = (title + ' ' + message).toLowerCase();
 
-  let accentColor = '#38bdf8';
+  let accentColor = '#0c52a3';
   let iconEmoji = '✨';
-  let badgeBg = '#0c2340';
+  let badgeBg = '#e6f2fb';
 
   if (
     fullText.includes('₹') ||
@@ -29,9 +29,9 @@ export default function CustomAlertModal({ alertData, onClose }) {
     fullText.includes('thank') ||
     fullText.includes('🎉')
   ) {
-    accentColor = '#10b981';
+    accentColor = '#059669';
     iconEmoji = fullText.includes('₹') ? '💳' : '✅';
-    badgeBg = '#064e3b35';
+    badgeBg = '#ecfdf5';
   } else if (
     fullText.includes('error') ||
     fullText.includes('delete') ||
@@ -40,9 +40,9 @@ export default function CustomAlertModal({ alertData, onClose }) {
     fullText.includes('suspended') ||
     fullText.includes('fail')
   ) {
-    accentColor = '#ef4444';
+    accentColor = '#dc2626';
     iconEmoji = fullText.includes('delete') ? '🗑️' : '⚠️';
-    badgeBg = '#7f1d1d35';
+    badgeBg = '#fef2f2';
   } else if (
     fullText.includes('warning') ||
     fullText.includes('proximity') ||
@@ -50,9 +50,9 @@ export default function CustomAlertModal({ alertData, onClose }) {
     fullText.includes('deposit') ||
     fullText.includes('lock')
   ) {
-    accentColor = '#f59e0b';
+    accentColor = '#d97706';
     iconEmoji = fullText.includes('proximity') ? '📍' : '⚡';
-    badgeBg = '#78350f35';
+    badgeBg = '#fef3c7';
   }
 
   // Normalize buttons
@@ -86,9 +86,9 @@ export default function CustomAlertModal({ alertData, onClose }) {
       >
         <View style={styles.backdrop}>
           <TouchableWithoutFeedback>
-            <View style={[styles.dialogCard, { borderColor: `${accentColor}50` }]}>
+            <View style={[styles.dialogCard, { borderColor: `${accentColor}40` }]}>
               {/* Top Accent Glowing Icon */}
-              <View style={[styles.iconHalo, { backgroundColor: badgeBg, borderColor: `${accentColor}60` }]}>
+              <View style={[styles.iconHalo, { backgroundColor: badgeBg, borderColor: `${accentColor}50` }]}>
                 <Text style={styles.iconEmoji}>{iconEmoji}</Text>
               </View>
 
@@ -119,10 +119,10 @@ export default function CustomAlertModal({ alertData, onClose }) {
                   let borderColor = 'transparent';
 
                   if (isCancel) {
-                    btnBg = '#162238';
-                    textColor = '#94a3b8';
+                    btnBg = '#f1f5f9';
+                    textColor = '#475569';
                     borderWidth = 1;
-                    borderColor = '#334155';
+                    borderColor = '#e2e8f0';
                   } else if (isDestructive) {
                     btnBg = '#dc2626';
                     textColor = '#ffffff';
@@ -157,7 +157,7 @@ export default function CustomAlertModal({ alertData, onClose }) {
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(5, 8, 16, 0.78)',
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
@@ -165,18 +165,18 @@ const styles = StyleSheet.create({
   dialogCard: {
     width: '100%',
     maxWidth: 340,
-    backgroundColor: '#0c1527',
-    borderRadius: 22,
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
     borderWidth: 1.5,
     paddingTop: 24,
-    paddingBottom: 18,
+    paddingBottom: 20,
     paddingHorizontal: 20,
     alignItems: 'center',
-    shadowColor: '#000000',
+    shadowColor: '#0c52a3',
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.5,
+    shadowOpacity: 0.15,
     shadowRadius: 20,
-    elevation: 16,
+    elevation: 12,
   },
   iconHalo: {
     width: 54,
@@ -191,7 +191,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
   },
   titleText: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 17,
     fontWeight: '900',
     textAlign: 'center',
@@ -199,12 +199,13 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   messageText: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 13,
     lineHeight: 18,
     textAlign: 'center',
     marginBottom: 20,
     paddingHorizontal: 4,
+    fontWeight: '600',
   },
   buttonsContainer: {
     flexDirection: 'row',

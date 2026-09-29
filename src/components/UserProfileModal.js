@@ -10,13 +10,13 @@ import {
   Alert
 } from 'react-native';
 import { AppContext } from '../context/AppContext';
+import WalletTopUpModal from './WalletTopUpModal';
 
 export default function UserProfileModal({ visible, onClose }) {
   const {
     userProfile,
     updateUserProfile,
     walletBalance,
-    topUpWallet,
     unclaimedOrderCount,
     banStatus,
     restartOnboarding,
@@ -32,6 +32,8 @@ export default function UserProfileModal({ visible, onClose }) {
   const [phone, setPhone] = useState(userProfile?.phone || '');
   const [email, setEmail] = useState(userProfile?.email || '');
   const [topUpAmount, setTopUpAmount] = useState('200');
+  const [topUpModalVisible, setTopUpModalVisible] = useState(false);
+  const [selectedTopUpAmount, setSelectedTopUpAmount] = useState(200);
 
   useEffect(() => {
     if (userProfile) {
@@ -62,14 +64,14 @@ export default function UserProfileModal({ visible, onClose }) {
     onClose();
   };
 
-  const handleAddMoney = async (amount) => {
+  const handleAddMoney = (amount) => {
     const val = parseFloat(amount);
     if (isNaN(val) || val <= 0) {
       Alert.alert('Invalid Amount', 'Please enter a valid amount to top up.');
       return;
     }
-    await topUpWallet(val);
-    Alert.alert('₹' + val + ' Added', `Your new SkipQ Wallet balance is ₹${walletBalance + val}`);
+    setSelectedTopUpAmount(val);
+    setTopUpModalVisible(true);
   };
 
   const handleLogout = () => {
@@ -218,6 +220,13 @@ export default function UserProfileModal({ visible, onClose }) {
           </ScrollView>
         </View>
       </View>
+
+      {/* Wallet Payment Method Top-Up Modal (UPI / Card / NetBanking) */}
+      <WalletTopUpModal
+        visible={topUpModalVisible}
+        initialAmount={selectedTopUpAmount}
+        onClose={() => setTopUpModalVisible(false)}
+      />
     </Modal>
   );
 }
@@ -225,17 +234,21 @@ export default function UserProfileModal({ visible, onClose }) {
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.82)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#0f172a',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: '90%',
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 22,
+    maxHeight: '92%',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: '#e2e8f0',
+    shadowColor: '#64748b',
+    shadowOpacity: 0.15,
+    shadowRadius: 18,
+    elevation: 10,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -244,138 +257,159 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: '#f1f5f9',
   },
   modalTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#ffffff',
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#0f172a',
+    letterSpacing: -0.3,
   },
   modalSubtitle: {
-    fontSize: 12,
-    color: '#94a3b8',
+    fontSize: 12.5,
+    color: '#64748b',
     marginTop: 2,
+    fontWeight: '600',
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#1e293b',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#f1f5f9',
     justifyContent: 'center',
     alignItems: 'center',
   },
   closeBtnText: {
-    color: '#94a3b8',
+    color: '#475569',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   walletCard: {
-    backgroundColor: '#1e1b4b',
-    padding: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.3)',
+    backgroundColor: '#0c52a3',
+    padding: 18,
+    borderRadius: 20,
     marginBottom: 14,
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 4,
   },
   walletLabel: {
-    color: '#a5b4fc',
+    color: 'rgba(255, 255, 255, 0.85)',
     fontSize: 10,
-    fontWeight: '800',
+    fontWeight: '900',
     letterSpacing: 1,
   },
   walletBal: {
     color: '#ffffff',
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '900',
     marginVertical: 4,
   },
   walletDesc: {
-    color: '#94a3b8',
-    fontSize: 11,
-    marginBottom: 10,
+    color: '#ccfbf1',
+    fontSize: 11.5,
+    marginBottom: 12,
+    fontWeight: '600',
   },
   topUpRow: {
     flexDirection: 'row',
     gap: 8,
   },
   quickTopUpBtn: {
-    backgroundColor: '#6366f1',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   quickTopUpText: {
     color: '#ffffff',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 12,
   },
   statusBox: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    backgroundColor: '#1e293b',
-    padding: 12,
-    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
     marginBottom: 16,
   },
   statusText: {
-    color: '#cbd5e1',
-    fontSize: 12,
-  },
-  statusSub: {
-    color: '#94a3b8',
-    fontSize: 12,
-  },
-  sectionHeader: {
-    color: '#06b6d4',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-  label: {
+    color: '#0f172a',
     fontSize: 12,
     fontWeight: '700',
-    color: '#cbd5e1',
+  },
+  statusSub: {
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  sectionHeader: {
+    color: '#0c52a3',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  label: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
     marginBottom: 4,
     marginTop: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
   input: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: '#ffffff',
+    paddingVertical: 11,
+    color: '#0f172a',
     fontSize: 14,
+    fontWeight: '600',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#e2e8f0',
   },
   saveBtn: {
-    backgroundColor: '#06b6d4',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 12,
-  },
-  saveBtnText: {
-    color: '#090d16',
-    fontWeight: '800',
-    fontSize: 14,
-  },
-  logoutBtn: {
-    backgroundColor: 'rgba(239, 68, 68, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.4)',
+    backgroundColor: '#0c52a3',
     paddingVertical: 14,
     borderRadius: 14,
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 20,
+    marginBottom: 12,
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  saveBtnText: {
+    color: '#ffffff',
+    fontWeight: '900',
+    fontSize: 14,
+  },
+  logoutBtn: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 4,
     marginBottom: 32,
   },
   logoutBtnText: {
-    color: '#f87171',
+    color: '#ef4444',
     fontWeight: '800',
     fontSize: 14,
-  }
+  },
 });
 

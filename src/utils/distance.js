@@ -64,3 +64,15 @@ export function sortUniversitiesByDistance(userLat, userLng, universities) {
 
 // Campus pedestrian perimeter radius (in meters) with tolerance for indoor GPS drift
 export const MAX_ORDER_DISTANCE_METERS = 500;
+
+/**
+ * Checks if user is within ordering distance with GPS accuracy tolerance buffer
+ * @param {number} distMeters - Computed distance to canteen
+ * @param {number} [locAccuracy=0] - GPS accuracy in meters (e.g. from expo-location coords.accuracy)
+ * @returns {boolean}
+ */
+export function isWithinOrderingPerimeter(distMeters, locAccuracy = 0) {
+  // Allow up to 50m of indoor GPS drift tolerance
+  const driftBuffer = Math.min(50, Math.max(0, locAccuracy));
+  return (distMeters - driftBuffer) <= MAX_ORDER_DISTANCE_METERS;
+}

@@ -11,7 +11,7 @@ import {
   Alert
 } from 'react-native';
 import { AppContext } from '../context/AppContext';
-import { getDistanceInMeters, formatDistance, MAX_ORDER_DISTANCE_METERS } from '../utils/distance';
+import { getDistanceInMeters, formatDistance, isWithinOrderingPerimeter, MAX_ORDER_DISTANCE_METERS } from '../utils/distance';
 
 export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout, onOpenPassModal }) {
   const {
@@ -37,15 +37,22 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
   const [expandedDish, setExpandedDish] = useState(null);
 
   const campusCanteens = useMemo(() => canteens.filter(c => c.universityId === university), [canteens, university]);
-  const souCampusDist = getDistanceInMeters(userLocation?.lat ?? 23.0917, userLocation?.lng ?? 72.5349, 23.0917, 72.5349);
-  const isWithinCampus = souCampusDist <= 400;
+  const hasUserLocation = Boolean(userLocation && userLocation.lat != null && userLocation.lng != null);
+  const souCampusDist = hasUserLocation
+    ? getDistanceInMeters(userLocation.lat, userLocation.lng, 23.0917, 72.5349)
+    : null;
+  const isWithinCampus = hasUserLocation && souCampusDist != null && souCampusDist <= MAX_ORDER_DISTANCE_METERS;
 
   // Flatten & group dishes across all canteens
   const radarItems = useMemo(() => {
   const itemGroupMap = {};
   campusCanteens.forEach(shop => {
-    const distMeters = getDistanceInMeters(userLocation?.lat ?? 23.0917, userLocation?.lng ?? 72.5349, shop.lat, shop.lng);
-    const isWithin300m = distMeters <= MAX_ORDER_DISTANCE_METERS;
+    const shopLat = shop.lat || 23.0917;
+    const shopLng = shop.lng || 72.5349;
+    const distMeters = hasUserLocation
+      ? getDistanceInMeters(userLocation.lat, userLocation.lng, shopLat, shopLng)
+      : null;
+    const isWithin300m = distMeters != null && isWithinOrderingPerimeter(distMeters, userLocation?.accuracy || 0);
 
     (shop.menu || []).forEach(item => {
       const q = searchQuery.toLowerCase().trim();
@@ -97,7 +104,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
   });
 
   return Object.values(itemGroupMap);
-  }, [campusCanteens, fastPrepOnly, searchQuery, selectedCategory, userLocation?.lat, userLocation?.lng, vegOnly]);
+  }, [campusCanteens, fastPrepOnly, searchQuery, selectedCategory, userLocation?.lat, userLocation?.lng, userLocation?.accuracy, vegOnly]);
   const categories = ['All', 'Snacks', 'Beverages', 'Meals', 'Rolls', 'Sandwiches', 'Desserts'];
 
   // Cart calculations
@@ -115,10 +122,18 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
       Alert.alert('Account Restricted', 'Your account is permanently suspended due to repeated uncollected orders.');
       return;
     }
-    if (!isWithin300m) {
+    if (!hasUserLocation) {
       Alert.alert(
-        '📍 Too Far from Canteen',
-        `You are ${formatDistance(distMeters)} from ${shopObj.name}. Please be on-campus to place an order.`,
+        '📍 GPS Location Required',
+        'Please enable device location permissions so we can verify you are within Silver Oak University campus (<500m).',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    if (!isWithin300m || (distMeters != null && distMeters > MAX_ORDER_DISTANCE_METERS)) {
+      Alert.alert(
+        '📍 Campus Geofence Restriction',
+        `You are currently ${formatDistance(distMeters)} away from ${shopObj.name}. SkipQ strictly allows ordering only when you are physically on campus (<500m).`,
         [{ text: 'Got it', style: 'cancel' }]
       );
       return;
@@ -160,10 +175,22 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
           <TouchableOpacity
             style={[styles.rangePill, isWithinCampus ? styles.rangePillActive : styles.rangePillAway]}
             onPress={() => {
-              if (!isWithinCampus) {
+              if (!hasUserLocation) {
                 Alert.alert(
-                  '📍 Off Campus',
-                  `You are ${formatDistance(souCampusDist)} from Silver Oak University. Please come to campus to order.`,
+                  '📍 Location Services Needed',
+                  'Please enable GPS location to verify campus perimeter status (<500m).',
+                  [{ text: 'OK' }]
+                );
+              } else if (!isWithinCampus) {
+                Alert.alert(
+                  '📍 Off Campus (>500m)',
+                  `You are ${formatDistance(souCampusDist)} from Silver Oak University. Ordering is restricted to students physically on campus (<500m).`,
+                  [{ text: 'OK' }]
+                );
+              } else {
+                Alert.alert(
+                  '📍 On Campus',
+                  `You are within ${formatDistance(souCampusDist)} of Silver Oak University. Live order ordering is active!`,
                   [{ text: 'OK' }]
                 );
               }
@@ -171,7 +198,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
           >
             <View style={[styles.rangeDot, isWithinCampus ? styles.rangeDotActive : styles.rangeDotAway]} />
             <Text style={[styles.rangeText, isWithinCampus ? styles.rangeTextActive : styles.rangeTextAway]}>
-              {isWithinCampus ? 'On Campus' : `${formatDistance(souCampusDist)} away`}
+              {!hasUserLocation ? 'GPS pending' : isWithinCampus ? 'On Campus' : `${formatDistance(souCampusDist)} away`}
             </Text>
           </TouchableOpacity>
         </View>
@@ -256,7 +283,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
         <FlatList
           data={radarItems}
           keyExtractor={item => item.name}
-          contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: 110 }]}
+          contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: 160 }]}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             campusCanteens.length === 0 ? (
@@ -286,7 +313,25 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
               <View style={styles.emptyWrap}>
                 <Text style={styles.emptyIcon}>🍽️</Text>
                 <Text style={styles.emptyTitle}>No dishes found</Text>
-                <Text style={styles.emptySub}>Try searching for another dish or clearing filters.</Text>
+                <Text style={styles.emptySub}>
+                  {searchQuery
+                    ? `No matching dishes found for "${searchQuery}"`
+                    : selectedCategory !== 'All'
+                    ? `No dishes in "${selectedCategory}". Try choosing All or another category.`
+                    : 'No dishes available matching the current dietary/speed filters.'}
+                </Text>
+                <TouchableOpacity
+                  style={styles.clearFilterBtn}
+                  onPress={() => {
+                    setSearchQuery('');
+                    setSelectedCategory('All');
+                    setVegOnly(false);
+                    setFastPrepOnly(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.clearFilterBtnText}>✕ Reset Filters</Text>
+                </TouchableOpacity>
               </View>
             )
           }
@@ -430,7 +475,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
         <FlatList
           data={campusCanteens}
           keyExtractor={item => item.id}
-          contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: 110 }]}
+          contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: 160 }]}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
@@ -451,7 +496,11 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
             </View>
           }
           renderItem={({ item: shop }) => {
-            const distMeters = getDistanceInMeters(userLocation?.lat ?? 23.0917, userLocation?.lng ?? 72.5349, shop.lat, shop.lng);
+            const shopLat = shop.lat || 23.0917;
+            const shopLng = shop.lng || 72.5349;
+            const distMeters = hasUserLocation
+              ? getDistanceInMeters(userLocation.lat, userLocation.lng, shopLat, shopLng)
+              : null;
             const isOpen = shop.status === 'Open';
 
             return (
@@ -472,7 +521,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                   <View style={styles.stallMetaRow}>
                     <Text style={styles.stallMetaChip}>⏳ {shop.avgWaitMins || 5}m wait</Text>
                     <Text style={styles.stallMetaChip}>👥 {shop.currentQueue || 0} in queue</Text>
-                    <Text style={styles.stallMetaChip}>📍 {formatDistance(distMeters)}</Text>
+                    <Text style={styles.stallMetaChip}>📍 {distMeters != null ? formatDistance(distMeters) : 'Location pending'}</Text>
                   </View>
 
                   <TouchableOpacity
@@ -520,7 +569,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
 const styles = StyleSheet.create({
   screenContainer: {
     flex: 1,
-    backgroundColor: '#f7f4ee',
+    backgroundColor: '#edf3f8',
   },
   topSection: {
     width: '100%',
@@ -529,7 +578,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 4,
-    backgroundColor: '#f7f4ee',
+    backgroundColor: '#edf3f8',
   },
   greetingRow: {
     flexDirection: 'row',
@@ -538,32 +587,33 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   greetingTitle: {
-    color: '#1c2521',
-    fontSize: 21,
-    fontWeight: '800',
-    letterSpacing: -0.2,
+    color: '#0f172a',
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: -0.4,
   },
   greetingSub: {
-    color: '#766d63',
-    fontSize: 11.5,
+    color: '#64748b',
+    fontSize: 12,
     marginTop: 1,
+    fontWeight: '600',
   },
   rangePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
     borderWidth: 1,
     gap: 5,
   },
   rangePillActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-    borderColor: 'rgba(16, 185, 129, 0.4)',
+    backgroundColor: '#ccfbf1',
+    borderColor: '#99f6e4',
   },
   rangePillAway: {
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
-    borderColor: 'rgba(245, 158, 11, 0.4)',
+    backgroundColor: '#fef3c7',
+    borderColor: '#fde68a',
   },
   rangeDot: {
     width: 6,
@@ -571,40 +621,46 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   rangeDotActive: {
-    backgroundColor: '#10b981',
+    backgroundColor: '#0f766e',
   },
   rangeDotAway: {
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#b45309',
   },
   rangeText: {
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 10.5,
+    fontWeight: '800',
   },
   rangeTextActive: {
-    color: '#10b981',
+    color: '#0f766e',
   },
   rangeTextAway: {
-    color: '#f59e0b',
+    color: '#b45309',
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fffdf9',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 42,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    height: 44,
     borderWidth: 1,
-    borderColor: '#e8e1d7',
+    borderColor: '#e2e8f0',
     marginBottom: 10,
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 1,
   },
   searchIcon: {
-    fontSize: 13,
+    fontSize: 14,
     marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    color: '#27221d',
-    fontSize: 13,
+    color: '#0f172a',
+    fontSize: 13.5,
+    fontWeight: '600',
     paddingVertical: 0,
   },
   searchClearText: {
@@ -619,93 +675,110 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   catChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 18,
-    backgroundColor: '#fffdf9',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: '#e8e1d7',
+    borderColor: '#e2e8f0',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
   },
   catChipActive: {
-    backgroundColor: '#27221d',
-    borderColor: '#27221d',
+    backgroundColor: '#0c52a3',
+    borderColor: '#0c52a3',
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    elevation: 2,
   },
   catChipText: {
-    color: '#766d63',
-    fontSize: 11.5,
-    fontWeight: '600',
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '700',
   },
   catChipTextActive: {
     color: '#ffffff',
-    fontWeight: '800',
+    fontWeight: '900',
   },
   catDivider: {
     width: 1,
     height: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: '#e2e8f0',
     marginHorizontal: 4,
   },
   vegFilterChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 18,
-    backgroundColor: '#0f172a',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderColor: '#a7f3d0',
   },
   vegFilterChipActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    backgroundColor: '#ecfdf5',
     borderColor: '#10b981',
   },
   vegFilterText: {
-    color: '#10b981',
-    fontSize: 11,
-    fontWeight: '700',
+    color: '#059669',
+    fontSize: 11.5,
+    fontWeight: '800',
   },
   fastFilterChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 18,
-    backgroundColor: '#0f172a',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
     borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.3)',
+    borderColor: '#fde68a',
   },
   fastFilterChipActive: {
-    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    backgroundColor: '#fef3c7',
     borderColor: '#f59e0b',
   },
   fastFilterText: {
-    color: '#f59e0b',
-    fontSize: 11,
-    fontWeight: '700',
+    color: '#b45309',
+    fontSize: 11.5,
+    fontWeight: '800',
   },
   segmentContainer: {
     flexDirection: 'row',
-    backgroundColor: '#ece6dc',
-    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
     padding: 3,
-    borderWidth: 1,
-    borderColor: '#e2d9cc',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
     marginTop: 2,
-    marginBottom: 4,
+    marginBottom: 6,
+    overflow: 'hidden',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 0,
   },
   segmentBtn: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 6,
-    borderRadius: 9,
+    paddingVertical: 8,
+    borderRadius: 14,
+    overflow: 'hidden',
   },
   segmentBtnActive: {
-    backgroundColor: '#fffdf9',
+    backgroundColor: '#0c52a3',
   },
   segmentText: {
-    color: '#9a9187',
-    fontSize: 11.5,
+    color: '#64748b',
+    fontSize: 12,
     fontWeight: '700',
   },
   segmentTextActive: {
-    color: '#27221d',
-    fontWeight: '800',
+    color: '#ffffff',
+    fontWeight: '900',
   },
   contentList: {
     width: '100%',
@@ -716,12 +789,17 @@ const styles = StyleSheet.create({
     paddingBottom: 90,
   },
   dishCard: {
-    backgroundColor: '#fffdf9',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 10,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 14,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#e8e1d7',
+    borderColor: '#e2e8f0',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 2,
   },
   dishMainRow: {
     flexDirection: 'row',
@@ -730,9 +808,9 @@ const styles = StyleSheet.create({
   },
   imageWrap: {
     position: 'relative',
-    width: 72,
-    height: 72,
-    borderRadius: 14,
+    width: 76,
+    height: 76,
+    borderRadius: 16,
     overflow: 'hidden',
   },
   dishImg: {
@@ -741,13 +819,13 @@ const styles = StyleSheet.create({
   },
   vegDotBadge: {
     position: 'absolute',
-    top: 4,
-    left: 4,
-    width: 13,
-    height: 13,
-    borderRadius: 3,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    borderWidth: 1,
+    top: 5,
+    left: 5,
+    width: 14,
+    height: 14,
+    borderRadius: 4,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -758,9 +836,9 @@ const styles = StyleSheet.create({
     borderColor: '#ef4444',
   },
   vegDotInner: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   vegDotGreen: {
     backgroundColor: '#10b981',
@@ -779,228 +857,234 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   dishTitle: {
-    color: '#27221d',
-    fontSize: 14,
-    fontWeight: '800',
+    color: '#0f172a',
+    fontSize: 15,
+    fontWeight: '900',
     flex: 1,
   },
   dishPrice: {
-    color: '#376048',
-    fontSize: 14,
+    color: '#0c52a3',
+    fontSize: 16,
     fontWeight: '900',
   },
   dishStallMeta: {
-    color: '#766d63',
-    fontSize: 11,
+    color: '#64748b',
+    fontSize: 11.5,
     fontWeight: '600',
     marginTop: 2,
   },
   dishDesc: {
-    color: '#9a9187',
-    fontSize: 10.5,
+    color: '#64748b',
+    fontSize: 11,
     marginTop: 2,
-    lineHeight: 14,
+    lineHeight: 15,
   },
   expandStallsBtn: {
     marginTop: 4,
   },
   expandStallsText: {
-    color: '#376048',
-    fontSize: 10,
-    fontWeight: '700',
+    color: '#0c52a3',
+    fontSize: 10.5,
+    fontWeight: '800',
   },
   dishActionCol: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   addBtn: {
-    backgroundColor: '#1c2521',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 10,
-    shadowColor: '#172019',
+    backgroundColor: '#0c52a3',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+    shadowColor: '#0c52a3',
     shadowOpacity: 0.3,
-    shadowRadius: 4,
+    shadowRadius: 6,
     elevation: 3,
   },
   addBtnText: {
     color: '#ffffff',
-    fontSize: 11.5,
-    fontWeight: '800',
+    fontSize: 12,
+    fontWeight: '900',
   },
   qtyStepper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
+    backgroundColor: '#e6f2fb',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#6366f1',
+    borderColor: '#bae6fd',
     paddingHorizontal: 4,
     paddingVertical: 2,
   },
   stepperBtn: {
-    paddingHorizontal: 7,
-    paddingVertical: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
   },
   stepperBtnText: {
-    color: '#a5b4fc',
+    color: '#0c52a3',
     fontSize: 14,
     fontWeight: '900',
   },
   stepperQtyText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '800',
+    color: '#0c52a3',
+    fontSize: 13,
+    fontWeight: '900',
     paddingHorizontal: 4,
   },
   soldOutBadge: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    backgroundColor: '#fee2e2',
     paddingHorizontal: 8,
     paddingVertical: 5,
     borderRadius: 8,
   },
   soldOutText: {
-    color: '#f87171',
+    color: '#dc2626',
     fontSize: 10,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   altStallsList: {
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+    borderTopColor: '#f1f5f9',
   },
   altStallRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
+    paddingVertical: 6,
     gap: 8,
   },
   altStallName: {
-    color: '#e2e8f0',
-    fontSize: 11.5,
-    fontWeight: '700',
-  },
-  altStallMeta: {
-    color: '#64748b',
-    fontSize: 10,
-  },
-  altStallPrice: {
-    color: '#10b981',
+    color: '#0f172a',
     fontSize: 12,
     fontWeight: '800',
   },
+  altStallMeta: {
+    color: '#64748b',
+    fontSize: 10.5,
+  },
+  altStallPrice: {
+    color: '#0c52a3',
+    fontSize: 13,
+    fontWeight: '900',
+  },
   altAddBtn: {
-    backgroundColor: 'rgba(99, 102, 241, 0.2)',
-    borderColor: '#6366f1',
+    backgroundColor: '#e6f2fb',
+    borderColor: '#bae6fd',
     borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
   },
   altAddText: {
-    color: '#a5b4fc',
-    fontSize: 10,
-    fontWeight: '800',
+    color: '#0c52a3',
+    fontSize: 11,
+    fontWeight: '900',
   },
   altStepper: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#1e293b',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
+    backgroundColor: '#e6f2fb',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
   },
   altStepperText: {
-    color: '#818cf8',
-    fontSize: 12,
+    color: '#0c52a3',
+    fontSize: 13,
     fontWeight: '900',
   },
   altQtyText: {
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '700',
+    color: '#0c52a3',
+    fontSize: 12,
+    fontWeight: '900',
   },
   stallCard: {
-    backgroundColor: '#0f172a',
-    borderRadius: 16,
+    backgroundColor: '#ffffff',
+    borderRadius: 22,
     overflow: 'hidden',
-    marginBottom: 12,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: '#e2e8f0',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
   },
   stallBanner: {
     width: '100%',
-    height: 100,
+    height: 110,
   },
   stallBody: {
-    padding: 12,
+    padding: 14,
   },
   stallTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 2,
+    marginBottom: 4,
   },
   stallName: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '800',
+    color: '#0f172a',
+    fontSize: 16,
+    fontWeight: '900',
     flex: 1,
   },
   stallStatusBadge: {
-    paddingHorizontal: 7,
-    paddingVertical: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 8,
   },
   statusOpen: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    backgroundColor: '#ccfbf1',
   },
   statusClosed: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    backgroundColor: '#fee2e2',
   },
   stallStatusText: {
-    fontSize: 9.5,
+    fontSize: 10,
     fontWeight: '800',
   },
   statusTextOpen: {
-    color: '#10b981',
+    color: '#0f766e',
   },
   statusTextClosed: {
-    color: '#ef4444',
+    color: '#dc2626',
   },
   stallLocation: {
     color: '#64748b',
-    fontSize: 11,
+    fontSize: 12,
     marginBottom: 8,
+    fontWeight: '600',
   },
   stallMetaRow: {
     flexDirection: 'row',
     gap: 6,
-    marginBottom: 10,
+    marginBottom: 12,
   },
   stallMetaChip: {
-    color: '#94a3b8',
-    fontSize: 10,
-    backgroundColor: '#1e293b',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
-    fontWeight: '600',
+    color: '#475569',
+    fontSize: 10.5,
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    fontWeight: '700',
   },
   viewStallMenuBtn: {
-    backgroundColor: '#1e293b',
-    paddingVertical: 8,
-    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 10,
+    borderRadius: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#e2e8f0',
   },
   viewStallMenuText: {
-    color: '#818cf8',
-    fontSize: 11.5,
-    fontWeight: '800',
+    color: '#0c52a3',
+    fontSize: 12,
+    fontWeight: '900',
   },
   emptyWrap: {
     alignItems: 'center',
@@ -1008,67 +1092,95 @@ const styles = StyleSheet.create({
     paddingVertical: 40,
   },
   emptyIcon: {
-    fontSize: 32,
+    fontSize: 34,
     marginBottom: 8,
   },
   emptyTitle: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '800',
+    color: '#0f172a',
+    fontSize: 16,
+    fontWeight: '900',
   },
   emptySub: {
     color: '#64748b',
-    fontSize: 12,
+    fontSize: 12.5,
     marginTop: 4,
     textAlign: 'center',
     paddingHorizontal: 20,
     lineHeight: 17,
   },
+  clearFilterBtn: {
+    marginTop: 14,
+    backgroundColor: '#0c52a3',
+    borderRadius: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    alignItems: 'center',
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  clearFilterBtnText: {
+    color: '#ffffff',
+    fontSize: 12.5,
+    fontWeight: '900',
+  },
   emptyIconCircle: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    backgroundColor: '#e6f2fb',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.25)',
+    borderColor: '#bae6fd',
   },
   emptyVendorBox: {
-    backgroundColor: '#0c1527',
-    borderRadius: 16,
-    padding: 16,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 18,
     marginTop: 20,
     marginHorizontal: 16,
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.25)',
+    borderColor: '#e2e8f0',
     alignItems: 'center',
+    shadowColor: '#64748b',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 2,
   },
   emptyVendorTitle: {
-    color: '#38bdf8',
-    fontSize: 13,
-    fontWeight: '800',
+    color: '#0f172a',
+    fontSize: 15,
+    fontWeight: '900',
     marginBottom: 4,
   },
   emptyVendorSub: {
-    color: '#94a3b8',
-    fontSize: 11.5,
-    lineHeight: 16,
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 17,
     textAlign: 'center',
   },
   emptyVendorActionBtn: {
-    backgroundColor: '#38bdf8',
+    backgroundColor: '#0c52a3',
     borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    marginTop: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    marginTop: 14,
     alignItems: 'center',
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 3,
   },
   emptyVendorActionBtnText: {
-    color: '#090d16',
-    fontSize: 12.5,
-    fontWeight: '800',
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '900',
   },
   floatingCartDock: {
     position: 'absolute',
@@ -1080,13 +1192,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#10b981',
-    borderRadius: 16,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    shadowColor: '#10b981',
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
+    backgroundColor: '#0c52a3',
+    borderRadius: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
     elevation: 8,
   },
   cartPillLeft: {
@@ -1095,24 +1208,24 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   cartIconBadge: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: 'rgba(0, 0, 0, 0.15)',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   cartIconText: {
-    fontSize: 14,
+    fontSize: 15,
   },
   cartPillTitle: {
-    color: '#064e3b',
-    fontSize: 12,
+    color: '#ffffff',
+    fontSize: 13.5,
     fontWeight: '900',
   },
   cartPillShop: {
-    color: '#065f46',
-    fontSize: 10.5,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 11,
     fontWeight: '700',
   },
   cartPillRight: {
@@ -1121,17 +1234,17 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cartPillPrice: {
-    color: '#064e3b',
-    fontSize: 14,
+    color: '#ffffff',
+    fontSize: 15,
     fontWeight: '900',
   },
   cartPillAction: {
-    backgroundColor: 'rgba(0, 0, 0, 0.15)',
-    color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '800',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    backgroundColor: '#ffffff',
+    color: '#0c52a3',
+    fontSize: 11.5,
+    fontWeight: '900',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 8,
   },
 });

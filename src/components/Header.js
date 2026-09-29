@@ -1,5 +1,6 @@
 import React, { useContext, useState, useRef, useEffect } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Modal, FlatList, Platform, StatusBar, Animated } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Modal, FlatList, Platform, StatusBar, Animated, Image } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { AppContext } from '../context/AppContext';
 import { DEFAULT_UNIVERSITIES } from '../data/mockData';
 
@@ -19,6 +20,7 @@ export default function Header({
     orders,
     walletBalance,
     userProfile,
+    sellerShopId,
     banStatus,
     banUntil,
     firebaseActive
@@ -53,29 +55,32 @@ export default function Header({
     }
   }, [hasActivePass]);
 
+  const isSeller = role === 'seller';
+
   return (
-    <View style={styles.headerWrapper}>
+    <View style={[styles.headerWrapper, isSeller && styles.headerWrapperSeller]}>
       <View style={styles.headerContainer}>
         {/* Top Minimal Bar */}
         <View style={styles.topRow}>
           {/* Brand & Campus Picker */}
           <TouchableOpacity style={styles.brandContainer} onPress={() => setUniModalVisible(true)} activeOpacity={0.7}>
-            <View style={styles.logoBadge}>
-              <Text style={styles.logoText}>Q</Text>
-            </View>
+            <LinearGradient
+              colors={['#0747a6', '#0097a7']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.logoBadge}
+            >
+              <Image
+                source={require('../../assets/icon.png')}
+                style={styles.headerMascotImage}
+                resizeMode="contain"
+              />
+            </LinearGradient>
             <View style={styles.brandInfo}>
-              <View style={styles.brandNameRow}>
-                <Text style={styles.brandName}>SkipQ</Text>
-                <View style={styles.campusBadge}>
-                  <Text style={styles.campusBadgeText}>SOU</Text>
-                </View>
-              </View>
-              <View style={styles.campusPickerLine}>
-                <Text style={styles.campusPickerText} numberOfLines={1}>
-                  📍 {activeUniObj.name}
-                </Text>
-                <Text style={styles.campusPickerArrow}>▾</Text>
-              </View>
+              <Text style={[styles.brandName, isSeller && styles.brandNameSeller]}>SkipQ</Text>
+              <Text style={[styles.campusPickerText, isSeller && styles.campusPickerTextSeller]} numberOfLines={1}>
+                {activeUniObj.name}
+              </Text>
             </View>
           </TouchableOpacity>
 
@@ -110,18 +115,27 @@ export default function Header({
                 <Text style={styles.bookingTokenText}>#{activeOrderObj.tokenNumber || 'SQ'}</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={styles.avatarBtn} onPress={onOpenProfileModal} activeOpacity={0.75}>
-              <Text style={styles.avatarText}>{(userProfile?.name || 'S').trim().charAt(0).toUpperCase()}</Text>
+            <TouchableOpacity
+              style={[styles.avatarBtn, isSeller && styles.avatarBtnSeller]}
+              onPress={onOpenProfileModal}
+              activeOpacity={0.75}
+            >
+              <Text style={[styles.avatarText, isSeller && styles.avatarTextSeller]}>
+                {(userProfile?.name || 'S').trim().charAt(0).toUpperCase()}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Vendor Mode Banner (ONLY shown when seller/canteen staff is active) */}
-        {role === 'seller' && (
-          <View style={styles.sellerBanner}>
-            <Text style={styles.sellerBannerText}>🏪 Merchant Kitchen POS Active</Text>
-            <TouchableOpacity style={styles.sellerSwitchBtn} onPress={() => setRole('buyer')}>
-              <Text style={styles.sellerSwitchText}>Switch to Student ➔</Text>
+
+        {/* Student View: Quick Return to Vendor POS if user has a registered stall */}
+        {role === 'buyer' && (userProfile?.stallName || userProfile?.userType === 'seller' || sellerShopId) && (
+          <View style={[styles.sellerBanner, styles.vendorAvailableBanner]}>
+            <Text style={[styles.sellerBannerText, styles.vendorAvailableText]} numberOfLines={1}>
+              👨‍🍳 Stall: {userProfile?.stallName || 'My Canteen'}
+            </Text>
+            <TouchableOpacity style={[styles.sellerSwitchBtn, styles.vendorAvailableBtn]} onPress={() => setRole('seller')} activeOpacity={0.8}>
+              <Text style={styles.sellerSwitchText}>Open Kitchen POS ➔</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -181,11 +195,27 @@ export default function Header({
 
 const styles = StyleSheet.create({
   headerWrapper: {
-    backgroundColor: '#f5f3ee',
+    backgroundColor: '#edf3f8',
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 4 : 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2ded5',
+    borderBottomWidth: 0,
   },
+  headerWrapperSeller: {
+    backgroundColor: '#edf3f8',
+    borderBottomWidth: 0,
+  },
+  logoBadgeSeller: {},
+  logoTextSeller: {
+    color: '#ffffff',
+  },
+  brandNameSeller: {
+    color: '#0f172a',
+  },
+  campusBadgeSeller: {},
+  campusBadgeTextSeller: {},
+  campusPickerTextSeller: {
+    color: '#5a6e85',
+  },
+  campusPickerArrowSeller: {},
   headerContainer: {
     paddingHorizontal: 16,
     paddingBottom: 10,
@@ -198,39 +228,35 @@ const styles = StyleSheet.create({
   brandContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     flex: 1,
   },
   logoBadge: {
-    width: 38,
-    height: 38,
-    borderRadius: 13,
-    backgroundColor: '#1c2521',
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#172019',
-    shadowOpacity: 0.5,
-    shadowRadius: 6,
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
     elevation: 4,
   },
-  logoText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: '900',
+  headerMascotImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
   },
   brandInfo: {
     justifyContent: 'center',
   },
-  brandNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
   brandName: {
-    color: '#1c2521',
-    fontSize: 17,
+    color: '#111827',
+    fontSize: 20,
     fontWeight: '900',
-    letterSpacing: -0.3,
+    letterSpacing: -0.4,
   },
   campusBadge: {
     backgroundColor: '#e5eee8',
@@ -311,20 +337,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#1c2521',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 12,
-    borderWidth: 1.2,
-    borderColor: '#4d8062',
+    backgroundColor: '#ffffff',
+    paddingVertical: 5,
+    paddingHorizontal: 9,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#b9d9f5',
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
   },
   activeBookingIconBtnOpen: {
-    backgroundColor: '#314238',
-    borderColor: '#a8d0b4',
-    shadowColor: '#4d8062',
+    backgroundColor: '#e6f2fb',
+    borderColor: '#0c52a3',
+    shadowColor: '#0c52a3',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.45,
-    shadowRadius: 6,
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
     elevation: 4,
   },
   bookingIconWrap: {
@@ -344,53 +375,76 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   bookingTokenText: {
-    color: '#ffffff',
+    color: '#0c52a3',
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   avatarBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#e5eee8',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#c7d8cc',
+    borderWidth: 1.5,
+    borderColor: '#b9d9f5',
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  avatarBtnSeller: {
+    backgroundColor: '#ffffff',
+    borderColor: '#b9d9f5',
   },
   avatarText: {
-    color: '#376048',
-    fontSize: 12,
-    fontWeight: '800',
+    color: '#0c52a3',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  avatarTextSeller: {
+    color: '#0c52a3',
+    fontWeight: '900',
   },
   sellerBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    backgroundColor: '#e6f4ea',
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    borderColor: '#a3cfbb',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     marginTop: 8,
   },
   sellerBannerText: {
-    color: '#10b981',
-    fontSize: 11,
-    fontWeight: '700',
+    color: '#0f5132',
+    fontSize: 12,
+    fontWeight: '800',
   },
   sellerSwitchBtn: {
-    backgroundColor: 'rgba(16, 185, 129, 0.25)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    backgroundColor: '#198754',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
   },
   sellerSwitchText: {
-    color: '#a7f3d0',
-    fontSize: 10,
-    fontWeight: '800',
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  vendorAvailableBanner: {
+    backgroundColor: '#fef3c7',
+    borderColor: '#fde68a',
+  },
+  vendorAvailableText: {
+    color: '#92400e',
+  },
+  vendorAvailableBtn: {
+    backgroundColor: '#d97706',
   },
   banBanner: {
     padding: 6,
@@ -416,43 +470,49 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#0f172a',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 18,
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 20,
     maxHeight: '70%',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: '#e2e8f0',
+    shadowColor: '#0c52a3',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 10,
   },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 14,
-    paddingBottom: 8,
+    paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: '#f1f5f9',
   },
   modalTitle: {
-    color: '#ffffff',
+    color: '#0f172a',
     fontSize: 16,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   closeBtn: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#1e293b',
+    backgroundColor: '#f1f5f9',
     alignItems: 'center',
     justifyContent: 'center',
   },
   closeBtnText: {
-    color: '#94a3b8',
+    color: '#64748b',
     fontSize: 12,
+    fontWeight: '700',
   },
   uniItem: {
     flexDirection: 'row',
@@ -461,13 +521,15 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 12,
     borderRadius: 12,
-    marginBottom: 6,
-    backgroundColor: 'rgba(30, 41, 59, 0.5)',
+    marginBottom: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   uniItemActive: {
-    backgroundColor: 'rgba(99, 102, 241, 0.2)',
-    borderColor: '#6366f1',
-    borderWidth: 1,
+    backgroundColor: '#e6f2fb',
+    borderColor: '#0c52a3',
+    borderWidth: 1.5,
   },
   uniItemLeft: {
     flexDirection: 'row',
@@ -478,12 +540,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
   },
   uniItemTitle: {
-    color: '#e2e8f0',
+    color: '#0f172a',
     fontSize: 13,
     fontWeight: '700',
   },
   uniItemTitleActive: {
-    color: '#ffffff',
+    color: '#0c52a3',
     fontWeight: '800',
   },
   uniItemCity: {
@@ -492,7 +554,7 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   checkIcon: {
-    color: '#6366f1',
+    color: '#0c52a3',
     fontSize: 16,
     fontWeight: '900',
   },

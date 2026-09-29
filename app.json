@@ -10,7 +10,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.skipq.app",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "SkipQ uses location to automatically discover nearest registered campus canteens."
+        "NSLocationWhenInUseUsageDescription": "SkipQ uses location to automatically discover nearest registered campus canteens.",
+        "NSCameraUsageDescription": "SkipQ uses camera for instant counter QR code pickup verification."
       }
     },
     "android": {
@@ -18,7 +19,7 @@
       "targetSdkVersion": 36,
       "compileSdkVersion": 36,
       "adaptiveIcon": {
-        "backgroundColor": "#070b14",
+        "backgroundColor": "#0c52a3",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -26,14 +27,23 @@
       "permissions": [
         "VIBRATE",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA"
       ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "SkipQ uses camera for instant counter QR code pickup verification.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ]
     ],
     "extra": {
       "eas": {

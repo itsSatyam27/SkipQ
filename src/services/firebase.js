@@ -8,6 +8,9 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   collection,
   doc,
   setDoc,
@@ -94,9 +97,24 @@ export function setupFirebase(cfg = envConfig) {
       }
     }
 
-    // Configure Firestore
+    // Configure Firestore with offline persistent cache for resilient offline pickup pass access
     if (!db) {
-      db = getFirestore(app);
+      try {
+        if (Platform.OS === 'web') {
+          db = initializeFirestore(app, {
+            localCache: persistentLocalCache({
+              tabManager: persistentMultipleTabManager()
+            })
+          });
+        } else {
+          db = initializeFirestore(app, {
+            localCache: persistentLocalCache({})
+          });
+        }
+      } catch (e) {
+        // Fallback to default getFirestore if already initialized or unsupported
+        db = getFirestore(app);
+      }
     }
 
     isFirebaseConfigured = true;

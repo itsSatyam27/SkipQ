@@ -104,7 +104,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
           isWithin300m,
           price: item.price,
           prepTime: prepLabel(item.prepTime),
-          isAvailable: item.isAvailable,
+          isAvailable: shop.status === 'Open' && item.isAvailable !== false,
           isVeg: item.isVeg,
           itemId: item.id,
           shopObj: shop,
@@ -129,6 +129,10 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
   };
 
   const handleAddToCart = async (shopObj, itemObj) => {
+    if (shopObj.status !== 'Open') {
+      Alert.alert('Orders paused', `${shopObj.name} is not accepting new orders right now.`);
+      return;
+    }
     if (banStatus === 'perm_ban') {
       Alert.alert('Account Restricted', 'Your account is permanently suspended due to repeated uncollected orders.');
       return;
@@ -379,7 +383,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                   <View style={styles.dishActionCol}>
                     {!primaryShop.isAvailable ? (
                       <View style={styles.soldOutBadge}>
-                        <Text style={styles.soldOutText}>Sold Out</Text>
+                        <Text style={styles.soldOutText}>{primaryShop.shopObj.status !== 'Open' ? 'Paused' : 'Sold Out'}</Text>
                       </View>
                     ) : cartQty > 0 ? (
                       <View style={styles.qtyStepper}>
@@ -429,7 +433,9 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                             </Text>
                           </View>
                           <Text style={styles.altStallPrice}>₹{alt.price}</Text>
-                          {altQty > 0 ? (
+                          {!alt.isAvailable ? (
+                            <Text style={styles.soldOutText}>{alt.shopObj.status !== 'Open' ? 'Paused' : 'Sold Out'}</Text>
+                          ) : altQty > 0 ? (
                             <View style={styles.altStepper}>
                               <TouchableOpacity onPress={() => updateCartQty(alt.itemId, -1)}>
                                 <Text style={styles.altStepperText}>−</Text>

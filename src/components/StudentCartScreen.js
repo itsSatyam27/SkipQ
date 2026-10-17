@@ -272,7 +272,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
         <View style={styles.header}>
           <View>
             <Text style={styles.headerTitle}>{cartTotalItems > 0 ? 'Review order' : 'Your orders'}</Text>
-            <Text style={styles.headerSub}>{cartTotalItems > 0 ? `CART ? ${cartTotalItems} ${cartTotalItems === 1 ? 'ITEM' : 'ITEMS'}` : 'CART & ORDERS'}</Text>
+            <Text style={styles.headerSub}>{cartTotalItems > 0 ? `CART - ${cartTotalItems} ${cartTotalItems === 1 ? 'ITEM' : 'ITEMS'}` : 'CART & ORDERS'}</Text>
           </View>
           {cartTotalItems > 0 && (
             <TouchableOpacity style={styles.clearCartBtn} onPress={clearCart}>
@@ -373,7 +373,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
 
               {/* Pre-Order Break Slot Timing */}
               <View style={styles.slotContainer}>
-                <Text style={styles.inputLabel}>⏰ PICKUP TIMING (BREAK SLOTS)</Text>
+                <Text style={styles.inputLabel}>PICKUP TIMING (BREAK SLOTS)</Text>
                 <View style={styles.slotGrid}>
                   {BREAK_SLOTS.map(slot => (
                     <TouchableOpacity
@@ -1745,7 +1745,7 @@ const baseStyles = StyleSheet.create({
     borderColor: '#26292e',
     marginTop: 8,
   },
-  checkoutSection: { backgroundColor: 'transparent', borderWidth: 0, padding: 0, marginTop: 0 },
+  checkoutSection: { backgroundColor: 'transparent', borderWidth: 0, padding: 0, marginTop: 0, shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0, shadowOffset: { width: 0, height: 0 }, elevation: 0 },
   stallBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e', borderRadius: 14, padding: 13, gap: 12, marginBottom: 12 },
   stallBannerText: { color: '#ffb313', fontSize: 12, fontWeight: '700', flex: 1 },
   stallCampusTag: { color: '#a5a9b2', fontSize: 10, flexShrink: 1 },

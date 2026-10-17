@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, useRef } from 'react';
-import { Alert } from 'react-native';
+import { Alert, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import useDeviceLocation from '../hooks/useDeviceLocation';
 import useLocationTestAccess from '../hooks/useLocationTestAccess';
@@ -47,7 +47,10 @@ export function AppProvider({ children }) {
   const firebaseActive = isFirebaseConfigured;
 
   useEffect(() => {
-    if (isOnboardingComplete && userProfile.uid) registerForPushNotificationsAsync();
+    if (!isOnboardingComplete || !userProfile.uid) return;
+    registerForPushNotificationsAsync();
+    const listener = AppState.addEventListener('change', state => { if (state === 'active') registerForPushNotificationsAsync(); });
+    return () => listener.remove();
   }, [isOnboardingComplete, userProfile.uid]);
   useEffect(() => {
     if (!auth || !db) { setIsOnboardingComplete(false); return; }
@@ -220,6 +223,11 @@ export function AppProvider({ children }) {
   const toggleItemStock = (id, itemId) => menuChange(id, menu => menu.map(item => item.id === itemId ? { ...item, isAvailable: !item.isAvailable } : item));
   const updateItemPrice = (id, itemId, price) => updateMenuItem(id, itemId, { price });
   const addToCart = (shop, item) => {
+    const currentShop = canteens.find(canteen => canteen.id === shop.id);
+    if (!currentShop || currentShop.status !== 'Open') {
+      Alert.alert('Orders paused', 'This canteen is not accepting new orders right now.');
+      return;
+    }
     if (cart.shopId === shop.id && cart.items.length >= 5 && !cart.items.some(dish => dish.id === item.id)) {
       Alert.alert('Cart limit', 'Choose up to 5 different dishes per order. You can increase each dish quantity.');
       return;

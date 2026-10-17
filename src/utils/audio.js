@@ -115,8 +115,11 @@ export const announceTokenReady = (tokenNumber, shopName = 'Central Canteen') =>
   // First trigger loud buzzer + vibration
   playOrderReadyBuzzer();
 
-  const cleanToken = String(tokenNumber || '').replace(/[^\d]/g, '') || tokenNumber;
-  const text = `Attention please! Token number ${cleanToken} is ready for pickup at ${shopName}`;
+  const cleanToken = String(tokenNumber || '').trim().toUpperCase();
+  const spokenToken = cleanToken.replace(/[^A-Z0-9]/g, '').split('').join(', ');
+  const text = spokenToken
+    ? `Attention please! Token number ${spokenToken} is ready for pickup at ${shopName}`
+    : `Attention please! Your order is ready for pickup at ${shopName}`;
 
   // 1. Try native expo-speech first (works reliably across iOS and Android)
   try {

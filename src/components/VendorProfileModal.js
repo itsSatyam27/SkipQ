@@ -1,3 +1,4 @@
+import NotificationSettings from './NotificationSettings';
 import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Animated, Modal, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Linking } from 'react-native';
@@ -77,6 +78,12 @@ export default function VendorProfileModal({ visible, onClose = () => {}, embedd
     setDraft(next); setBaseline(JSON.stringify(next)); setTab(sections.includes(requestedSection) ? requestedSection : 'Canteen'); setError(''); setSaved(false);
   }, [visible, shop?.id, userProfile?.uid]);
   const dirty = JSON.stringify(draft) !== baseline;
+  useEffect(() => {
+    if (!visible || dirty || saving) return;
+    const next = snapshot(userProfile, shop);
+    setDraft(next);
+    setBaseline(JSON.stringify(next));
+  }, [visible, dirty, saving, shop?.status, shop?.name, shop?.location, shop?.upiId, shop?.openingHours, userProfile?.name]);
   const savedUpiId = JSON.parse(baseline).upiId.trim();
   const change = (key, value) => { setDraft(old => ({ ...old, [key]: value })); setSaved(false); setError(''); };
   const close = () => {
@@ -150,6 +157,7 @@ export default function VendorProfileModal({ visible, onClose = () => {}, embedd
               <Field label="Phone number" value={userProfile.phone || ''} locked />
               <Field label="Account type" value="Seller" locked />
             </Section>
+            <NotificationSettings />
             <Section title="Help and access">
               <TouchableOpacity accessibilityRole="button" onPress={support} style={styles.action}><View style={styles.accessIcon}><InterfaceIcon name="support" size={18} color="#b6bac2" /></View><View style={{ flex: 1 }}><Text style={styles.actionTitle}>Contact support</Text><Text style={styles.hint}>Get help with your account or canteen.</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>
               <View style={styles.divider} />

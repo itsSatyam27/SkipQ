@@ -1,3 +1,4 @@
+import NotificationSettings from './NotificationSettings';
 import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
 import InterfaceIcon from './InterfaceIcon';
 import React, { useContext, useEffect, useState } from 'react';
@@ -138,6 +139,7 @@ export default function StudentProfileScreen() {
           </TouchableOpacity>
         </View>
 
+        <NotificationSettings />
         {/* Actions Card */}
         <View style={styles.actionsCard}>
           {(userProfile?.stallName || userProfile?.userType === 'seller' || sellerShopId) && (

@@ -1,18 +1,39 @@
+import useReducedMotion from '../hooks/useReducedMotion';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { orderDate } from '../utils/orderDisplay.cjs';
 import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
 import InterfaceIcon from './InterfaceIcon';
-import React, { useContext, useState, useEffect } from 'react';
-import { StyleSheet, View, Text, Modal, TouchableOpacity, Alert, ScrollView, Image, Share } from 'react-native';
+import React, { useContext, useState, useEffect, useRef } from 'react';
+import { StyleSheet, View, Text, Modal, TouchableOpacity, Alert, ScrollView, Image, Share, Animated } from 'react-native';
 import { AppContext } from '../context/AppContext';
 import QRCode from 'react-native-qrcode-svg';
+
+function PickupProgress({ percent, secondsLeft, ready }) {
+  const styles = useSellerStyles(baseStyles);
+  const reduced = useReducedMotion();
+  const value = useRef(new Animated.Value(percent)).current;
+  useEffect(() => {
+    const animation = Animated.timing(value, { toValue: percent, duration: reduced ? 0 : 850, useNativeDriver: false });
+    animation.start(); return () => animation.stop();
+  }, [percent, reduced, value]);
+  const time = secondsLeft == null ? '--:--' : `${Math.floor(secondsLeft / 60).toString().padStart(2, '0')}:${(secondsLeft % 60).toString().padStart(2, '0')}`;
+  return <View style={styles.countdown}>
+    <View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.prepEyebrow}>{ready ? 'READY TO COLLECT' : 'KITCHEN PROGRESS'}</Text><Text style={styles.countTitle}>{ready ? 'Your food is ready' : secondsLeft === 0 ? 'Waiting for kitchen update' : 'Freshly preparing your order'}</Text></View><View style={[styles.timerBadge, ready && styles.readyStatus]}>{ready ? <InterfaceIcon name="check" size={24} color="#18824b" /> : <><Text style={styles.timer}>{time}</Text><Text style={styles.timerCaption}>estimated left</Text></>}</View></View>
+    <View accessibilityRole="progressbar" accessibilityLabel={ready ? 'Order ready for pickup' : 'Estimated preparation progress'} accessibilityValue={{ min: 0, max: 100, now: Math.round(percent) }} style={styles.track}><Animated.View style={[styles.fill, ready && { backgroundColor: '#47db85' }, { width: value.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'], extrapolate: 'clamp' }) }]} /></View>
+    <View style={styles.prepSteps}>{['Placed', 'Preparing', 'Ready'].map((label,index) => <View key={label} style={styles.prepStep}><View style={[styles.stepDot, index < 2 && styles.stepDone, index === 2 && ready && styles.stepReady]} /><Text style={[styles.stepText, ((index === 1 && !ready) || (index === 2 && ready)) && styles.stepTextActive]}>{label}</Text></View>)}</View>
+    <Text style={styles.hint}>{ready ? 'Show your QR or PIN at the counter.' : 'Timing is an estimate. Collect only after the kitchen marks your order Ready.'}</Text>
+  </View>;
+}
 
 export default function DigitalPickupPassModal({ visible, onClose }) {
   const styles = useSellerStyles(baseStyles);
   const insets = useSafeAreaInsets();
+  const scrollRef = useRef(null);
+
   const { light } = useSellerTheme();
   const { activeOrderId, orders, cancelOrder } = useContext(AppContext);
   const activeOrderObj = orders.find(o => o.id === activeOrderId);
+  useEffect(() => { if (visible) scrollRef.current?.scrollTo({ y: 0, animated: false }); }, [visible, activeOrderId]);
 
 
   const isCancelled = activeOrderObj?.orderStatus === 'Cancelled';
@@ -23,12 +44,12 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
   const [secondsLeft, setSecondsLeft] = useState(null);
 
   useEffect(() => {
-    if (!activeOrderObj || !activeOrderObj.timestamp || isCompleted || isCancelled || isAbandoned || isReady) {
+    if (!activeOrderObj || isCompleted || isCancelled || isAbandoned || isReady) {
       setSecondsLeft(0);
       return;
     }
 
-    const prepMins = activeOrderObj.estimatedPrepMins || 5;
+    const prepMins = activeOrderObj.estimatedPrepMins ?? 5;
     const targetMs = (orderDate(activeOrderObj)?.getTime() || Date.now()) + prepMins * 60 * 1000;
 
     const tick = () => {
@@ -96,16 +117,8 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
 
   if (!activeOrderObj) return null;
 
-  const prepProgressPercent = Math.min(
-    100,
-    Math.max(
-      12,
-      100 -
-        (secondsLeft !== null
-          ? (secondsLeft / ((activeOrderObj.estimatedPrepMins || 5) * 60)) * 100
-          : 50)
-    )
-  );
+  // Estimated time must never imply actual readiness; only the seller can do that.
+  const prepProgressPercent = isReady ? 100 : secondsLeft == null ? 0 : Math.min(95, Math.max(0, 100 - secondsLeft / ((activeOrderObj.estimatedPrepMins ?? 5) * 60 || 1) * 100));
 
   const closed = isCancelled || isCompleted || isAbandoned;
   const status = isCancelled ? 'Cancelled' : isCompleted ? 'Collected' : isAbandoned ? 'Unclaimed' : isReady ? 'Ready' : 'Cooking';
@@ -113,20 +126,20 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
     <View style={styles.overlay}><View style={[styles.sheet, { paddingTop: Math.max(14, insets.top), paddingBottom: Math.max(12, insets.bottom) }]}>
       <View style={styles.handle} />
       <View style={styles.headingRow}><Text style={styles.campusBadge}>SILVER OAK UNIVERSITY</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close pickup pass" onPress={onClose} style={styles.close}><InterfaceIcon name="close" size={19} color={light ? '#172333' : '#f5f4f0'} /></TouchableOpacity></View>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+      <ScrollView ref={scrollRef} style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         <Text style={styles.title}>Digital pickup pass</Text><Text style={styles.subtitle}>Show your QR or PIN at the counter.</Text>
         <View style={styles.ticket}>
           <View style={styles.ticketHeading}><View style={{ flex: 1 }}><Text style={styles.eyebrow}>{activeOrderObj.isFacultyExpress ? 'FACULTY EXPRESS PASS' : 'CAMPUS PICKUP PASS'}</Text><Text style={styles.shop}>{activeOrderObj.shopName}</Text></View><Text style={[styles.status, isReady && styles.readyStatus]}>{status}</Text></View>
-          {!closed && !isReady && <View style={styles.countdown}><View style={styles.row}><Text style={styles.countTitle}>Kitchen prep countdown</Text><Text style={styles.timer}>{formatTimer(secondsLeft)}</Text></View><View style={styles.track}><View style={[styles.fill, { width: `${prepProgressPercent}%` }]} /></View><Text style={styles.hint}>An estimate only. Wait for Ready before collecting.</Text></View>}
+          {!closed && <PickupProgress percent={prepProgressPercent} secondsLeft={secondsLeft} ready={isReady} />}
           {!closed && <>
             {activeOrderObj.pickupPin ? <View style={styles.qr}><View style={styles.qrWhite}><QRCode value={`SKIPQ-PASS:${activeOrderObj.id}:${activeOrderObj.pickupPin}`} size={164} quietZone={8} color="#090b0d" backgroundColor="#ffffff" /></View><Text style={styles.scanHint}>Scan QR at the counter for pickup</Text></View> : <Text style={styles.hint}>Your pickup PIN is loading. Reopen the pass if it does not appear.</Text>}
-            {!!activeOrderObj.pickupPin && <><Text style={styles.centerLabel}>PICKUP PIN ? VERIFIES HANDOVER</Text><View style={styles.pinRow}>{String(activeOrderObj.pickupPin).split('').map((digit, index) => <Text key={index} style={styles.pinDigit}>{digit}</Text>)}</View></>}
+            {!!activeOrderObj.pickupPin && <><Text style={styles.centerLabel}>PICKUP PIN - VERIFIES HANDOVER</Text><View style={styles.pinRow}>{String(activeOrderObj.pickupPin).split('').map((digit, index) => <Text key={index} style={styles.pinDigit}>{digit}</Text>)}</View></>}
           </>}
-          <Text style={styles.centerLabel}>TOKEN NUMBER ? DISPLAY AT PICKUP</Text><Text selectable style={styles.token}>{activeOrderObj.tokenNumber}</Text>
+          <Text style={styles.centerLabel}>TOKEN NUMBER - DISPLAY AT PICKUP</Text><Text selectable style={styles.token}>{activeOrderObj.tokenNumber}</Text>
           <View style={styles.divider} />
-          <View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.label}>COLLECTOR</Text><Text style={styles.name}>{activeOrderObj.groupCollectorName || activeOrderObj.buyerName || 'Campus customer'}</Text></View><View style={{ alignItems: 'flex-end' }}><Text style={styles.label}>AMOUNT</Text><Text style={styles.amount}>?{activeOrderObj.totalAmount}</Text></View></View>
-          <Text style={styles.payment}>{isCancelled ? activeOrderObj.refundText || 'Contact the canteen about any refund.' : activeOrderObj.paymentMethod === 'Cash' ? `Pay ?${activeOrderObj.dueAtCounter ?? activeOrderObj.totalAmount} cash at stall` : activeOrderObj.paymentStatus === 'CONFIRMED_BY_MERCHANT' ? 'UPI confirmed by canteen' : 'UPI awaiting canteen confirmation'}</Text>
-          <View style={styles.items}><Text style={styles.label}>ORDER BREAKDOWN</Text>{(activeOrderObj.items || []).map((item,index) => <View style={styles.itemRow} key={index}><Text style={styles.itemName}>{item.name}</Text><Text style={styles.itemQuantity}>?{item.qty}</Text><Text style={styles.itemPrice}>?{item.qty * item.price}</Text></View>)}</View>
+          <View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.label}>COLLECTOR</Text><Text style={styles.name}>{activeOrderObj.groupCollectorName || activeOrderObj.buyerName || 'Campus customer'}</Text></View><View style={{ alignItems: 'flex-end' }}><Text style={styles.label}>AMOUNT</Text><Text style={styles.amount}>{'\u20B9'}{activeOrderObj.totalAmount}</Text></View></View>
+          <Text style={styles.payment}>{isCancelled ? activeOrderObj.refundText || 'Contact the canteen about any refund.' : activeOrderObj.paymentMethod === 'Cash' ? `Pay \u20B9${activeOrderObj.dueAtCounter ?? activeOrderObj.totalAmount} cash at stall` : activeOrderObj.paymentStatus === 'CONFIRMED_BY_MERCHANT' ? 'UPI confirmed by canteen' : 'UPI awaiting canteen confirmation'}</Text>
+          <View style={styles.items}><Text style={styles.label}>ORDER BREAKDOWN</Text>{(activeOrderObj.items || []).map((item,index) => <View style={styles.itemRow} key={index}><Text style={styles.itemName}>{item.name}</Text><Text style={styles.itemQuantity}>x{item.qty}</Text><Text style={styles.itemPrice}>{'\u20B9'}{item.qty * item.price}</Text></View>)}</View>
           {!!activeOrderObj.specialInstructions && <Text style={styles.hint}>Kitchen note: {activeOrderObj.specialInstructions}</Text>}
           {!!activeOrderObj.facultyRoomNote && <Text style={styles.hint}>Staff room: {activeOrderObj.facultyRoomNote}</Text>}
           {!!activeOrderObj.pickupSlot && activeOrderObj.pickupSlot !== 'ASAP' && <Text style={styles.hint}>Pickup: {activeOrderObj.pickupSlot}</Text>}
@@ -140,13 +153,21 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
   </Modal>;
 }
 const baseStyles = StyleSheet.create({
+  prepEyebrow: { color: '#ffb313', fontSize: 8, letterSpacing: 1.1, fontWeight: '700', marginBottom: 6 },
+  timerBadge: { backgroundColor: '#292418', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, alignItems: 'center', minWidth: 86 },
+  timerCaption: { color: '#a5a9b2', fontSize: 8, marginTop: 3 },
+  prepSteps: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 7, gap: 5 },
+  prepStep: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  stepDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#41464f' },
+  stepDone: { backgroundColor: '#ffb313' }, stepReady: { backgroundColor: '#47db85' },
+  stepText: { color: '#a5a9b2', fontSize: 9 }, stepTextActive: { color: '#f5f4f0', fontWeight: '700' },
   overlay: { flex: 1, backgroundColor: '#0009', alignItems: 'center', justifyContent: 'flex-end' },
   sheet: { width: '100%', maxWidth: 440, height: '96%', backgroundColor: '#090b0d', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18 },
   handle: { width: 34, height: 3, borderRadius: 2, backgroundColor: '#41464f', alignSelf: 'center', marginBottom: 10 },
   headingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   campusBadge: { color: '#ffb313', backgroundColor: '#17191d', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 6, fontSize: 8, letterSpacing: 1, fontWeight: '700' },
   close: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#17191d', alignItems: 'center', justifyContent: 'center' },
-  scroll: { paddingBottom: 16 }, title: { color: '#f5f4f0', fontSize: 28, lineHeight: 30, fontWeight: '800', letterSpacing: -0.8 },
+  scroll: { paddingTop: 6, paddingBottom: 16 }, title: { color: '#f5f4f0', fontSize: 28, lineHeight: 30, fontWeight: '800', letterSpacing: -0.8 },
   subtitle: { color: '#a5a9b2', fontSize: 11, marginTop: 7, marginBottom: 17 },
   ticket: { backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e', borderRadius: 18, padding: 15 },
   ticketHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 }, eyebrow: { color: '#ffb313', fontSize: 8, letterSpacing: 1, fontWeight: '700' },
@@ -155,7 +176,7 @@ const baseStyles = StyleSheet.create({
   readyStatus: { color: '#47db85', backgroundColor: '#15231c' },
   countdown: { backgroundColor: '#090b0d', borderWidth: 1, borderColor: '#26292e', borderRadius: 13, padding: 12, marginTop: 15 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }, countTitle: { color: '#f5f4f0', fontSize: 11, fontWeight: '600' }, timer: { color: '#ffb313', fontSize: 22, fontWeight: '700' },
-  track: { height: 4, backgroundColor: '#26292e', borderRadius: 2, marginVertical: 9 }, fill: { height: 4, borderRadius: 2, backgroundColor: '#ffb313' },
+  track: { height: 9, backgroundColor: '#26292e', borderRadius: 5, overflow: 'hidden', marginTop: 17, marginBottom: 12 }, fill: { height: 9, borderRadius: 5, backgroundColor: '#ffb313' },
   hint: { color: '#a5a9b2', fontSize: 10, lineHeight: 16, marginTop: 5 }, qr: { alignItems: 'center', marginTop: 18 }, qrWhite: { backgroundColor: '#ffffff', padding: 5, borderRadius: 12 }, scanHint: { color: '#ffb313', fontSize: 10, marginTop: 10 },
   centerLabel: { color: '#a5a9b2', fontSize: 8, letterSpacing: 1, textAlign: 'center', marginTop: 18 }, pinRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 10 },
   pinDigit: { color: '#f5f4f0', fontSize: 27, fontWeight: '700', width: 44, textAlign: 'center', paddingVertical: 9, borderRadius: 10, backgroundColor: '#090b0d', borderWidth: 1, borderColor: '#26292e' },

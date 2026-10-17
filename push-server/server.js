@@ -61,6 +61,11 @@ const server = http.createServer(async (req, res) => {
       throw error;
     }
     res.end('{"ok":true}');
-  } catch { res.writeHead(403); res.end('{"error":"Notification request could not be completed"}'); }
+  } catch (error) {
+    // Record only safe codes, never tokens, request bodies, credentials or PINs.
+    const code = /^[a-zA-Z0-9/_-]{1,80}$/.test(error?.code || '') ? error.code : 'request-rejected';
+    console.error('Push request failed', { path: req.url, code });
+    res.writeHead(403); res.end('{"error":"Notification request could not be completed"}');
+  }
 });
 server.listen(Number(process.env.PORT || 3000), '0.0.0.0');

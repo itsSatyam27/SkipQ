@@ -1,309 +1,74 @@
-import {
-  auth,
-  db,
-  isFirebaseConfigured,
-  doc,
-  setDoc,
-  getDoc,
-  updateDoc,
-  onSnapshot,
-  serverTimestamp
-} from './firebase';
-import { signInWithCustomToken, signInAnonymously, signOut } from 'firebase/auth';
+import { auth, db, isFirebaseConfigured, doc, setDoc, getDoc, onSnapshot, serverTimestamp } from './firebase';
+import { signOut, onAuthStateChanged } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { runTransaction } from 'firebase/firestore';
 
-const STORAGE_LOCAL_USER = '@skipq_local_user_profile_v1';
-const STORAGE_APP_USER = '@skipq_user_profile_v2';
-const STORAGE_USERS_MAP = '@skipq_registered_users_map';
-
-// Check if a user already exists by phone number in Local Storage or Firestore
-export async function getUserProfileByPhone(phone) {
-  const cleanPhone = (phone || '').replace(/\D/g, '');
-  if (!cleanPhone) return null;
-
-  // 1. Check local persistent accounts registry
-  try {
-    const rawMap = await AsyncStorage.getItem(STORAGE_USERS_MAP);
-    if (rawMap) {
-      const map = JSON.parse(rawMap);
-      if (map[cleanPhone] && map[cleanPhone].name) {
-        return map[cleanPhone];
-      }
-    }
-  } catch (err) {
-    console.log('Error reading local users map:', err);
-  }
-
-  // 2. Check local user profile backup
-  try {
-    const backupRaw = await AsyncStorage.getItem(STORAGE_LOCAL_USER);
-    if (backupRaw) {
-      const backup = JSON.parse(backupRaw);
-      if (backup.phone && backup.phone.replace(/\D/g, '') === cleanPhone && backup.name) {
-        return backup;
-      }
-    }
-  } catch (err2) {}
-
-  // 3. Check active app user profile
-  try {
-    const appUserRaw = await AsyncStorage.getItem(STORAGE_APP_USER);
-    if (appUserRaw) {
-      const appUser = JSON.parse(appUserRaw);
-      if (appUser.phone && appUser.phone.replace(/\D/g, '') === cleanPhone && appUser.name) {
-        return appUser;
-      }
-    }
-  } catch (err3) {}
-
-  // 4. Check Firestore users collection by phone
-  if (isFirebaseConfigured && db) {
-    try {
-      // Check phone doc directly: users/phone_<cleanPhone>
-      const phoneDocRef = doc(db, 'users', `phone_${cleanPhone}`);
-      const phoneSnap = await getDoc(phoneDocRef);
-      if (phoneSnap.exists()) {
-        const data = phoneSnap.data();
-        if (data && data.name) {
-          await saveUserProfileToLocalRegistry(cleanPhone, data);
-          return data;
-        }
-      }
-
-      // Check current verified auth user if matching phone
-      if (auth?.currentUser?.uid) {
-        const userRef = doc(db, 'users', auth.currentUser.uid);
-        const userSnap = await getDoc(userRef);
-        if (userSnap.exists()) {
-          const data = userSnap.data();
-          if (data && data.name) {
-            await saveUserProfileToLocalRegistry(cleanPhone, data);
-            return data;
-          }
-        }
-      }
-    } catch (fsErr) {
-      console.log('Firestore getUserProfileByPhone note:', fsErr.message);
-    }
-  }
-
-  return null;
+function session() {
+  const user = auth?.currentUser;
+  if (!isFirebaseConfigured || !db || !user || user.isAnonymous || !user.emailVerified || !user.email) throw new Error('Sign in with your verified Google account first.');
+  return user;
 }
-
-export async function saveUserProfileToLocalRegistry(phone, profileData) {
-  const cleanPhone = (phone || '').replace(/\D/g, '');
-  if (!cleanPhone || !profileData) return;
-  try {
-    const rawMap = await AsyncStorage.getItem(STORAGE_USERS_MAP);
-    const map = rawMap ? JSON.parse(rawMap) : {};
-    map[cleanPhone] = { ...map[cleanPhone], ...profileData, phone: cleanPhone };
-    await AsyncStorage.setItem(STORAGE_USERS_MAP, JSON.stringify(map));
-  } catch (e) {
-    console.log('Error saving to local users registry:', e);
+export async function getUserProfile() {
+  const user = session();
+  const snapshot = await getDoc(doc(db, 'users', user.uid));
+  if (!snapshot.exists()) return null;
+  const profile = { ...snapshot.data(), uid: user.uid };
+  if (profile.email && profile.email !== user.email.toLowerCase()) throw new Error('Use the email linked to this account. Contact support for recovery.');
+  const bannedUntil = profile.banUntil?.toMillis?.() || 0;
+  if (profile.banStatus === 'perm_ban' || (profile.banStatus === 'temp_ban' && bannedUntil > Date.now())) {
+    const error = new Error('This account is blocked from the platform.'); error.code = 'ACCOUNT_BLOCKED'; throw error;
   }
+  return profile;
 }
-
-export async function signInWithVerifiedOtp(customToken) {
-  if (!isFirebaseConfigured || !auth) {
-    return { uid: 'demo_user_uid', isAnonymous: true };
-  }
-  if (!customToken) throw new Error('The verification service did not return a sign-in token.');
-
-  if (customToken.startsWith('mock_custom_token_')) {
-    try {
-      if (auth.currentUser) return auth.currentUser;
-      const anon = await signInAnonymously(auth);
-      return anon.user;
-    } catch (e) {
-      console.log('Firebase anon sign-in note:', e.message);
-      return { uid: customToken.replace('mock_custom_token_', 'user_') };
+export async function registerAccountProfile(profile) {
+  const user = session();
+  const phone = String(profile.phone || '').replace(/\D/g, '').replace(/^91(?=\d{10}$)/, '');
+  const name = String(profile.name || '').trim();
+  if (!/^[6-9]\d{9}$/.test(phone)) throw new Error('Enter a valid 10-digit Indian mobile number.');
+  if (!name || name.length > 100 || !['student', 'faculty', 'seller'].includes(profile.userType)) throw new Error('Enter your name and choose a campus role.');
+  const userRef = doc(db, 'users', user.uid);
+  const claimRef = doc(db, 'phoneClaims', phone);
+  return runTransaction(db, async transaction => {
+    const previous = await transaction.get(userRef);
+    const claim = await transaction.get(claimRef);
+    if (previous.exists()) {
+      const existing = await getUserProfile();
+      if (existing.phone !== phone || existing.email !== user.email.toLowerCase() || existing.userType !== profile.userType) throw new Error('Your registered email, phone and campus role cannot be changed.');
+      if (!existing.profileComplete) throw new Error('This legacy account needs administrator migration before profile setup.');
+      return existing;
     }
-  }
-
-  try {
-    const credential = await signInWithCustomToken(auth, customToken);
-    return credential.user;
-  } catch (err) {
-    console.log('signInWithCustomToken fallback note:', err.message);
-    try {
-      const anon = await signInAnonymously(auth);
-      return anon.user;
-    } catch (e2) {
-      return { uid: `user_${Date.now()}` };
-    }
-  }
+    if (claim.exists()) { const error = new Error('This phone number is already linked to another account. Please use a different number.'); error.code = 'PHONE_ALREADY_LINKED'; throw error; }
+    const { sellerShopId: ignoredShopId, ...editable } = safeFields(profile);
+    const saved = { ...editable, uid: user.uid, authUid: user.uid, name, phone, email: user.email.toLowerCase(),
+      userType: profile.userType, emailVerified: true, phoneVerified: false, profileComplete: true,
+      walletBalance: 0, banStatus: 'active', unclaimedOrderCount: 0, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+    // Rules require both creates together, and reject replacement of an existing claim.
+    transaction.set(userRef, saved);
+    transaction.set(claimRef, { claimed: true, createdAt: serverTimestamp() });
+    return saved;
+  }).catch(error => {
+    if (error.code === 'permission-denied') throw new Error('Profile setup was denied. Publish the current Firestore rules, then try again.');
+    throw error;
+  });
 }
-
-// Sign in user and sync profile to Firestore or Local Storage
-export async function loginWithPhone({ phone, name, userType = 'student', universityId = 'sou', rollNo = '', facultyId = '', roomNumber = '' }) {
-  const cleanPhone = (phone || '').replace(/\D/g, '');
-  const authUid = auth?.currentUser?.uid || (cleanPhone ? `phone_${cleanPhone}` : `user_${Date.now()}`);
-  const userDocId = authUid;
-
-  if (isFirebaseConfigured && db) {
-    try {
-      const userDocRef = doc(db, 'users', userDocId);
-      let existingData = {};
-      try {
-        const existingSnap = await getDoc(userDocRef);
-        if (existingSnap.exists()) {
-          existingData = existingSnap.data() || {};
-        }
-      } catch (getErr) {
-        console.log('Firestore getDoc note:', getErr.message);
-      }
-
-      const firestorePayload = {
-        uid: userDocId,
-        authUid: authUid,
-        phone: cleanPhone,
-        name: name || 'Campus Student',
-        userType,
-        universityId,
-        rollNo: rollNo || existingData.rollNo || '',
-        facultyId: facultyId || existingData.facultyId || '',
-        roomNumber: roomNumber || existingData.roomNumber || '',
-        updatedAt: serverTimestamp()
-      };
-
-      if (!existingData.createdAt) {
-        firestorePayload.createdAt = serverTimestamp();
-      }
-
-      // Write directly to users/<userDocId> in Firestore (excluding server-guarded keys)
-      await setDoc(userDocRef, firestorePayload, { merge: true });
-
-      const fullProfile = {
-        ...firestorePayload,
-        walletBalance: existingData.walletBalance === 500 ? 0 : (existingData.walletBalance ?? 0),
-        unclaimedOrderCount: existingData.unclaimedOrderCount ?? 0,
-        banStatus: existingData.banStatus || 'active'
-      };
-
-      await AsyncStorage.setItem(STORAGE_LOCAL_USER, JSON.stringify(fullProfile));
-      await saveUserProfileToLocalRegistry(cleanPhone, fullProfile);
-      return fullProfile;
-    } catch (firestoreError) {
-      console.log('Firestore write note:', firestoreError.message);
-    }
-  }
-
-  // Fallback Local Profile
-  const localProfile = {
-    uid: userDocId,
-    authUid: authUid,
-    phone: cleanPhone,
-    name: name || 'Campus Student',
-    userType,
-    universityId,
-    rollNo: rollNo || '',
-    facultyId: facultyId || '',
-    roomNumber: roomNumber || '',
-    walletBalance: 0,
-    unclaimedOrderCount: 0,
-    banStatus: 'active',
-    updatedAt: new Date().toISOString()
-  };
-
-  await AsyncStorage.setItem(STORAGE_LOCAL_USER, JSON.stringify(localProfile));
-  try {
-    const cacheRaw = await AsyncStorage.getItem(STORAGE_USERS_MAP);
-    const map = cacheRaw ? JSON.parse(cacheRaw) : {};
-    map[cleanPhone] = localProfile;
-    await AsyncStorage.setItem(STORAGE_USERS_MAP, JSON.stringify(map));
-  } catch (cacheErr) {}
-  return localProfile;
+const EDITABLE = ['name', 'rollNo', 'facultyId', 'roomNumber', 'facultyRoomNote', 'universityId', 'stallName', 'stallLocation', 'merchantUpi', 'sellerShopId'];
+const safeFields = source => Object.fromEntries(EDITABLE.filter(key => source[key] !== undefined).map(key => [key, String(source[key]).trim().slice(0, 300)]));
+export function subscribeToUserProfile(uid, onUpdate, onError = console.warn) {
+  if (!isFirebaseConfigured || !db || uid !== auth?.currentUser?.uid) return () => {};
+  return onSnapshot(doc(db, 'users', uid), snap => { if (snap.exists()) onUpdate({ ...snap.data(), uid }); }, onError);
 }
-
-// Subscribe to real-time updates for a user's Firestore document
-export function subscribeToUserProfile(uid, onUpdate) {
-  if (!isFirebaseConfigured || !db || !uid) return () => {};
-
-  try {
-    const userDocRef = doc(db, 'users', uid);
-    const unsubscribe = onSnapshot(userDocRef, (snap) => {
-      if (snap.exists()) {
-        onUpdate(snap.data());
-      }
-    }, (err) => {
-      console.log('User profile snapshot error:', err);
-    });
-    return unsubscribe;
-  } catch (e) {
-    console.log('Error setting up user profile subscription:', e);
-    return () => {};
-  }
-}
-
-// Update user details in Firestore
 export async function updateUserProfileDoc(uid, updates) {
-  if (isFirebaseConfigured && db && uid) {
-    try {
-      const userDocRef = doc(db, 'users', uid);
-      await setDoc(userDocRef, {
-        ...updates,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-    } catch (e) {
-      console.log('Firestore user update error:', e);
-    }
+  const user = session();
+  if (uid !== user.uid) throw new Error('You can only edit your own profile.');
+  const existing = await getUserProfile();
+  for (const key of ['email', 'phone', 'userType']) {
+    if (updates[key] !== undefined && updates[key] !== existing?.[key]) throw new Error(`Your linked ${key === 'userType' ? 'account type' : key} cannot be changed.`);
   }
-
-  // Also update phone document if updates has a phone number
-  if (isFirebaseConfigured && db && updates?.phone) {
-    const cleanPhone = updates.phone.replace(/\D/g, '');
-    if (cleanPhone && cleanPhone !== uid) {
-      try {
-        const phoneDocRef = doc(db, 'users', cleanPhone);
-        await setDoc(phoneDocRef, {
-          ...updates,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-      } catch (e) {}
-    }
-  }
-
-  // Keep local storage updated
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_LOCAL_USER);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const merged = { ...parsed, ...updates };
-      await AsyncStorage.setItem(STORAGE_LOCAL_USER, JSON.stringify(merged));
-    }
-  } catch (err) {
-    console.log('Local user update error:', err);
-  }
+  await setDoc(doc(db, 'users', uid), { ...safeFields(updates), updatedAt: serverTimestamp() }, { merge: true });
 }
-
-// Sign out
+export async function syncUserProfileToFirestore(profile) { return updateUserProfileDoc(session().uid, profile); }
+export function onAuthChange(callback) { return auth ? onAuthStateChanged(auth, callback) : () => {}; }
 export async function signOutUser() {
-  if (isFirebaseConfigured && auth) {
-    try {
-      await signOut(auth);
-    } catch (e) {
-      console.log('Firebase signOut note:', e);
-    }
-  }
-  await AsyncStorage.removeItem(STORAGE_LOCAL_USER);
-}
-
-// Listen for auth state changes
-export function onAuthChange(callback) {
-  if (!isFirebaseConfigured || !auth) return () => {};
-  try {
-    const { onAuthStateChanged } = require('firebase/auth');
-    return onAuthStateChanged(auth, callback);
-  } catch (e) {
-    return () => {};
-  }
-}
-
-// Sync user profile object to Firestore
-export async function syncUserProfileToFirestore(userProfile) {
-  if (!userProfile) return;
-  const uid = userProfile.uid || (auth?.currentUser?.uid) || null;
-  if (uid) {
-    await updateUserProfileDoc(uid, userProfile);
-  }
+  if (auth) await signOut(auth);
+  await AsyncStorage.multiRemove(['@skipq_local_user_profile_v1', '@skipq_registered_users_map', '@skipq_user_profile_v2', '@skipq_orders_v2', '@skipq_wallet_bal_v2', '@skipq_active_pass_v2']);
 }

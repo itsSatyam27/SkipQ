@@ -1,3 +1,5 @@
+import { useSellerTheme } from '../context/SellerTheme';
+import InterfaceIcon from './InterfaceIcon';
 import React, { useContext, useState, useRef, useEffect } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Modal, FlatList, Platform, StatusBar, Animated, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,6 +27,7 @@ export default function Header({
     banUntil,
     firebaseActive
   } = useContext(AppContext);
+  const { light, toggle } = useSellerTheme();
   const [uniModalVisible, setUniModalVisible] = useState(false);
 
   const pulseBeacon = useRef(new Animated.Value(1)).current;
@@ -57,140 +60,14 @@ export default function Header({
 
   const isSeller = role === 'seller';
 
-  return (
-    <View style={[styles.headerWrapper, isSeller && styles.headerWrapperSeller]}>
-      <View style={styles.headerContainer}>
-        {/* Top Minimal Bar */}
-        <View style={styles.topRow}>
-          {/* Brand & Campus Picker */}
-          <TouchableOpacity style={styles.brandContainer} onPress={() => setUniModalVisible(true)} activeOpacity={0.7}>
-            <LinearGradient
-              colors={['#0747a6', '#0097a7']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.logoBadge}
-            >
-              <Image
-                source={require('../../assets/icon.png')}
-                style={styles.headerMascotImage}
-                resizeMode="contain"
-              />
-            </LinearGradient>
-            <View style={styles.brandInfo}>
-              <Text style={[styles.brandName, isSeller && styles.brandNameSeller]}>SkipQ</Text>
-              <Text style={[styles.campusPickerText, isSeller && styles.campusPickerTextSeller]} numberOfLines={1}>
-                {activeUniObj.name}
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {/* Right Action Chips */}
-          <View style={styles.rightActions}>
-            {/* Active Booking Icon (triggers floating dynamic countdown pill) */}
-            {hasActivePass && (
-              <TouchableOpacity
-                style={[styles.activeBookingIconBtn, isPillVisible && styles.activeBookingIconBtnOpen]}
-                onPress={onToggleActivePill}
-                activeOpacity={0.75}
-              >
-                <View style={styles.bookingIconWrap}>
-                  <Text style={styles.bookingEmoji}>
-                    {activeOrderObj.orderStatus === 'Ready' || activeOrderObj.orderStatus === 'Ready for Pickup'
-                      ? '🔔'
-                      : '🎫'}
-                  </Text>
-                  <Animated.View
-                    style={[
-                      styles.beaconDot,
-                      {
-                        backgroundColor:
-                          activeOrderObj.orderStatus === 'Ready' || activeOrderObj.orderStatus === 'Ready for Pickup'
-                            ? '#10b981'
-                            : '#38bdf8',
-                        transform: [{ scale: pulseBeacon }]
-                      }
-                    ]}
-                  />
-                </View>
-                <Text style={styles.bookingTokenText}>#{activeOrderObj.tokenNumber || 'SQ'}</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              style={[styles.avatarBtn, isSeller && styles.avatarBtnSeller]}
-              onPress={onOpenProfileModal}
-              activeOpacity={0.75}
-            >
-              <Text style={[styles.avatarText, isSeller && styles.avatarTextSeller]}>
-                {(userProfile?.name || 'S').trim().charAt(0).toUpperCase()}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-
-        {/* Student View: Quick Return to Vendor POS if user has a registered stall */}
-        {role === 'buyer' && (userProfile?.stallName || userProfile?.userType === 'seller' || sellerShopId) && (
-          <View style={[styles.sellerBanner, styles.vendorAvailableBanner]}>
-            <Text style={[styles.sellerBannerText, styles.vendorAvailableText]} numberOfLines={1}>
-              👨‍🍳 Stall: {userProfile?.stallName || 'My Canteen'}
-            </Text>
-            <TouchableOpacity style={[styles.sellerSwitchBtn, styles.vendorAvailableBtn]} onPress={() => setRole('seller')} activeOpacity={0.8}>
-              <Text style={styles.sellerSwitchText}>Open Kitchen POS ➔</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Account Penalty Banner */}
-        {banStatus !== 'active' && (
-          <View style={[styles.banBanner, banStatus === 'perm_ban' ? styles.banPerm : styles.banTemp]}>
-            <Text style={styles.banBannerText}>
-              {banStatus === 'perm_ban'
-                ? '🚫 Account suspended due to unclaimed orders'
-                : `⚠️ Temporary restriction active (${banUntil ? new Date(banUntil).toLocaleDateString() : '3 days'})`}
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {/* University Modal */}
-      <Modal visible={uniModalVisible} animationType="slide" transparent onRequestClose={() => setUniModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Campus</Text>
-              <TouchableOpacity style={styles.closeBtn} onPress={() => setUniModalVisible(false)}>
-                <Text style={styles.closeBtnText}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            <FlatList
-              data={DEFAULT_UNIVERSITIES}
-              keyExtractor={item => item.id}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[styles.uniItem, university === item.id && styles.uniItemActive]}
-                  onPress={() => {
-                    setUniversity(item.id);
-                    setUniModalVisible(false);
-                  }}
-                >
-                  <View style={styles.uniItemLeft}>
-                    <Text style={styles.uniEmoji}>🎓</Text>
-                    <View>
-                      <Text style={[styles.uniItemTitle, university === item.id && styles.uniItemTitleActive]}>
-                        {item.name}
-                      </Text>
-                      <Text style={styles.uniItemCity}>{item.city}</Text>
-                    </View>
-                  </View>
-                  {university === item.id && <Text style={styles.checkIcon}>✓</Text>}
-                </TouchableOpacity>
-              )}
-            />
-          </View>
-        </View>
-      </Modal>
+  return <View style={{ backgroundColor: light ? '#f6f7f9' : '#090b0d', paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 24 : 12, paddingHorizontal: 22, paddingBottom: 12 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11, paddingTop: 12 }}>
+      <View style={{ width: 40, height: 40, borderRadius: 13, backgroundColor: '#ffb313', alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 24, fontWeight: '900', color: '#090b0d' }}>S</Text></View>
+      <View style={{ flex: 1 }}><Text style={{ color: light ? '#172333' : '#f5f4f0', fontSize: 21, fontWeight: '800', letterSpacing: -0.6 }}>SkipQ</Text><Text style={{ color: light ? '#596579' : '#9b9fa9', fontSize: 11, marginTop: 3 }} numberOfLines={1}>{activeUniObj.name}</Text></View>
+      {hasActivePass && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open active pickup pass" onPress={onOpenPassModal} style={{ width: 42, height: 42, borderRadius: 14, backgroundColor: '#ffb313', alignItems: 'center', justifyContent: 'center' }}><InterfaceIcon name="orders" size={21} color="#090b0d" /></TouchableOpacity>}
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={light ? 'Switch to dark mode' : 'Switch to light mode'} onPress={toggle} style={{ width: 42, height: 42, borderRadius: 14, backgroundColor: light ? '#fff' : '#17191d', borderWidth: 1, borderColor: light ? '#dce0e7' : '#26292e', alignItems: 'center', justifyContent: 'center' }}><InterfaceIcon name={light ? 'moon' : 'sun'} size={21} color={light ? '#172333' : '#f5f4f0'} /></TouchableOpacity>
     </View>
-  );
+  </View>;
 }
 
 const styles = StyleSheet.create({

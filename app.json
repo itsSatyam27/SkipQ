@@ -2,10 +2,11 @@
   "expo": {
     "name": "SkipQ",
     "slug": "skipq-app",
+    "owner": "skipqofficial",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.skipq.app",
@@ -29,19 +30,58 @@
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "CAMERA"
-      ]
+      ],
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "@react-native-google-signin/google-signin",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "SkipQ uses your location to find campus canteens and check pickup distance before ordering.",
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
+        }
+      ],
       "expo-status-bar",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#edf3f8",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "dark": {
+            "backgroundColor": "#edf3f8",
+            "image": "./assets/splash-icon.png"
+          }
+        }
+      ],
       [
         "expo-camera",
         {
           "cameraPermission": "SkipQ uses camera for instant counter QR code pickup verification.",
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "SkipQ lets sellers choose dish photos from their library.",
+          "cameraPermission": "SkipQ lets sellers take photos of their dishes.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#ffb313",
+          "defaultChannel": "orders"
         }
       ]
     ],

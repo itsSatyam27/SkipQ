@@ -1,48 +1,68 @@
+import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
+import InterfaceIcon from './InterfaceIcon';
 import React, { useState, useContext, useEffect, useRef } from 'react';
 import {
   StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, SafeAreaView,
-  StatusBar, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Image, Animated, Easing
+  StatusBar, KeyboardAvoidingView, Platform, BackHandler, Alert, ActivityIndicator, Image, Animated, Easing
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Path } from 'react-native-svg';
 import { AppContext } from '../context/AppContext';
+import WelcomeScreen from './WelcomeScreen';
+import CampusRoleSelect from './CampusRoleSelect';
+import CampusSelectionScreen from './CampusSelectionScreen';
 import { DEFAULT_UNIVERSITIES } from '../data/mockData';
-import { sendSmsOtp, verifySmsOtp } from '../services/smsService';
-import { signInWithVerifiedOtp, getUserProfileByPhone, saveUserProfileToLocalRegistry } from '../services/authService';
+import { signInWithGoogle, googleSignInErrorMessage } from '../services/googleSignIn';
+import { auth } from '../services/firebase';
+import { getUserProfile, registerAccountProfile, signOutUser } from '../services/authService';
 
 const mascotCharacter = require('../../assets/mascot.png');
 const mascotIcon = require('../../assets/icon.png');
 
+function SetupProgress({ current, total, label }) {
+  const styles = useSellerStyles(baseStyles);
+  return <View style={styles.progressContainer}>
+    <View style={styles.progressBarsRow}>
+      {Array.from({ length: total }, (_, index) => <View key={index} style={[styles.progressBarSegment,
+        index + 1 < current && styles.progressBarCompleted, index + 1 === current && styles.progressBarActive]} />)}
+    </View>
+    <Text style={styles.progressLabel}>STEP {current} OF {total} · {label}</Text>
+  </View>;
+}
+
 export default function OnboardingFlow() {
+  const styles = useSellerStyles(baseStyles);
+  const { light, toggle } = useSellerTheme();
   const {
     requestUserLocation,
     completeOnboarding,
   } = useContext(AppContext);
 
-  // 0: Animated Mascot Welcome Screen, 1: Phone & OTP, 2: Name & Role, 3: Location Permissions, 4: Canteen Setup (Seller)
+  // 0: Welcome, 1: Google login, 2: Campus, 3: Profile, 4: Location, 5: Seller setup
   const [step, setStep] = useState(0);
 
-  // Step 1: Phone Login & Verification
+  // Step 1: Google sign-in
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState(auth?.currentUser?.email || '');
+  const [isGoogleSigningIn, setIsGoogleSigningIn] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const googleController = useRef(null);
   const [name, setName] = useState('');
   const [isCheckingProfile, setIsCheckingProfile] = useState(false);
-  const [otpCode, setOtpCode] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
-  const [isOtpVerified, setIsOtpVerified] = useState(false);
   const [isExistingUser, setIsExistingUser] = useState(false);
   const [existingUserName, setExistingUserName] = useState('');
-  const otpInputRef = useRef(null);
 
-  // Step 2: User Type ('student', 'faculty', 'seller')
+  // Step 3: User Type ('student', 'faculty', 'seller')
   const [userType, setUserType] = useState('student');
   const [rollNo, setRollNo] = useState('');
   const [facultyId, setFacultyId] = useState('');
   const [roomNumber, setRoomNumber] = useState('');
 
-  // Step 3: Location Permission
+  // Step 4: Location Permission
   const [isRequestingLocation, setIsRequestingLocation] = useState(false);
 
   // University is fixed to Silver Oak for Phase 1
-  const selectedUniversity = 'sou';
+  const [selectedUniversity, setSelectedUniversity] = useState('sou');
   const selectedCampusObj = DEFAULT_UNIVERSITIES.find(u => u.id === selectedUniversity) || DEFAULT_UNIVERSITIES[0];
 
   // Vendor Fields (if userType === 'seller')
@@ -50,8 +70,6 @@ export default function OnboardingFlow() {
   const [stallLocation, setStallLocation] = useState('');
   const [merchantUpi, setMerchantUpi] = useState('');
 
-  const [resendTimer, setResendTimer] = useState(0);
-  const [isSendingSms, setIsSendingSms] = useState(false);
 
   // Animation values for the colorful mascot
   const mascotFloatY = useRef(new Animated.Value(0)).current;
@@ -161,146 +179,88 @@ export default function OnboardingFlow() {
     ]).start();
   };
 
+  useEffect(() => () => googleController.current?.abort(), []);
+
+  const fillProfile = profile => {
+    setPhone(profile?.phone || ''); setName(profile?.name || auth?.currentUser?.displayName || '');
+    setEmail(auth?.currentUser?.email || profile?.email || ''); setUserType(profile?.userType || 'student');
+    setIsExistingUser(Boolean(profile?.profileComplete));
+    setRollNo(profile?.rollNo || ''); setFacultyId(profile?.facultyId || ''); setRoomNumber(profile?.roomNumber || '');
+    setStallName(profile?.stallName || ''); setStallLocation(profile?.stallLocation || ''); setMerchantUpi(profile?.merchantUpi || '');
+  };
   useEffect(() => {
-    let interval = null;
-    if (resendTimer > 0) {
-      interval = setInterval(() => {
-        setResendTimer(prev => prev - 1);
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [resendTimer]);
-
-  // Step 1 Handlers
-  const handleSendOtp = async () => {
-    const cleanPhone = phone.replace(/\D/g, '');
-    if (cleanPhone.length !== 10) {
-      Alert.alert('Invalid Phone Number', 'Please enter a valid 10-digit Indian mobile number.');
-      return;
-    }
-
-    setIsSendingSms(true);
+    let active = true;
+    if (auth?.currentUser?.emailVerified) getUserProfile().then(profile => {
+      if (active) { fillProfile(profile); setStep(profile?.profileComplete ? 3 : 2); }
+    }).catch(error => { if (active) Alert.alert('Account unavailable', error.message); });
+    return () => { active = false; };
+  }, []);
+  const handleGoogleSignIn = async () => {
+    if (isGoogleSigningIn) return;
+    const controller = new AbortController(); googleController.current = controller; setIsGoogleSigningIn(true);
     try {
-      const res = await sendSmsOtp(cleanPhone);
-      setOtpSent(true);
-      if (res?.isDemo) {
-        setOtpCode('123456');
-        Alert.alert('Verification Code Sent', 'Demo / local mode active. Code: 123456 (pre-filled for fast testing)');
-      } else {
-        setOtpCode('');
-      }
-      setResendTimer(30);
-    } catch (e) {
-      Alert.alert('Could not send code', e.message || 'Please try again in a moment.');
-    } finally {
-      setIsSendingSms(false);
-    }
+      await signInWithGoogle({ signal: controller.signal });
+      const profile = await getUserProfile();
+      fillProfile(profile);
+      if (profile?.profileComplete) {
+        await completeOnboarding({ chosenRole: profile.userType === 'seller' ? 'seller' : 'buyer', chosenUniversity: profile.universityId || 'sou', profileData: profile });
+      } else setStep(2);
+    } catch (error) {
+      if (error.code === 'ACCOUNT_BLOCKED') await signOutUser();
+      if (error.name !== 'AbortError' && error.code !== 'auth/popup-closed-by-user') Alert.alert('Could not sign in', googleSignInErrorMessage(error));
+    } finally { setIsGoogleSigningIn(false); googleController.current = null; }
+  };
+  const handleProfileContinue = async () => {
+    if (isSavingProfile) return;
+    if (!name.trim() || !/^[6-9]\d{9}$/.test(phone)) { Alert.alert('Complete your profile', 'Enter your name and a valid 10-digit Indian mobile number.'); return; }
+    setIsSavingProfile(true);
+    try {
+      const profile = await registerAccountProfile({ name: name.trim(), phone, userType, rollNo, facultyId, roomNumber, facultyRoomNote: roomNumber, universityId: selectedUniversity });
+      fillProfile(profile); setStep(4);
+    } catch (error) {
+      Alert.alert(error.code === 'PHONE_ALREADY_LINKED' ? 'Phone number already used' : 'Could not save profile', error.message);
+    } finally { setIsSavingProfile(false); }
   };
 
-  const handleVerifyAndContinueStep1 = async () => {
-    const cleanPhone = phone.replace(/\D/g, '');
-    if (cleanPhone.length !== 10) {
-      Alert.alert('Phone Required', 'Please enter a valid 10-digit mobile number.');
-      return;
-    }
-    if (!otpSent) {
-      Alert.alert('Verification Required', 'Please tap "Send Verification Code" first.');
-      return;
-    }
-    if (otpCode.trim().length !== 6) {
-      Alert.alert('6-Digit Code Required', 'Please enter the complete 6-digit verification code.');
-      return;
-    }
-    setIsCheckingProfile(true);
+  const setupScroll = useRef(null);
+  useEffect(() => { setupScroll.current?.scrollTo({ y: 0, animated: false }); }, [step]);
+  useEffect(() => {
+    const back = () => {
+      if (isGoogleSigningIn) { googleController.current?.abort(); return true; }
+      if (isSavingProfile) return true;
+      if (step > 0) { setStep(value => value - 1); return true; }
+      return false;
+    };
+    const listener = BackHandler.addEventListener('hardwareBackPress', back);
+    return () => listener.remove();
+  }, [step, isGoogleSigningIn, isSavingProfile]);
 
-    try {
-      const result = await verifySmsOtp(cleanPhone, otpCode.trim());
-      await signInWithVerifiedOtp(result.customToken);
-      setIsOtpVerified(true);
-
-      // Check if this phone number already registered previously
-      const existingProfile = await getUserProfileByPhone(cleanPhone);
-      if (existingProfile && existingProfile.name) {
-        setIsExistingUser(true);
-        setExistingUserName(existingProfile.name);
-        setName(existingProfile.name);
-        setUserType(existingProfile.userType || 'student');
-        if (existingProfile.rollNo) setRollNo(existingProfile.rollNo);
-        if (existingProfile.facultyId) setFacultyId(existingProfile.facultyId);
-        if (existingProfile.roomNumber) setRoomNumber(existingProfile.roomNumber);
-        if (existingProfile.stallName) setStallName(existingProfile.stallName);
-        if (existingProfile.stallLocation) setStallLocation(existingProfile.stallLocation);
-        if (existingProfile.merchantUpi) setMerchantUpi(existingProfile.merchantUpi);
-
-        const chosenRole = existingProfile.userType === 'seller' ? 'seller' : 'buyer';
-        let vendorCanteenData = null;
-        if (chosenRole === 'seller' && existingProfile.stallName) {
-          vendorCanteenData = {
-            id: existingProfile.sellerShopId,
-            name: existingProfile.stallName,
-            location: existingProfile.stallLocation || 'Central Campus Food Court',
-            openingHours: existingProfile.openingHours || '08:00 AM - 08:00 PM',
-            upiId: existingProfile.merchantUpi || `${existingProfile.stallName.toLowerCase().replace(/\s+/g, '')}@upi`,
-            phone: `+91 ${cleanPhone}`,
-            initialMenu: []
-          };
-        }
-
-        await completeOnboarding({
-          chosenRole,
-          chosenUniversity: existingProfile.universityId || selectedUniversity || 'sou',
-          profileData: {
-            ...existingProfile,
-            phone: cleanPhone,
-            name: existingProfile.name,
-            userType: existingProfile.userType
-          },
-          vendorCanteenData
-        });
-
-        Alert.alert(
-          '👋 Welcome Back!',
-          `Signed in as ${existingProfile.name} (${chosenRole === 'seller' ? 'Kitchen Merchant' : 'Student'}).`
-        );
-        return;
-      }
-
-      // New user registration -> proceed to profile creation
-      setStep(2);
-    } catch (e) {
-      Alert.alert('Verification failed', e.message || 'The code is invalid or has expired.');
-    } finally {
-      setIsCheckingProfile(false);
-    }
-  };
-
-  // Step 3 Handlers (Location)
+  // Step 4 Handlers (Location)
   const handleGrantLocation = async () => {
     setIsRequestingLocation(true);
     try {
       await requestUserLocation();
-    } catch (e) {
-      console.log('Location grant note:', e);
-    } finally {
-      setIsRequestingLocation(false);
       if (userType === 'seller') {
-        setStep(4);
+        setStep(5);
       } else {
         await handleFinishOnboarding();
       }
-    }
+    } catch (error) {
+      Alert.alert('Location unavailable', error.message || 'Enable device location and retry. You can also browse without location.');
+    } finally { setIsRequestingLocation(false); }
   };
 
   const handleSkipLocation = async () => {
     if (userType === 'seller') {
-      setStep(4);
+      setStep(5);
     } else {
       await handleFinishOnboarding();
     }
   };
 
-  // Step 4 Handlers (Finish & Enter Campus)
+  // Step 5 Handlers (Finish & Enter Campus)
   const handleFinishOnboarding = async () => {
+    if (isSavingProfile) return;
     const chosenRole = userType === 'seller' ? 'seller' : 'buyer';
 
     let vendorCanteenData = null;
@@ -313,7 +273,7 @@ export default function OnboardingFlow() {
         name: stallName.trim(),
         location: stallLocation.trim() || 'Central Campus Food Court',
         openingHours: '08:00 AM - 08:00 PM',
-        upiId: merchantUpi.trim() || `${stallName.toLowerCase().replace(/\s+/g, '')}@upi`,
+        upiId: merchantUpi.trim(),
         phone: `+91 ${phone}`,
         initialMenu: []
       };
@@ -323,6 +283,7 @@ export default function OnboardingFlow() {
     const profileToSave = {
       name: name.trim(),
       phone: cleanPhone,
+      email,
       userType,
       rollNo: userType === 'student' ? (rollNo.trim() || '') : '',
       facultyId: userType === 'faculty' ? (facultyId.trim() || '') : '',
@@ -333,429 +294,117 @@ export default function OnboardingFlow() {
       merchantUpi: chosenRole === 'seller' ? merchantUpi.trim() : undefined,
       universityId: selectedUniversity || 'sou'
     };
-    await saveUserProfileToLocalRegistry(cleanPhone, profileToSave);
 
-    await completeOnboarding({
-      chosenRole,
-      chosenUniversity: selectedUniversity || 'sou',
-      profileData: profileToSave,
-      vendorCanteenData
-    });
+    setIsSavingProfile(true);
+    try {
+      await completeOnboarding({ chosenRole, chosenUniversity: selectedUniversity || 'sou', profileData: profileToSave, vendorCanteenData });
 
-    if (chosenRole === 'seller') {
-      Alert.alert(
-        '🎉 Canteen Registered!',
-        `Your food counter "${stallName}" is now registered and live on the Silver Oak campus radar. Welcome to your Kitchen POS!`
-      );
-    }
+    } catch (error) { Alert.alert('Setup failed', error.message || 'Please retry.'); }
+    finally { setIsSavingProfile(false); }
   };
+
+  if (step === 0) {
+    return <WelcomeScreen onStart={() => setStep(1)} onMascotTap={handleMascotTap} mascotFloatY={mascotFloatY} mascotScale={mascotScale} />;
+  }
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#edf3f8" translucent={false} />
+      <StatusBar barStyle={light ? 'dark-content' : 'light-content'} backgroundColor={light ? '#f6f7f9' : '#090b0d'} translucent={false} />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          ref={setupScroll}
+          contentContainerStyle={[styles.scrollContent, step === 1 && styles.loginScroll, step === 2 && { flexGrow: 1, paddingBottom: 12 }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
           {/* Top Header Bar Matching App Brand */}
           <View style={styles.topHeaderBar}>
             <View style={styles.topHeaderLeft}>
-              <LinearGradient
-                colors={['#0747a6', '#0097a7']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.headerLogoContainer}
-              >
-                <Image source={mascotIcon} style={styles.headerLogoImage} resizeMode="contain" />
-              </LinearGradient>
+              <View style={styles.setupLogo}><Text style={styles.setupLogoLetter}>S</Text></View>
               <View>
                 <Text style={styles.headerBrandTitle}>SkipQ</Text>
-                <Text style={styles.headerCampusSubtitle}>Silver Oak University</Text>
               </View>
             </View>
-            <View style={styles.campusPillBadge}>
-              <Text style={styles.campusPillText}>SOU</Text>
-            </View>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={light ? 'Switch to dark mode' : 'Switch to light mode'} onPress={toggle} style={styles.modeButton}><InterfaceIcon name={light ? 'moon' : 'sun'} size={20} color={light ? '#172333' : '#f5f4f0'} /></TouchableOpacity>
           </View>
 
           {/* ========================================================================= */}
-          {/* STEP 0: ANIMATED COLORFUL MASCOT WELCOME SCREEN                          */}
-          {/* ========================================================================= */}
-          {step === 0 && (
-            <View style={styles.welcomeContainer}>
-              {/* Mascot Animated Hero Stage */}
-              <View style={styles.mascotStage}>
-                {/* Glowing Radiant Aura Ring */}
-                <Animated.View
-                  style={[
-                    styles.mascotAuraRing,
-                    {
-                      transform: [{ scale: auraScale }],
-                      opacity: auraOpacity,
-                    }
-                  ]}
-                />
-
-                {/* Floating Bobbing Mascot */}
-                <TouchableOpacity activeOpacity={0.9} onPress={handleMascotTap}>
-                  <Animated.View
-                    style={[
-                      styles.mascotMover,
-                      {
-                        transform: [
-                          { translateY: mascotFloatY },
-                          { scale: mascotScale },
-                        ]
-                      }
-                    ]}
-                  >
-                    <Image
-                      source={mascotCharacter}
-                      style={styles.mascotHeroImage}
-                      resizeMode="contain"
-                    />
-                  </Animated.View>
-                </TouchableOpacity>
-
-                {/* Interactive Dynamic Ground Shadow */}
-                <Animated.View
-                  style={[
-                    styles.mascotGroundShadow,
-                    {
-                      transform: [{ scaleX: shadowScale }, { scaleY: shadowScale }]
-                    }
-                  ]}
-                />
-
-                {/* Mascot Cheerful Speech Pill */}
-                <View style={styles.mascotSpeechPill}>
-                  <Text style={styles.mascotSpeechText}>👋 Hi, I'm Skip! Tap me & let's eat!</Text>
-                </View>
-              </View>
-
-              {/* Welcome Ocean Breeze Card */}
-              <View style={styles.contentCard}>
-                <View style={styles.welcomeHeaderBadge}>
-                  <Text style={styles.welcomeHeaderBadgeText}>⚡ ZERO-QUEUE CAMPUS DINING</Text>
-                </View>
-
-                <Text style={styles.welcomeHeroHeading}>Skip Every Line.</Text>
-                <Text style={styles.welcomeHeroSub}>
-                  Never waste lunch breaks waiting in long canteen lines at Silver Oak University. Order ahead and pick up fresh food in seconds!
-                </Text>
-
-                {/* 3 Value Pillars */}
-                <View style={styles.featureHighlightsList}>
-                  <View style={styles.highlightRow}>
-                    <View style={[styles.highlightIconBadge, { backgroundColor: '#e0f2fe' }]}>
-                      <Text style={styles.highlightIcon}>⚡</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.highlightTitle}>Instant Counter Pickup</Text>
-                      <Text style={styles.highlightDesc}>
-                        Order hot food ahead of time and grab your meal between lectures with zero line waiting.
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.highlightRow}>
-                    <View style={[styles.highlightIconBadge, { backgroundColor: '#fef3c7' }]}>
-                      <Text style={styles.highlightIcon}>🎫</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.highlightTitle}>Digital Pass & 4-Digit PIN</Text>
-                      <Text style={styles.highlightDesc}>
-                        Show your scannable digital token or quote your 4-digit PIN for 3-second handovers.
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.highlightRow}>
-                    <View style={[styles.highlightIconBadge, { backgroundColor: '#dcfce7' }]}>
-                      <Text style={styles.highlightIcon}>🛡️</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.highlightTitle}>300m Fresh-Prep Guarantee</Text>
-                      <Text style={styles.highlightDesc}>
-                        Campus GPS ensures chefs start cooking when you approach, so your food is always piping hot.
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-
-                {/* Big Vibrant Get Started Button */}
-                <TouchableOpacity
-                  style={styles.primaryGradientBtnWrapper}
-                  onPress={() => setStep(1)}
-                  activeOpacity={0.85}
-                >
-                  <LinearGradient
-                    colors={['#0747a6', '#0070d2', '#00a3c4']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={styles.primaryGradientBtn}
-                  >
-                    <Text style={styles.btnText}>Get Started / Sign In ➔</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {/* ========================================================================= */}
-          {/* STEP 1: PHONE LOGIN & SMS VERIFICATION                                    */}
+          {/* STEP 1: GOOGLE SIGN-IN */}
           {/* ========================================================================= */}
           {step === 1 && (
-            <View>
-              {/* Mascot Mini Greeting Banner */}
-              <View style={styles.miniMascotGreeting}>
-                <Image source={mascotCharacter} style={styles.miniMascotImage} resizeMode="contain" />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.miniMascotTitle}>Welcome to SkipQ!</Text>
-                  <Text style={styles.miniMascotSub}>Enter your mobile number to activate your zero-queue pass.</Text>
-                </View>
+            <View style={styles.loginSection}>
+            <View style={styles.loginCard}>
+              <View style={styles.loginIcon} accessible accessibilityRole="image" accessibilityLabel="Secure verification">
+                  <Svg width={28} height={28} viewBox="0 0 24 24" aria-hidden>
+                    <Path d="M12 3 4.5 6v5.5c0 4.4 3 7.7 7.5 9.5 4.5-1.8 7.5-5.1 7.5-9.5V6L12 3Z" fill="none" stroke="#ffb313" strokeWidth={1.7} strokeLinejoin="round" />
+                    <Path d="m8.5 12 2.3 2.3 4.7-4.8" fill="none" stroke="#ffb313" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                  </Svg>
               </View>
-
-              {/* Progress Tracker */}
-              <View style={styles.progressContainer}>
-                <View style={styles.progressBarsRow}>
-                  <View style={[styles.progressBarSegment, styles.progressBarActive]} />
-                  <View style={styles.progressBarSegment} />
-                  <View style={styles.progressBarSegment} />
-                  <View style={styles.progressBarSegment} />
-                </View>
-                <Text style={styles.progressLabel}>STEP 1 OF 4 • MOBILE SIGN-IN</Text>
+              <Text style={styles.loginEyebrow}>YOUR NEXT BREAK, SORTED</Text>
+              <Text style={styles.loginTitle}>Sign in to SkipQ</Text>
+              <Text style={styles.loginCopy}>Good food. Less waiting.{ '\n' }Your campus favourites are one sign-in away.</Text>
+              <TouchableOpacity style={[styles.googleButton, isGoogleSigningIn && { opacity: 0.65 }]} onPress={handleGoogleSignIn} disabled={isGoogleSigningIn} accessibilityRole="button" accessibilityLabel="Continue with Google" accessibilityState={{ busy: isGoogleSigningIn, disabled: isGoogleSigningIn }}>
+                {isGoogleSigningIn ? <ActivityIndicator color="#0747a6" /> : <>
+                  <Svg width={22} height={22} viewBox="0 0 48 48" aria-hidden>
+                    <Path fill="#4285F4" d="M43.6 24.5c0-1.4-.1-2.8-.4-4.1H24v7.8h11c-.5 2.5-1.9 4.6-4 6v5h6.5c3.8-3.5 6.1-8.6 6.1-14.7Z" />
+                    <Path fill="#34A853" d="M24 44c5.4 0 9.9-1.8 13.2-4.8l-6.5-5c-1.8 1.2-4 1.9-6.7 1.9-5.2 0-9.6-3.5-11.2-8.2H6.1v5.2C9.4 39.6 16.2 44 24 44Z" />
+                    <Path fill="#FBBC05" d="M12.8 27.9a12 12 0 0 1 0-7.8v-5.2H6.1a20 20 0 0 0 0 18.2l6.7-5.2Z" />
+                    <Path fill="#EA4335" d="M24 11.9c2.9 0 5.4 1 7.4 2.9l5.6-5.6A19.2 19.2 0 0 0 24 4C16.2 4 9.4 8.4 6.1 14.9l6.7 5.2c1.6-4.7 6-8.2 11.2-8.2Z" />
+                  </Svg>
+                  <Text style={styles.googleButtonText}>Continue with Google</Text>
+                </>}
+              </TouchableOpacity>
+              {isGoogleSigningIn && <>
+                <Text style={styles.extraFieldHint}>Choose your Google account to continue.</Text>
+                <TouchableOpacity style={styles.backBtnFullWidth} onPress={() => googleController.current?.abort()}><Text style={styles.backBtnFullWidthText}>Cancel sign-in</Text></TouchableOpacity>
+              </>}
+              <Text style={styles.loginHint}>New here? Your account is created automatically.</Text>
+              <View style={styles.loginFooter}>
+                <Text style={styles.loginFooterTitle}>One account. Your campus.</Text>
+                <Text style={styles.loginFooterCopy}>For students, faculty and sellers. Add your profile details after signing in.</Text>
               </View>
-
-              <View style={styles.contentCard}>
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardIconBox}>
-                    <Text style={styles.cardIconText}>📱</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.cardTitle}>Mobile Verification</Text>
-                    <Text style={styles.cardSubtitle}>
-                      Sign in or create your campus digital pickup pass.
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Mobile Number Input Container */}
-                <Text style={styles.inputSectionLabel}>MOBILE PHONE NUMBER</Text>
-                <View style={[styles.phoneInputContainer, otpSent && styles.phoneInputContainerLocked]}>
-                  <View style={styles.countryCodeBadge}>
-                    <Text style={styles.countryFlag}>🇮🇳</Text>
-                    <Text style={styles.countryCodeText}>+91</Text>
-                  </View>
-                  <View style={styles.phoneDivider} />
-                  <TextInput
-                    style={styles.phoneInputField}
-                    placeholder="98765 43210"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="number-pad"
-                    maxLength={10}
-                    value={phone}
-                    editable={!otpSent || isSendingSms}
-                    onChangeText={(val) => {
-                      setPhone(val.replace(/\D/g, ''));
-                    }}
-                  />
-                  {otpSent && (
-                    <TouchableOpacity
-                      style={styles.editPhoneBtn}
-                      onPress={() => {
-                        setOtpSent(false);
-                        setOtpCode('');
-                      }}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Text style={styles.editPhoneBtnText}>Change</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {/* Send SMS Code Button */}
-                {!otpSent && (
-                  <TouchableOpacity
-                    style={[
-                      styles.primaryGradientBtnWrapper,
-                      (phone.replace(/\D/g, '').length !== 10 || isSendingSms) && styles.btnDisabled
-                    ]}
-                    onPress={handleSendOtp}
-                    disabled={phone.replace(/\D/g, '').length !== 10 || isSendingSms}
-                    activeOpacity={0.85}
-                  >
-                    <LinearGradient
-                      colors={
-                        phone.replace(/\D/g, '').length === 10 && !isSendingSms
-                          ? ['#0747a6', '#0070d2', '#00a3c4']
-                          : ['#cbd5e1', '#cbd5e1']
-                      }
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.primaryGradientBtn}
-                    >
-                      {isSendingSms ? (
-                        <View style={styles.btnLoadingRow}>
-                          <ActivityIndicator size="small" color="#ffffff" />
-                          <Text style={styles.btnText}>  Sending SMS Code...</Text>
-                        </View>
-                      ) : (
-                        <Text style={styles.btnText}>Send 6-Digit SMS Code ➔</Text>
-                      )}
-                    </LinearGradient>
-                  </TouchableOpacity>
-                )}
-
-                {/* 6-Digit SMS Verification Section */}
-                {otpSent && (
-                  <View style={styles.otpSection}>
-                    <View style={styles.otpHeaderRow}>
-                      <Text style={styles.inputSectionLabelNoMargin}>ENTER 6-DIGIT CODE</Text>
-                      <TouchableOpacity
-                        disabled={resendTimer > 0 || isSendingSms}
-                        onPress={handleSendOtp}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <Text style={[styles.resendLink, (resendTimer > 0 || isSendingSms) && styles.resendLinkDisabled]}>
-                          {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend Code'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {/* Demo Auto-Fill Chip */}
-                    <TouchableOpacity
-                      style={styles.demoFillPill}
-                      onPress={() => setOtpCode('123456')}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.demoFillPillIcon}>⚡</Text>
-                      <Text style={styles.demoFillPillText}>Demo Mode: Tap to auto-fill code 123456</Text>
-                    </TouchableOpacity>
-
-                    {/* Segmented 6-Digit Boxes */}
-                    <View style={styles.digitBoxesContainer}>
-                      <View style={styles.digitBoxesRow}>
-                        {[0, 1, 2, 3, 4, 5].map((idx) => {
-                          const char = otpCode[idx] || '';
-                          const isCurrent = otpCode.length === idx;
-                          const isFilled = Boolean(char);
-                          return (
-                            <View
-                              key={idx}
-                              style={[
-                                styles.digitBox,
-                                isFilled && styles.digitBoxFilled,
-                                isCurrent && styles.digitBoxActive
-                              ]}
-                            >
-                              <Text style={styles.digitBoxChar}>{char}</Text>
-                              {isCurrent && <View style={styles.digitCursorBar} />}
-                            </View>
-                          );
-                        })}
-                      </View>
-
-                      {/* Invisible full overlay input for smooth typing */}
-                      <TextInput
-                        ref={otpInputRef}
-                        style={styles.digitHiddenInput}
-                        keyboardType="number-pad"
-                        maxLength={6}
-                        value={otpCode}
-                        onChangeText={(val) => {
-                          setOtpCode(val.replace(/\D/g, ''));
-                        }}
-                        caretHidden
-                        autoFocus
-                      />
-                    </View>
-
-                    {/* Verify Action Button */}
-                    <TouchableOpacity
-                      style={[
-                        styles.primaryGradientBtnWrapper,
-                        (otpCode.length !== 6 || isCheckingProfile) && styles.btnDisabled,
-                        { marginTop: 16 }
-                      ]}
-                      onPress={handleVerifyAndContinueStep1}
-                      disabled={otpCode.length !== 6 || isCheckingProfile}
-                      activeOpacity={0.85}
-                    >
-                      <LinearGradient
-                        colors={
-                          otpCode.length === 6 && !isCheckingProfile
-                            ? ['#0747a6', '#0070d2', '#00a3c4']
-                            : ['#cbd5e1', '#cbd5e1']
-                        }
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={styles.primaryGradientBtn}
-                      >
-                        {isCheckingProfile ? (
-                          <View style={styles.btnLoadingRow}>
-                            <ActivityIndicator size="small" color="#ffffff" />
-                            <Text style={styles.btnText}>  Verifying Pass Token...</Text>
-                          </View>
-                        ) : (
-                          <Text style={styles.btnText}>Verify & Continue ➔</Text>
-                        )}
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {/* Back to Mascot Welcome Screen */}
-                <TouchableOpacity
-                  style={styles.backBtnFullWidth}
-                  onPress={() => setStep(0)}
-                >
-                  <Text style={styles.backBtnFullWidthText}>← Back to Welcome</Text>
-                </TouchableOpacity>
-              </View>
+            </View>
+              <TouchableOpacity style={styles.backBtnFullWidth} onPress={() => { googleController.current?.abort(); setStep(0); }}><Text style={styles.backBtnFullWidthText}>← Back to Welcome</Text></TouchableOpacity>
             </View>
           )}
 
           {/* ========================================================================= */}
-          {/* STEP 2: COMPLETE YOUR PROFILE (NEW USERS)                                */}
+          {/* STEP 3: COMPLETE YOUR PROFILE (NEW USERS)                                */}
           {/* ========================================================================= */}
           {step === 2 && (
-            <View>
-              {/* Progress Tracker */}
-              <View style={styles.progressContainer}>
-                <View style={styles.progressBarsRow}>
-                  <View style={[styles.progressBarSegment, styles.progressBarCompleted]} />
-                  <View style={[styles.progressBarSegment, styles.progressBarActive]} />
-                  <View style={styles.progressBarSegment} />
-                  <View style={styles.progressBarSegment} />
-                </View>
-                <Text style={styles.progressLabel}>STEP 2 OF 4 • PROFILE & ROLE</Text>
-              </View>
+            <View style={[styles.profileSection, { flex: 1 }]}>
+              <SetupProgress current={2} total={userType === 'seller' ? 5 : 4} label="YOUR CAMPUS" />
+              <CampusSelectionScreen selectedId={selectedUniversity} onSelect={id => { if (id === 'sou') setSelectedUniversity(id); }}
+                onContinue={() => setStep(3)} onBack={() => setStep(1)} />
+            </View>
+          )}
 
-              <View style={styles.contentCard}>
+          {step === 3 && (
+            <View style={styles.profileSection}>
+              {/* Progress Tracker */}
+              <SetupProgress current={3} total={userType === 'seller' ? 5 : 4} label="PROFILE & ROLE" />
+
+              <View style={[styles.contentCard, styles.profileCard]}>
                 <View style={styles.cardHeader}>
                   <View style={styles.cardIconBox}>
-                    <Text style={styles.cardIconText}>👤</Text>
+                    <Svg width={24} height={24} viewBox="0 0 24 24" aria-hidden><Path d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM4 21v-2a8 8 0 0 1 16 0v2" fill="none" stroke="#ffb313" strokeWidth={1.8} strokeLinecap="round" /></Svg>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.cardTitle}>Your Name & Role</Text>
+                    <Text style={styles.cardTitle}>Complete your profile</Text>
                     <Text style={styles.cardSubtitle}>
-                      Personalize your identity and choose how you order on campus.
+                      A few details to make SkipQ yours.
                     </Text>
                   </View>
                 </View>
 
                 {/* Full Name Input */}
-                <Text style={styles.inputSectionLabel}>YOUR FULL NAME *</Text>
-                <View style={styles.textInputBox}>
-                  <Text style={styles.inputLeadingIcon}>✍️</Text>
+                <Text style={styles.profileLabel}>YOUR FULL NAME *</Text>
+                <View style={styles.profileNameBox}>
                   <TextInput
-                    style={styles.textInputField}
+                    style={styles.profileInputText} accessibilityLabel="Full name"
                     placeholder="e.g. Satyam Pandey"
                     placeholderTextColor="#94a3b8"
                     value={name}
@@ -764,111 +413,41 @@ export default function OnboardingFlow() {
                   />
                 </View>
 
-                <Text style={[styles.inputSectionLabel, { marginTop: 16 }]}>SELECT YOUR CAMPUS ROLE</Text>
+                    <Text style={styles.profileLabel}>GOOGLE EMAIL · LINKED</Text>
+                <TextInput style={styles.profileInput} value={email} editable={false} accessibilityLabel="Linked Google email" />
+                <Text style={styles.profileLabel}>PHONE NUMBER *</Text>
+                <View style={styles.profilePhoneBox}>
+                  <Text style={styles.profileCountryCode}>+91</Text>
+                  <TextInput style={styles.profilePhoneInput} value={phone} onChangeText={value => setPhone(value.replace(/\D/g, '').slice(0, 10))} keyboardType="phone-pad" maxLength={10} placeholder="10-digit mobile number" placeholderTextColor="#94a3b8" editable={!isExistingUser} accessibilityLabel="Phone number" />
+                </View>
+                <Text style={styles.extraFieldHint}>One number per account. Your email and phone are fixed after saving.</Text>
 
-                {/* 1. Student / Scholar Role Card */}
-                <TouchableOpacity
-                  style={[styles.roleCard, userType === 'student' && styles.roleCardActive]}
-                  onPress={() => setUserType('student')}
-                  activeOpacity={0.8}
-                >
-                  <View style={[styles.roleIconCircle, { backgroundColor: '#fef3c7' }]}>
-                    <Text style={styles.roleEmoji}>🎓</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.roleHeaderRow}>
-                      <Text style={styles.roleTitle}>Student / Scholar</Text>
-                      <View style={styles.badgeStudent}>
-                        <Text style={styles.badgeStudentText}>MOST POPULAR</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.roleDescription}>
-                      Browse live canteen menus, check queue times, and collect orders with zero queue using digital tokens.
-                    </Text>
-                  </View>
-                  {userType === 'student' && (
-                    <View style={styles.roleCheckCircle}>
-                      <Text style={styles.roleCheckMark}>✓</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
+                <Text style={styles.profileLabel}>SELECT YOUR CAMPUS ROLE</Text>
 
-                {/* 2. Faculty / University Staff */}
-                <TouchableOpacity
-                  style={[styles.roleCard, userType === 'faculty' && styles.roleCardActive]}
-                  onPress={() => setUserType('faculty')}
-                  activeOpacity={0.8}
-                >
-                  <View style={[styles.roleIconCircle, { backgroundColor: '#e0f2fe' }]}>
-                    <Text style={styles.roleEmoji}>👨‍🏫</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.roleHeaderRow}>
-                      <Text style={styles.roleTitle}>Faculty / Staff</Text>
-                      <View style={styles.badgeFaculty}>
-                        <Text style={styles.badgeFacultyText}>EXPRESS PASS</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.roleDescription}>
-                      Priority canteen handoffs and optional direct room delivery between lectures and labs.
-                    </Text>
-                  </View>
-                  {userType === 'faculty' && (
-                    <View style={styles.roleCheckCircle}>
-                      <Text style={styles.roleCheckMark}>✓</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-
-                {/* 3. Canteen Operator / Merchant */}
-                <TouchableOpacity
-                  style={[styles.roleCard, userType === 'seller' && styles.roleCardActive]}
-                  onPress={() => setUserType('seller')}
-                  activeOpacity={0.8}
-                >
-                  <View style={[styles.roleIconCircle, { backgroundColor: '#dcfce7' }]}>
-                    <Text style={styles.roleEmoji}>🏪</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.roleHeaderRow}>
-                      <Text style={styles.roleTitle}>Canteen Staff / Merchant</Text>
-                      <View style={styles.badgeMerchant}>
-                        <Text style={styles.badgeMerchantText}>KDS POS</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.roleDescription}>
-                      Manage live orders, toggle dish availability, and verify pickups with 4-digit PINs.
-                    </Text>
-                  </View>
-                  {userType === 'seller' && (
-                    <View style={styles.roleCheckCircle}>
-                      <Text style={styles.roleCheckMark}>✓</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
+                <CampusRoleSelect value={userType} onChange={setUserType} disabled={isExistingUser || isSavingProfile} />
 
                 {/* Dynamic Student Fields */}
                 {userType === 'student' && (
-                  <View style={styles.extraRoleDetailsCard}>
-                    <Text style={styles.inputSectionLabel}>STUDENT ENROLLMENT / ROLL NUMBER (OPTIONAL)</Text>
+                  <View style={styles.profileRoleDetails}>
+                <Text style={styles.profileLabel}>ENROLLMENT NUMBER · OPTIONAL</Text>
                     <TextInput
-                      style={styles.borderedInput}
-                      placeholder="Enter Enrollment No (leave empty if none)"
+                      style={styles.profileInput}
+                      placeholder="Your enrollment number"
                       placeholderTextColor="#94a3b8"
                       value={rollNo}
                       onChangeText={setRollNo}
                       autoCapitalize="characters"
                     />
-                    <Text style={styles.extraFieldHint}>Optional: Used for campus identity verification.</Text>
+                    <Text style={styles.extraFieldHint}>You can add this later.</Text>
                   </View>
                 )}
 
                 {/* Dynamic Faculty Fields */}
                 {userType === 'faculty' && (
-                  <View style={styles.extraRoleDetailsCard}>
-                    <Text style={styles.inputSectionLabel}>FACULTY / STAFF ID (OPTIONAL)</Text>
+                  <View style={styles.profileRoleDetails}>
+                    <Text style={styles.profileLabel}>FACULTY / STAFF ID (OPTIONAL)</Text>
                     <TextInput
-                      style={styles.borderedInput}
+                      style={styles.profileInput}
                       placeholder="e.g. FAC-CS-104 or Employee ID"
                       placeholderTextColor="#94a3b8"
                       value={facultyId}
@@ -876,56 +455,41 @@ export default function OnboardingFlow() {
                       autoCapitalize="characters"
                     />
 
-                    <Text style={styles.inputSectionLabel}>ROOM / CABIN NUMBER (FOR DIRECT ROOM DELIVERY) *</Text>
+                    <Text style={styles.profileLabel}>ROOM / CABIN NUMBER *</Text>
                     <TextInput
-                      style={[styles.borderedInput, { borderColor: '#00a3c4' }]}
+                      style={styles.profileInput}
                       placeholder="e.g. Block B, Staff Room 204 or Cabin 12"
                       placeholderTextColor="#94a3b8"
                       value={roomNumber}
                       onChangeText={setRoomNumber}
                     />
 
-                    <View style={styles.featureCalloutBox}>
-                      <Text style={styles.featureCalloutEmoji}>🚪</Text>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.featureCalloutTitle}>Direct Campus Room Delivery</Text>
-                        <Text style={styles.featureCalloutDesc}>
-                          Canteen runners will deliver hot orders straight to your faculty room or cabin between classes!
-                        </Text>
-                      </View>
-                    </View>
                   </View>
                 )}
 
                 {/* Action Buttons */}
-                <View style={styles.dualBtnRow}>
+                <View style={styles.profileActions}>
                   <TouchableOpacity
                     style={styles.secondaryBtn}
-                    onPress={() => setStep(1)}
+                    onPress={() => setStep(2)}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.secondaryBtnText}>← Back</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.dualBtnPrimaryWrapper, !name.trim() && styles.btnDisabled]}
-                    disabled={!name.trim()}
-                    onPress={() => {
-                      if (!name.trim()) {
-                        Alert.alert('Name Required', 'Please enter your full name to proceed.');
-                        return;
-                      }
-                      setStep(3);
-                    }}
+                    style={[styles.dualBtnPrimaryWrapper, (!name.trim() || phone.length !== 10 || isSavingProfile) && styles.btnDisabled]}
+                    disabled={!name.trim() || phone.length !== 10 || isSavingProfile}
+                    onPress={handleProfileContinue}
                     activeOpacity={0.85}
                   >
                     <LinearGradient
-                      colors={name.trim() ? ['#0747a6', '#0070d2', '#00a3c4'] : ['#cbd5e1', '#cbd5e1']}
+                      colors={name.trim() ? ['#ffb313', '#ffb313', '#ffb313'] : ['#cbd5e1', '#cbd5e1']}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 0 }}
                       style={styles.primaryGradientBtn}
                     >
-                      <Text style={styles.btnText}>Continue to Location ➔</Text>
+                      {isSavingProfile ? <ActivityIndicator color="white" /> : <Text style={styles.btnText}>Continue →</Text>}
                     </LinearGradient>
                   </TouchableOpacity>
                 </View>
@@ -934,30 +498,22 @@ export default function OnboardingFlow() {
           )}
 
           {/* ========================================================================= */}
-          {/* STEP 3: LOCATION PERMISSIONS & RADAR                                      */}
+          {/* STEP 4: LOCATION PERMISSIONS & RADAR                                      */}
           {/* ========================================================================= */}
-          {step === 3 && (
+          {step === 4 && (
             <View>
               {/* Progress Tracker */}
-              <View style={styles.progressContainer}>
-                <View style={styles.progressBarsRow}>
-                  <View style={[styles.progressBarSegment, styles.progressBarCompleted]} />
-                  <View style={[styles.progressBarSegment, styles.progressBarCompleted]} />
-                  <View style={[styles.progressBarSegment, styles.progressBarActive]} />
-                  <View style={styles.progressBarSegment} />
-                </View>
-                <Text style={styles.progressLabel}>STEP 3 OF 4 • RADAR GEOFENCE</Text>
-              </View>
+              <SetupProgress current={4} total={userType === 'seller' ? 5 : 4} label="LOCATION" />
 
               <View style={styles.contentCard}>
                 <View style={styles.cardHeader}>
                   <View style={styles.cardIconBox}>
-                    <Text style={styles.cardIconText}>📍</Text>
+                    <InterfaceIcon name="location" size={24} color="#ffb313" />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.cardTitle}>Campus Radar Geofence</Text>
                     <Text style={styles.cardSubtitle}>
-                      SkipQ uses live hardware telemetry to confirm you are within 300m of the canteen.
+                      Allow location access to check whether you are within 500m of the canteen.
                     </Text>
                   </View>
                 </View>
@@ -967,18 +523,18 @@ export default function OnboardingFlow() {
                   <View style={styles.radarOuterCircle}>
                     <View style={styles.radarMiddleCircle}>
                       <View style={styles.radarInnerCircle}>
-                        <Text style={styles.radarPinEmoji}>📍</Text>
+                        <InterfaceIcon name="location" size={30} color="#090b0d" />
                       </View>
                     </View>
                   </View>
-                  <Text style={styles.radarStatusText}>SILVER OAK UNIVERSITY • ACTIVE RADAR</Text>
+                  <Text style={styles.radarStatusText}>SILVER OAK UNIVERSITY</Text>
                 </View>
 
                 {/* Feature Benefit Highlights */}
                 <View style={styles.featureHighlightsList}>
                   <View style={styles.highlightRow}>
                     <View style={styles.highlightIconBadge}>
-                      <Text style={styles.highlightIcon}>🎯</Text>
+                      <InterfaceIcon name="location" size={21} color="#ffb313" />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.highlightTitle}>Campus Auto-Discovery</Text>
@@ -990,19 +546,19 @@ export default function OnboardingFlow() {
 
                   <View style={styles.highlightRow}>
                     <View style={styles.highlightIconBadge}>
-                      <Text style={styles.highlightIcon}>🛡️</Text>
+                      <InterfaceIcon name="lock" size={21} color="#ffb313" />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.highlightTitle}>300m Zero-Queue Proximity Lock</Text>
+                      <Text style={styles.highlightTitle}>500m Zero-Queue Proximity Lock</Text>
                       <Text style={styles.highlightDesc}>
-                        Guarantees your order begins cooking only when you are nearby so meals stay fresh and hot.
+                        Ordering is available within 500m of the canteen. Allow location access to order.
                       </Text>
                     </View>
                   </View>
 
                   <View style={styles.highlightRow}>
                     <View style={styles.highlightIconBadge}>
-                      <Text style={styles.highlightIcon}>⚡</Text>
+                      <InterfaceIcon name="bolt" size={21} color="#ffb313" />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.highlightTitle}>Zero-Wait Digital Pickup Pass</Text>
@@ -1021,7 +577,7 @@ export default function OnboardingFlow() {
                   activeOpacity={0.85}
                 >
                   <LinearGradient
-                    colors={['#0747a6', '#0070d2', '#00a3c4']}
+                    colors={['#ffb313', '#ffb313']}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                     style={styles.primaryGradientBtn}
@@ -1032,7 +588,7 @@ export default function OnboardingFlow() {
                         <Text style={styles.btnText}>  Detecting GPS Telemetry...</Text>
                       </View>
                     ) : (
-                      <Text style={styles.btnText}>📡 Grant GPS & Enter Campus ➔</Text>
+                      <Text style={styles.btnText}>Grant GPS & Enter Campus</Text>
                     )}
                   </LinearGradient>
                 </TouchableOpacity>
@@ -1040,16 +596,16 @@ export default function OnboardingFlow() {
                 {/* Skip Option */}
                 <TouchableOpacity style={styles.skipBtnContainer} onPress={handleSkipLocation}>
                   <Text style={styles.skipBtnLinkText}>
-                    Use Default Campus Coordinates (Ahmedabad)
+                    Browse without location (ordering needs GPS)
                   </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.backBtnFullWidth}
-                  onPress={() => setStep(isExistingUser ? 1 : 2)}
+                  onPress={() => setStep(3)}
                 >
                   <Text style={styles.backBtnFullWidthText}>
-                    ← Back to {isExistingUser ? 'Phone Login' : 'Profile Details'}
+                    ← Back to Profile Details
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1057,109 +613,44 @@ export default function OnboardingFlow() {
           )}
 
           {/* ========================================================================= */}
-          {/* STEP 4: CANTEEN STALL SETUP (SELLERS ONLY)                                */}
+          {/* STEP 5: CANTEEN STALL SETUP (SELLERS ONLY)                                */}
           {/* ========================================================================= */}
-          {step === 4 && (
-            <View>
-              {/* Progress Tracker */}
-              <View style={styles.progressContainer}>
-                <View style={styles.progressBarsRow}>
-                  <View style={[styles.progressBarSegment, styles.progressBarCompleted]} />
-                  <View style={[styles.progressBarSegment, styles.progressBarCompleted]} />
-                  <View style={[styles.progressBarSegment, styles.progressBarCompleted]} />
-                  <View style={[styles.progressBarSegment, styles.progressBarActive]} />
-                </View>
-                <Text style={styles.progressLabel}>STEP 4 OF 4 • CANTEEN REGISTRY</Text>
-              </View>
-
-              <View style={styles.contentCard}>
+          {step === 5 && (
+            <View style={styles.profileSection}>
+              <SetupProgress current={5} total={5} label="CANTEEN SETUP" />
+              <View style={[styles.contentCard, styles.sellerSetupCard]}>
                 <View style={styles.cardHeader}>
                   <View style={styles.cardIconBox}>
-                    <Text style={styles.cardIconText}>🏪</Text>
+                    <Svg width={24} height={24} viewBox="0 0 24 24" aria-hidden>
+                      <Path d="M4 10v10h16V10M3 10l2-6h14l2 6M3 10c0 3 4 3 4 0 0 3 5 3 5 0 0 3 5 3 5 0 0 3 4 3 4 0M9 20v-6h6v6" fill="none" stroke="#0c52a3" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" />
+                    </Svg>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.cardTitle}>Register Canteen Counter</Text>
-                    <Text style={styles.cardSubtitle}>
-                      Set up your food stall to start receiving live orders from students & faculty.
-                    </Text>
+                    <Text style={styles.cardTitle}>Set up your canteen</Text>
+                    <Text style={styles.cardSubtitle}>A few details to create your seller workspace.</Text>
                   </View>
                 </View>
-
-                {/* Selected Institution Banner */}
-                <View style={styles.institutionBanner}>
-                  <Text style={styles.institutionBannerLabel}>ACTIVE INSTITUTION</Text>
-                  <Text style={styles.institutionBannerTitle}>
-                    📍 {selectedCampusObj?.name || 'Silver Oak University'}
-                  </Text>
+                <View style={styles.sellerCampus}>
+                  <Text style={styles.sellerLabel}>SELECTED CAMPUS</Text>
+                  <Text style={styles.sellerCampusName}>{selectedCampusObj?.name || 'Silver Oak University'}</Text>
                 </View>
-
-                {/* Vendor Form Box */}
-                <View style={styles.vendorFormContainer}>
-                  <Text style={styles.inputSectionLabel}>CANTEEN / STALL NAME *</Text>
-                  <TextInput
-                    style={styles.borderedInput}
-                    placeholder="e.g. Silver Oak Central Food Court"
-                    placeholderTextColor="#94a3b8"
-                    value={stallName}
-                    onChangeText={setStallName}
-                  />
-
-                  <Text style={styles.inputSectionLabel}>STALL LOCATION ON CAMPUS</Text>
-                  <TextInput
-                    style={styles.borderedInput}
-                    placeholder="e.g. Central Courtyard, Opp. Block A"
-                    placeholderTextColor="#94a3b8"
-                    value={stallLocation}
-                    onChangeText={setStallLocation}
-                  />
-
-                  <Text style={styles.inputSectionLabel}>MERCHANT UPI ID (FOR DIRECT SETTLEMENTS)</Text>
-                  <TextInput
-                    style={styles.borderedInput}
-                    placeholder="e.g. canteen.merchant@upi"
-                    placeholderTextColor="#94a3b8"
-                    value={merchantUpi}
-                    onChangeText={setMerchantUpi}
-                    autoCapitalize="none"
-                  />
-
-                  {/* KDS Callout */}
-                  <View style={styles.featureCalloutBox}>
-                    <Text style={styles.featureCalloutEmoji}>⚡</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.featureCalloutTitle}>Live Kitchen Display System (KDS)</Text>
-                      <Text style={styles.featureCalloutDesc}>
-                        You will manage live prep queues, toggle sold-out dishes, and verify 4-digit pickup PINs from your vendor POS.
-                      </Text>
-                    </View>
-                  </View>
+                <Text style={styles.sellerLabel}>CANTEEN NAME *</Text>
+                <TextInput accessibilityLabel="Canteen name" style={styles.sellerInput} placeholder="Your canteen or stall name" placeholderTextColor="#94a3b8" value={stallName} onChangeText={setStallName} maxLength={100} />
+                <Text style={styles.sellerLabel}>LOCATION ON CAMPUS</Text>
+                <TextInput accessibilityLabel="Location on campus" style={styles.sellerInput} placeholder="e.g. Block A, ground floor" placeholderTextColor="#94a3b8" value={stallLocation} onChangeText={setStallLocation} maxLength={150} />
+                <Text style={styles.sellerLabel}>UPI ID ? OPTIONAL</Text>
+                <TextInput accessibilityLabel="Merchant UPI ID" style={styles.sellerInput} placeholder="canteen@upi" placeholderTextColor="#94a3b8" value={merchantUpi} onChangeText={setMerchantUpi} autoCapitalize="none" autoCorrect={false} />
+                <Text style={styles.sellerHint}>Customers pay you directly. Leave this empty to accept cash only.</Text>
+                <View style={styles.sellerNotice}>
+                  <Text style={styles.sellerNoticeTitle}>What happens next?</Text>
+                  <Text style={styles.sellerNoticeCopy}>Open your seller workspace after submitting. Orders and menu publishing unlock once the platform owner approves your canteen.</Text>
                 </View>
-
-                {/* Action Buttons */}
-                <View style={styles.dualBtnRow}>
-                  <TouchableOpacity
-                    style={styles.secondaryBtn}
-                    onPress={() => setStep(3)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.secondaryBtnText}>← Back</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.dualBtnPrimaryWrapper}
-                    onPress={handleFinishOnboarding}
-                    activeOpacity={0.85}
-                  >
-                    <LinearGradient
-                      colors={['#0747a6', '#0070d2', '#00a3c4']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.primaryGradientBtn}
-                    >
-                      <Text style={styles.btnText}>Launch Canteen KDS 🚀</Text>
-                    </LinearGradient>
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity accessibilityRole="button" disabled={isSavingProfile} style={[styles.sellerSubmit, isSavingProfile && styles.btnDisabled]} onPress={handleFinishOnboarding} activeOpacity={0.85}>
+                  {isSavingProfile ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.btnText}>Create seller workspace</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity accessibilityRole="button" style={styles.backBtnFullWidth} onPress={() => setStep(4)}>
+                  <Text style={styles.backBtnFullWidthText}>Back</Text>
+                </TouchableOpacity>
               </View>
             </View>
           )}
@@ -1169,16 +660,54 @@ export default function OnboardingFlow() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
+  setupLogo: { width: 40, height: 40, borderRadius: 13, backgroundColor: '#ffb313', alignItems: 'center', justifyContent: 'center' },
+  setupLogoLetter: { color: '#090b0d', fontSize: 24, fontWeight: '900' },
+  modeButton: { width: 40, height: 40, borderRadius: 13, backgroundColor: '#17191d', alignItems: 'center', justifyContent: 'center' },
+  sellerSetupCard: { padding: 20, borderWidth: 1, borderRadius: 24 },
+  sellerCampus: { backgroundColor: '#f0f7ff', padding: 14, borderRadius: 12, marginBottom: 22 },
+  sellerLabel: { color: '#b6bac2', fontSize: 10, fontWeight: '700', letterSpacing: 0.7, marginBottom: 8 },
+  sellerCampusName: { color: '#ffb313', fontSize: 14, fontWeight: '700' },
+  sellerInput: { backgroundColor: '#121417', borderColor: '#26292e', borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, height: 48, fontSize: 14, color: '#f5f4f0', marginBottom: 18 },
+  sellerHint: { color: '#a5a9b2', fontSize: 11, lineHeight: 17, marginTop: -10, marginBottom: 20 },
+  sellerNotice: { backgroundColor: '#f7f9fc', borderRadius: 12, padding: 14, marginBottom: 20 },
+  sellerNoticeTitle: { color: '#f5f4f0', fontSize: 12, fontWeight: '700', marginBottom: 5 },
+  sellerNoticeCopy: { color: '#a5a9b2', fontSize: 12, lineHeight: 19 },
+  sellerSubmit: { minHeight: 50, borderRadius: 14, backgroundColor: '#ffb313', alignItems: 'center', justifyContent: 'center', padding: 12 },
+  profileSection: { width: '100%', maxWidth: 520, alignSelf: 'center' },
+  profileCard: { padding: 20, borderRadius: 24, borderWidth: 1 },
+  profileLabel: { color: '#b6bac2', fontSize: 11, lineHeight: 16, fontWeight: '700', letterSpacing: 0.6, marginTop: 18, marginBottom: 7 },
+  profileInput: { minHeight: 50, backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: '#f5f4f0', fontSize: 15, lineHeight: 22 },
+  profileNameBox: { minHeight: 50, backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e', borderRadius: 12, paddingHorizontal: 14, justifyContent: 'center' },
+  profileInputText: { fontSize: 15, lineHeight: 22, paddingVertical: 12, color: '#f5f4f0' },
+  profilePhoneBox: { minHeight: 50, flexDirection: 'row', alignItems: 'center', backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e', borderRadius: 12, paddingHorizontal: 14 },
+  profileCountryCode: { fontSize: 15, lineHeight: 22, fontWeight: '600', color: '#f5f4f0', paddingRight: 12, marginRight: 12, borderRightWidth: 1, borderRightColor: '#26292e' },
+  profilePhoneInput: { flex: 1, minWidth: 0, fontSize: 15, lineHeight: 22, paddingVertical: 12, color: '#f5f4f0' },
+  profileRoleDetails: { marginTop: 2 },
+  profileActions: { flexDirection: 'row', gap: 12, marginTop: 24 },
+  loginScroll: { flexGrow: 1, paddingBottom: 24 },
+  loginSection: { width: '100%', maxWidth: 440, alignSelf: 'center', marginVertical: 'auto', paddingVertical: 20 },
+  loginCard: { backgroundColor: '#121417', borderRadius: 28, paddingHorizontal: 24, paddingVertical: 30, borderWidth: 1, borderColor: '#26292e', alignItems: 'center', shadowColor: '#17395c', shadowOpacity: 0.06, shadowRadius: 24, shadowOffset: { width: 0, height: 10 }, elevation: 2 },
+  loginIcon: { width: 64, height: 64, borderRadius: 22, backgroundColor: '#17191d', alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
+  loginEyebrow: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5, color: '#ffb313', textAlign: 'center', marginBottom: 10 },
+  loginTitle: { fontSize: 28, lineHeight: 36, fontWeight: '800', letterSpacing: -0.8, color: '#f5f4f0', textAlign: 'center' },
+  loginCopy: { fontSize: 14, lineHeight: 22, color: '#a5a9b2', textAlign: 'center', marginTop: 12, marginBottom: 28 },
+  googleButton: { width: '100%', minHeight: 54, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 14, backgroundColor: '#121417', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 14 },
+  googleButtonText: { fontSize: 15, lineHeight: 22, fontWeight: '600', color: '#f5f4f0', flexShrink: 1 },
+  loginHint: { color: '#a5a9b2', fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 14 },
+  loginFooter: { width: '100%', borderTopWidth: 1, borderTopColor: '#26292e', paddingTop: 22, marginTop: 26 },
+  loginFooterTitle: { color: '#f5f4f0', fontSize: 13, fontWeight: '700', textAlign: 'center' },
+  loginFooterCopy: { color: '#a5a9b2', fontSize: 12, lineHeight: 19, textAlign: 'center', marginTop: 6 },
   container: {
     flex: 1,
-    backgroundColor: '#edf3f8',
+    backgroundColor: '#090b0d',
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ? StatusBar.currentHeight + 6 : 28) : 6,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 6,
-    paddingBottom: 40,
+    width: '100%', maxWidth: 380, alignSelf: 'center',
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 24,
   },
 
   /* Top Minimal Header */
@@ -1210,19 +739,19 @@ const styles = StyleSheet.create({
     height: 44,
   },
   headerBrandTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 21,
     fontWeight: '900',
     letterSpacing: -0.4,
   },
   headerCampusSubtitle: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     fontWeight: '600',
     marginTop: 1,
   },
   campusPillBadge: {
-    backgroundColor: '#e0f2fe',
+    backgroundColor: '#17191d',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 10,
@@ -1230,7 +759,7 @@ const styles = StyleSheet.create({
     borderColor: '#bae6fd',
   },
   campusPillText: {
-    color: '#0284c7',
+    color: '#ffb313',
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 0.5,
@@ -1274,7 +803,7 @@ const styles = StyleSheet.create({
   },
   mascotSpeechPill: {
     marginTop: 12,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 18,
@@ -1287,7 +816,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   mascotSpeechText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 0.2,
@@ -1295,7 +824,7 @@ const styles = StyleSheet.create({
 
   welcomeHeaderBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: '#e0f2fe',
+    backgroundColor: '#17191d',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -1304,20 +833,20 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   welcomeHeaderBadgeText: {
-    color: '#0284c7',
+    color: '#ffb313',
     fontSize: 9.5,
     fontWeight: '900',
     letterSpacing: 0.8,
   },
   welcomeHeroHeading: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 26,
     fontWeight: '900',
     letterSpacing: -0.6,
     marginBottom: 6,
   },
   welcomeHeroSub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 13,
     lineHeight: 18.5,
     fontWeight: '500',
@@ -1328,12 +857,12 @@ const styles = StyleSheet.create({
   miniMascotGreeting: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 18,
     padding: 12,
     marginBottom: 14,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     gap: 12,
   },
   miniMascotImage: {
@@ -1341,12 +870,12 @@ const styles = StyleSheet.create({
     height: 48,
   },
   miniMascotTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 14.5,
     fontWeight: '900',
   },
   miniMascotSub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 11.5,
     marginTop: 2,
     fontWeight: '500',
@@ -1369,13 +898,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#cbd5e1',
   },
   progressBarActive: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
   },
   progressBarCompleted: {
     backgroundColor: '#00a3c4',
   },
   progressLabel: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 10.5,
     fontWeight: '900',
     letterSpacing: 0.8,
@@ -1383,11 +912,11 @@ const styles = StyleSheet.create({
 
   /* Main Floating Content Card */
   contentCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 24,
     padding: 20,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     shadowColor: '#0c52a3',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.08,
@@ -1414,13 +943,13 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   cardTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 18,
     fontWeight: '900',
     letterSpacing: -0.3,
   },
   cardSubtitle: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     lineHeight: 16.5,
     fontWeight: '500',
@@ -1429,7 +958,7 @@ const styles = StyleSheet.create({
 
   /* Form Labels & Text Inputs */
   inputSectionLabel: {
-    color: '#475569',
+    color: '#b6bac2',
     fontSize: 10.5,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -1437,7 +966,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   inputSectionLabelNoMargin: {
-    color: '#475569',
+    color: '#b6bac2',
     fontSize: 10.5,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -1445,10 +974,10 @@ const styles = StyleSheet.create({
   phoneInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#121417',
     borderRadius: 16,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     paddingHorizontal: 14,
     height: 54,
   },
@@ -1465,7 +994,7 @@ const styles = StyleSheet.create({
     fontSize: 17,
   },
   countryCodeText: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 15,
     fontWeight: '800',
   },
@@ -1477,14 +1006,14 @@ const styles = StyleSheet.create({
   },
   phoneInputField: {
     flex: 1,
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 17,
     fontWeight: '800',
     letterSpacing: 1.5,
     paddingVertical: 0,
   },
   editPhoneBtn: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
@@ -1492,7 +1021,7 @@ const styles = StyleSheet.create({
     borderColor: '#b9d9f5',
   },
   editPhoneBtnText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 11,
     fontWeight: '800',
   },
@@ -1515,7 +1044,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   btnText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 14.5,
     fontWeight: '900',
     letterSpacing: 0.3,
@@ -1539,17 +1068,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   secondaryBtn: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#17191d',
     height: 52,
     paddingHorizontal: 22,
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   secondaryBtnText: {
-    color: '#475569',
+    color: '#b6bac2',
     fontSize: 14,
     fontWeight: '800',
   },
@@ -1566,12 +1095,12 @@ const styles = StyleSheet.create({
 
   /* OTP Verification Elements */
   otpSection: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#121417',
     borderRadius: 18,
     padding: 14,
     marginTop: 14,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   otpHeaderRow: {
     flexDirection: 'row',
@@ -1580,7 +1109,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   resendLink: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -1620,17 +1149,17 @@ const styles = StyleSheet.create({
   digitBox: {
     flex: 1,
     height: 52,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
   },
   digitBoxActive: {
     borderColor: '#0c52a3',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderWidth: 2,
   },
   digitBoxFilled: {
@@ -1638,7 +1167,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#e6f2fb',
   },
   digitBoxChar: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 22,
     fontWeight: '900',
   },
@@ -1647,7 +1176,7 @@ const styles = StyleSheet.create({
     bottom: 8,
     width: 14,
     height: 2,
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     borderRadius: 1,
   },
   digitHiddenInput: {
@@ -1664,10 +1193,10 @@ const styles = StyleSheet.create({
   textInputBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#121417',
     borderRadius: 16,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     paddingHorizontal: 14,
     height: 52,
     marginBottom: 4,
@@ -1678,21 +1207,21 @@ const styles = StyleSheet.create({
   },
   textInputField: {
     flex: 1,
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 15,
     fontWeight: '700',
     paddingVertical: 0,
   },
   borderedInput: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#121417',
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 14,
     fontWeight: '600',
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     marginBottom: 8,
   },
 
@@ -1700,12 +1229,12 @@ const styles = StyleSheet.create({
   roleCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#121417',
     borderRadius: 18,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     gap: 12,
   },
   roleCardActive: {
@@ -1739,7 +1268,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   roleTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 14.5,
     fontWeight: '900',
   },
@@ -1757,7 +1286,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   badgeFaculty: {
-    backgroundColor: '#e0f2fe',
+    backgroundColor: '#17191d',
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
@@ -1765,7 +1294,7 @@ const styles = StyleSheet.create({
     borderColor: '#bae6fd',
   },
   badgeFacultyText: {
-    color: '#0284c7',
+    color: '#ffb313',
     fontSize: 8.5,
     fontWeight: '900',
   },
@@ -1783,7 +1312,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   roleDescription: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 11.5,
     lineHeight: 16.5,
     fontWeight: '500',
@@ -1792,27 +1321,27 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     alignItems: 'center',
     justifyContent: 'center',
   },
   roleCheckMark: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 13,
     fontWeight: '900',
   },
 
   /* Extra Role Details Boxes */
   extraRoleDetailsCard: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#121417',
     borderRadius: 16,
     padding: 14,
     marginVertical: 10,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   extraFieldHint: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 11,
     marginTop: -2,
     marginBottom: 4,
@@ -1854,7 +1383,7 @@ const styles = StyleSheet.create({
     width: 130,
     height: 130,
     borderRadius: 65,
-    backgroundColor: '#e0f2fe',
+    backgroundColor: '#17191d',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
@@ -1874,7 +1403,7 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#0c52a3',
@@ -1887,7 +1416,7 @@ const styles = StyleSheet.create({
     fontSize: 22,
   },
   radarStatusText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 10.5,
     fontWeight: '900',
     letterSpacing: 0.8,
@@ -1896,13 +1425,13 @@ const styles = StyleSheet.create({
 
   /* Feature Highlight Rows */
   featureHighlightsList: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#121417',
     borderRadius: 18,
     padding: 14,
     marginBottom: 12,
     gap: 12,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   highlightRow: {
     flexDirection: 'row',
@@ -1913,22 +1442,22 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 11,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   highlightIcon: {
     fontSize: 17,
   },
   highlightTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 13,
     fontWeight: '800',
   },
   highlightDesc: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 11.5,
     lineHeight: 16,
     marginTop: 2,
@@ -1940,7 +1469,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   skipBtnLinkText: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     fontWeight: '700',
     textDecorationLine: 'underline',
@@ -1951,7 +1480,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   backBtnFullWidthText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 12.5,
     fontWeight: '800',
   },
@@ -1979,11 +1508,35 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   vendorFormContainer: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#121417',
     borderRadius: 18,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
+  loginCard: { backgroundColor: 'transparent', paddingVertical: 28, alignItems: 'flex-start' },
+  loginEyebrow: { color: '#ffb313', fontSize: 10, letterSpacing: 1.5, fontWeight: '700', marginBottom: 14 },
+  loginTitle: { color: '#f5f4f0', fontSize: 42, lineHeight: 46, letterSpacing: -1.2, fontWeight: '900' },
+  loginCopy: { color: '#a5a9b2', fontSize: 14, lineHeight: 23, marginTop: 16, marginBottom: 25 },
+  googleButton: { width: '100%', minHeight: 54, backgroundColor: '#f5f4f0', borderRadius: 17, flexDirection: 'row', gap: 12, alignItems: 'center', justifyContent: 'center', padding: 12 },
+  googleButtonText: { color: '#090b0d', fontSize: 15, fontWeight: '700' },
+  loginFooter: { backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e', borderRadius: 20, padding: 18, marginTop: 24, width: '100%' },
+  loginFooterTitle: { color: '#f5f4f0', fontSize: 14, fontWeight: '700' },
+  loginFooterCopy: { color: '#a5a9b2', fontSize: 12, lineHeight: 19, marginTop: 7 },
+  contentCard: { backgroundColor: 'transparent', padding: 0, borderWidth: 0 },
+  profileCard: { padding: 0, borderWidth: 0 },
+  progressBarCompleted: { flex: 1, height: 4, borderRadius: 2, backgroundColor: '#ffb313' },
+  progressBarActive: { flex: 1, height: 4, borderRadius: 2, backgroundColor: '#ffb313' },
+
+  radarOuterCircle: { width: 180, height: 180, borderRadius: 90, borderWidth: 1, borderColor: '#26292e', backgroundColor: '#121417', alignItems: 'center', justifyContent: 'center' },
+  radarMiddleCircle: { width: 126, height: 126, borderRadius: 63, borderWidth: 1, borderColor: '#69500e', backgroundColor: '#211a07', alignItems: 'center', justifyContent: 'center' },
+  radarInnerCircle: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#ffb313', alignItems: 'center', justifyContent: 'center' },
+
+  cardTitle: { color: '#f5f4f0', fontSize: 28, lineHeight: 32, fontWeight: '800', letterSpacing: -0.7 },
+
+  progressBarSegment: { flex: 1, height: 4, borderRadius: 2, backgroundColor: '#26292e' },
+  progressLabel: { color: '#ffb313', fontSize: 9, fontWeight: '700', letterSpacing: 1.4, marginTop: 10 },
+  headerBrandTitle: { color: '#f5f4f0', fontSize: 21, fontWeight: '700', letterSpacing: -0.5 },
+
 });

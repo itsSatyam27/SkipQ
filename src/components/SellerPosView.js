@@ -1,3 +1,4 @@
+import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
 import React, { useContext, useState, useMemo, useEffect } from 'react';
 import {
   StyleSheet,
@@ -19,20 +20,29 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import { AppContext } from '../context/AppContext';
+import InterfaceIcon from './InterfaceIcon';
 import { announceTokenReady } from '../utils/audio';
+import { selectOwnedCanteen } from '../services/sellerCanteen.cjs';
 
 export default function SellerPosView({
   onOpenAddItemModal,
   onOpenEditItemModal,
-  onOpenCreateCanteenModal
+  onOpenCreateCanteenModal,
+  selectedTab,
+  onTabChange,
+  onOpenSettings
 }) {
+  const styles = useSellerStyles(baseStyles);
+  const { light } = useSellerTheme();
   const {
     canteens,
     sellerShopId,
+    sellerSetupStatus,
+    sellerSetupError,
+    retrySellerSetup,
     setSellerShopId,
     userProfile,
     toggleItemStock,
-    updateItemPrice,
     deleteMenuItem,
     deleteCanteen,
     orders,
@@ -48,7 +58,9 @@ export default function SellerPosView({
   } = useContext(AppContext);
 
   const [permission, requestPermission] = useCameraPermissions();
-  const [activeTab, setActiveTab] = useState('orders'); // 'orders', 'menu', 'analytics'
+  const [localTab, setLocalTab] = useState('orders');
+  const activeTab = selectedTab || localTab;
+  const setActiveTab = tab => { if (onTabChange) onTabChange(tab); else setLocalTab(tab); }; // 'orders', 'menu', 'analytics'
   const [orderFilter, setOrderFilter] = useState('active'); // 'active', 'completed'
   const [verifyModalVisible, setVerifyModalVisible] = useState(false);
   const [qrScanModalVisible, setQrScanModalVisible] = useState(false);
@@ -95,10 +107,11 @@ export default function SellerPosView({
 
     if (matchedOrder) {
       try {
-        const pinToUse = scannedPin || matchedOrder.pickupPin || '0000';
+        if (!scannedPin) throw new Error('Scan a pickup pass containing the customer PIN, or enter the PIN manually.');
+        const pinToUse = scannedPin;
         await verifyAndCompleteOrder(matchedOrder.id, pinToUse);
         Alert.alert(
-          '✅ Handover Verified!',
+          ' Handover Verified!',
           `Token #${matchedOrder.tokenNumber} for ${matchedOrder.buyerName || 'Student'} completed successfully.`
         );
         setQrScanModalVisible(false);
@@ -119,53 +132,10 @@ export default function SellerPosView({
   const [menuSearch, setMenuSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
 
-  const campusCanteens = canteens.filter(c => c.universityId === university);
+  const campusCanteens = canteens.filter(c => c.universityId === university && c.ownerId === userProfile?.uid);
   const currentShop = useMemo(() => {
-    // 1. Try to find match by sellerShopId
-    if (sellerShopId) {
-      const match = campusCanteens.find(c => c.id === sellerShopId);
-      if (match) return match;
-    }
-    // 2. Try to find match by owner ID
-    if (userProfile?.uid) {
-      const match = campusCanteens.find(c => c.ownerId === userProfile.uid);
-      if (match) return match;
-    }
-    // 3. Try to match by stall name entered during onboarding
-    if (userProfile?.stallName) {
-      const match = campusCanteens.find(
-        c => c.name && c.name.trim().toLowerCase() === userProfile.stallName.trim().toLowerCase()
-      );
-      if (match) return match;
-      // Synthesize stall from user profile
-      return {
-        id: sellerShopId || `stall-${(userProfile.stallName || 'shop').toLowerCase().replace(/\s+/g, '-')}`,
-        name: userProfile.stallName,
-        location: userProfile.stallLocation || 'Silver Oak University Campus',
-        openingHours: '08:00 AM - 08:00 PM',
-        upiId: userProfile.merchantUpi || 'canteen@upi',
-        phone: userProfile.phone || '+91 98765 43210',
-        status: 'Open',
-        rating: 5.0,
-        currentQueue: 0,
-        avgWaitMins: 5,
-        menu: []
-      };
-    }
-    // 4. Fallback to first campus canteen or a default stall
-    return campusCanteens[0] || {
-      id: sellerShopId || 'shop-vendor',
-      name: userProfile?.name ? `${userProfile.name}'s Canteen` : 'My Campus Canteen',
-      location: 'Silver Oak University Campus',
-      openingHours: '08:00 AM - 08:00 PM',
-      upiId: 'canteen@upi',
-      phone: '+91 98765 43210',
-      status: 'Open',
-      rating: 5.0,
-      currentQueue: 0,
-      avgWaitMins: 5,
-      menu: []
-    };
+    return selectOwnedCanteen(canteens, userProfile?.uid, university, sellerShopId, userProfile?.sellerShopId)
+      || { id: null, name: 'Create your canteen', location: 'Campus', status: 'Closed', menu: [] };
   }, [canteens, university, sellerShopId, userProfile]);
 
   const shopOrders = currentShop ? orders.filter(o => o.shopId === currentShop.id) : [];
@@ -225,15 +195,15 @@ export default function SellerPosView({
   const handleSellerCancel = orderId => {
     Alert.alert(
       'Cancel Student Order',
-      'Are you sure you want to cancel this order? The student will be issued an instant 100% refund.',
+      'Cancel this order? Any confirmed UPI payment must be refunded directly by your canteen.',
       [
         { text: 'Back', style: 'cancel' },
         {
           text: 'Cancel Order',
           style: 'destructive',
           onPress: async () => {
-            const msg = await cancelOrder(orderId, 'seller');
-            Alert.alert('Order Cancelled', `Student refunded. ${msg}`);
+            try { const msg = await cancelOrder(orderId, 'seller'); Alert.alert('Order Cancelled', msg); }
+            catch (error) { Alert.alert('Could not cancel', error.message); }
           }
         }
       ]
@@ -243,18 +213,15 @@ export default function SellerPosView({
   const handleMarkAbandoned = (orderId, buyerName) => {
     Alert.alert(
       'Mark Order Unclaimed / No-Show',
-      `Did ${buyerName} fail to pick up this order? This will forfeit their 10% security deposit and issue a strike & temporary ban penalty.`,
+      `Did ${buyerName} fail to pick up this order? After 45 minutes ready for pickup, this records an unclaimed order for operator review. Any UPI refund is handled by your canteen.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Issue Penalty & Mark Unclaimed',
+          text: 'Mark Unclaimed',
           style: 'destructive',
           onPress: async () => {
-            const { newUnclaimedCount, newBanStatus } = await markOrderAbandoned(orderId);
-            Alert.alert(
-              'No-Show Penalty Applied',
-              `Order marked abandoned. Student strikes: ${newUnclaimedCount}. Status: ${newBanStatus.toUpperCase()}.`
-            );
+            try { await markOrderAbandoned(orderId); Alert.alert('Order marked unclaimed', 'The no-show is recorded for operator review.'); }
+            catch (error) { Alert.alert('Could not mark unclaimed', error.message); }
           }
         }
       ]
@@ -267,7 +234,7 @@ export default function SellerPosView({
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: () => deleteMenuItem(currentShop.id, itemId)
+        onPress: () => deleteMenuItem(currentShop.id, itemId).catch(error => Alert.alert('Could not delete dish', error.message))
       }
     ]);
   };
@@ -279,27 +246,39 @@ export default function SellerPosView({
         text: 'Delete Canteen',
         style: 'destructive',
         onPress: async () => {
-          await deleteCanteen(currentShop.id);
-          Alert.alert('Canteen Deleted', 'The canteen has been removed.');
+          try { await deleteCanteen(currentShop.id); Alert.alert('Canteen Deleted', 'The canteen has been removed.'); }
+          catch (error) { Alert.alert('Could not delete canteen', error.message); }
         }
       }
     ]);
   };
 
+  if (!currentShop.id) return <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 130 }}>
+    <View style={{ backgroundColor: '#121417', padding: 24, borderRadius: 22, borderWidth: 1, borderColor: '#26292e' }}>
+      <Text style={{ color: '#ffb313', fontSize: 11, fontWeight: '700', marginBottom: 12 }}>SELLER WORKSPACE</Text>
+      <Text style={{ color: '#f5f4f0', fontSize: 24, fontWeight: '800' }}>{sellerSetupStatus === 'loading' ? 'Preparing your canteen' : 'Finish canteen setup'}</Text>
+      <Text style={{ color: '#9b9fa9', fontSize: 14, lineHeight: 22, marginVertical: 16 }}>{sellerSetupStatus === 'loading' ? 'Using the details you submitted during registration. Your menu will be ready shortly.' : sellerSetupError || 'Your seller access is approved. Your saved registration details will be used to set up your canteen.'}</Text>
+      {sellerSetupStatus === 'error' && <TouchableOpacity accessibilityRole="button" onPress={retrySellerSetup} style={{ padding: 14, marginBottom: 10, alignItems: 'center' }}><Text style={{ color: '#ffb313', fontWeight: '700' }}>Retry saved registration</Text></TouchableOpacity>}
+      {sellerSetupStatus !== 'loading' && <TouchableOpacity accessibilityRole="button" onPress={onOpenCreateCanteenModal} style={{ backgroundColor: '#ffb313', padding: 15, borderRadius: 12, alignItems: 'center' }}>
+        <Text style={{ color: '#f5f4f0', fontWeight: '700' }}>Set up canteen</Text>
+      </TouchableOpacity>}
+    </View>
+  </ScrollView>;
+
   return (
     <View style={styles.rootWrapper}>
-      <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }}>
+      <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 120 }}>
         {/* Seller Header: Ocean Breeze Blue-to-Teal Hero Card */}
-        <LinearGradient
-          colors={['#0747a6', '#0070d2', '#00a3c4']}
+        {activeTab === 'orders' && <LinearGradient
+          colors={light ? ['#ffffff', '#ffffff', '#ffffff'] : ['#121417', '#121417', '#121417']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.sellerHeader}
         >
           <View style={styles.headerTopRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.sellerSubtitle}>Vendor KDS • Live stall</Text>
-              <Text style={styles.shopTitle} numberOfLines={1}>
+              <Text style={styles.sellerSubtitle}>SELLER WORKSPACE</Text>
+              <Text style={styles.shopTitle} numberOfLines={2}>
                 {currentShop.name}
               </Text>
               <Text style={styles.shopLoc}>{currentShop.location || 'Near Library'}</Text>
@@ -307,15 +286,15 @@ export default function SellerPosView({
 
             <View style={styles.headerRightActions}>
               <TouchableOpacity
-                style={[styles.rushBtnHeader, rushModeActive && styles.rushBtnHeaderActive]}
+                accessibilityRole="button" accessibilityLabel="Toggle rush mode" accessibilityState={{ selected: rushModeActive }} style={[styles.rushBtnHeader, rushModeActive && styles.rushBtnHeaderActive]}
                 onPress={toggleRushMode}
                 activeOpacity={0.85}
               >
-                <Text style={styles.rushBtnIcon}>{rushModeActive ? '🔥' : '⚡'}</Text>
+                <InterfaceIcon name="bolt" size={18} color={rushModeActive ? "#fde68a" : "#ffffff"} />
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.headerScanBtn}
+                accessibilityRole="button" accessibilityLabel="Scan pickup pass" style={styles.headerScanBtn}
                 onPress={async () => {
                   setIsScanningActive(true);
                   setIsCameraReady(false);
@@ -330,7 +309,7 @@ export default function SellerPosView({
                 }}
                 activeOpacity={0.85}
               >
-                <Text style={styles.headerScanBtnText}>📷 QR</Text>
+                <InterfaceIcon name="scan" size={17} color="#090b0d" /><Text style={styles.headerScanBtnText}>Scan</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -339,7 +318,7 @@ export default function SellerPosView({
           <View style={styles.statsRow}>
             <View style={styles.statBox}>
               <Text style={styles.statVal}>{activeOrders.length}</Text>
-              <Text style={styles.statLbl}>Live kitchen</Text>
+              <Text style={styles.statLbl}>Active orders</Text>
             </View>
             <View style={styles.statBox}>
               <Text style={styles.statVal}>₹{totalRevenue.toFixed(0)}</Text>
@@ -350,9 +329,10 @@ export default function SellerPosView({
               <Text style={styles.statLbl}>Dishes</Text>
             </View>
           </View>
-        </LinearGradient>
+        </LinearGradient>}
 
         {/* POS Sub-Navigation — Segmented Control */}
+        {!selectedTab && (
         <View style={styles.subTabBar}>
           <TouchableOpacity
             style={[styles.subTabBtn, activeTab === 'orders' && styles.subTabBtnActive]}
@@ -384,6 +364,7 @@ export default function SellerPosView({
             </Text>
           </TouchableOpacity>
         </View>
+        )}
 
       {/* ═══════════════════════════════════════════════════ */}
       {/* TAB 1: KITCHEN DISPLAY SYSTEM (KDS) — ORDERS       */}
@@ -399,7 +380,7 @@ export default function SellerPosView({
                 activeOpacity={0.8}
               >
                 <View style={styles.batchTitleRow}>
-                  <Text style={styles.batchIcon}>👨‍🍳</Text>
+                  <InterfaceIcon name="orders" size={18} color="#ffb313" />
                   <Text style={styles.batchTitle}>CHEF BATCH LIST (COOKING NOW)</Text>
                   <View style={styles.batchCountBadge}>
                     <Text style={styles.batchCountText}>{chefBatchList.reduce((s, b) => s + b.qty, 0)} total</Text>
@@ -427,7 +408,7 @@ export default function SellerPosView({
               onPress={() => setOrderFilter('active')}
             >
               <Text style={[styles.filterPillText, orderFilter === 'active' && styles.filterPillTextActive]}>
-                🔥 Live ({activeOrders.length})
+                 Live ({activeOrders.length})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -440,17 +421,18 @@ export default function SellerPosView({
                   orderFilter === 'completed' && styles.filterPillTextActive
                 ]}
               >
-                📜 History ({completedOrders.length})
+                 History ({completedOrders.length})
               </Text>
             </TouchableOpacity>
           </View>
 
           {(orderFilter === 'active' ? sortedActiveOrders : completedOrders).length === 0 ? (
             <View style={styles.noOrdersBox}>
-              <Text style={styles.noOrdersEmoji}>☕</Text>
+              <View style={styles.emptyIcon}><InterfaceIcon name="orders" size={28} color="#ffb313" /></View>
               <Text style={styles.noOrdersText}>
-                {orderFilter === 'active' ? 'No incoming orders right now.' : 'No past orders yet.'}
+                {orderFilter === 'active' ? 'Your kitchen is all caught up' : 'No past orders yet'}
               </Text>
+              <Text style={styles.emptyHint}>New orders appear here as customers place them.</Text>
             </View>
           ) : (
             (orderFilter === 'active' ? sortedActiveOrders : completedOrders).map(order => {
@@ -485,6 +467,7 @@ export default function SellerPosView({
                   </View>
 
                   {/* Customer Name & Items */}
+                  {order.testOrder && <Text style={{ color: '#a36b12', fontSize: 11, fontWeight: '700', marginBottom: 8 }}>Test order · campus location check skipped</Text>}
                   <View style={styles.customerRow}>
                     <Text style={styles.customerName}>{order.buyerName || 'Satyam'}</Text>
                     <Text style={styles.itemSummaryText}>
@@ -501,7 +484,7 @@ export default function SellerPosView({
                   ) : (
                     <View style={styles.onlinePill}>
                       <Text style={styles.onlinePillText}>
-                        {order.paymentMethod || 'PhonePe'} • 100% paid
+                        {order.paymentStatus === 'CONFIRMED_BY_MERCHANT' ? 'UPI confirmed' : 'UPI confirmation pending'}
                       </Text>
                     </View>
                   )}
@@ -512,25 +495,32 @@ export default function SellerPosView({
                       ? order.pickupSlot
                       : '01:10 PM • Lunch break'}
                     {order.isFacultyExpress ? ' • ⭐ Faculty Express' : ''}
-                    {order.groupCollectorName ? ` • 👥 ${order.groupCollectorName}` : ''}
+                    {order.groupCollectorName ? ` •  ${order.groupCollectorName}` : ''}
                   </Text>
 
                   {/* Special Chef Instructions */}
                   {order.specialInstructions ? (
                     <View style={styles.notesBox}>
-                      <Text style={styles.notesText}>📝 {order.specialInstructions}</Text>
+                      <Text style={styles.notesText}> {order.specialInstructions}</Text>
                     </View>
                   ) : null}
 
                   {/* Action Buttons Row */}
                   {!isCompleted && !isCancelled && !isAbandoned ? (
                     <View style={styles.kdsActionsRow}>
+                      {order.paymentMethod === 'UPI' && order.paymentStatus !== 'CONFIRMED_BY_MERCHANT' && (
+                        <TouchableOpacity style={styles.btnScanQr} onPress={() => Alert.alert(
+                          'Confirm UPI receipt?', `Check your merchant account for ₹${order.totalAmount} before confirming.`,
+                          [{ text: 'Back', style: 'cancel' }, { text: 'Payment received', onPress: () => confirmUpiPayment(order.id).catch(error => Alert.alert('Could not confirm payment', error.message)) }]
+                        )}>
+                          <Text style={styles.btnScanQrText}>Confirm UPI</Text>
+                        </TouchableOpacity>
+                      )}
                       <TouchableOpacity
                         style={styles.btnVerifyPin}
                         onPress={() => {
                           if (isPreparing) {
-                            announceTokenReady(order.tokenNumber, currentShop.name);
-                            markOrderReady(order.id);
+                            markOrderReady(order.id).catch(error => Alert.alert('Could not mark ready', error.message));
                           } else {
                             setOrderToVerify(order);
                             setPinInput('');
@@ -577,10 +567,10 @@ export default function SellerPosView({
                     <View style={styles.completedStatusChip}>
                       <Text style={styles.completedStatus}>
                         {isCompleted
-                          ? '✅ Completed & Picked Up'
+                          ? ' Completed & Picked Up'
                           : isCancelled
-                            ? '❌ Cancelled & Refunded'
-                            : '🚨 Abandoned (No-Show)'}
+                            ? 'Cancelled — check refund status'
+                            : ' Abandoned (No-Show)'}
                       </Text>
                     </View>
                   )}
@@ -599,17 +589,17 @@ export default function SellerPosView({
           {/* Header & Add Dish */}
           <View style={styles.menuHeader}>
             <View>
-              <Text style={styles.panelTitle}>📋 Live Menu</Text>
-              <Text style={styles.panelSub}>Manage dishes, prices & availability</Text>
+              <Text style={styles.sellerSubtitle}>MENU</Text><Text style={styles.panelTitle}>Your dishes</Text>
+
             </View>
-            <TouchableOpacity style={styles.addDishBtn} onPress={onOpenAddItemModal} activeOpacity={0.85}>
+            <TouchableOpacity style={styles.addDishBtn} onPress={() => onOpenAddItemModal(currentShop.id)} activeOpacity={0.85}>
               <Text style={styles.addDishBtnText}>+ Add Dish</Text>
             </TouchableOpacity>
           </View>
 
           {/* Search Bar */}
           <View style={styles.searchBarWrap}>
-            <Text style={styles.searchIcon}>🔍</Text>
+            <View style={{ marginRight: 8 }}><InterfaceIcon name="search" size={18} /></View>
             <TextInput
               style={styles.searchInput}
               placeholder="Search dishes..."
@@ -619,7 +609,7 @@ export default function SellerPosView({
             />
             {menuSearch.length > 0 && (
               <TouchableOpacity onPress={() => setMenuSearch('')} style={styles.searchClearBtn}>
-                <Text style={styles.searchClearText}>✕</Text>
+                <InterfaceIcon name="close" size={16} />
               </TouchableOpacity>
             )}
           </View>
@@ -648,26 +638,26 @@ export default function SellerPosView({
             </View>
             <View style={[styles.inventoryStatChip, { borderColor: 'rgba(16, 185, 129, 0.3)' }]}>
               <Text style={[styles.inventoryStatNum, { color: '#10b981' }]}>{inStockCount}</Text>
-              <Text style={styles.inventoryStatLabel}>🟢 In Stock</Text>
+              <Text style={styles.inventoryStatLabel}> In Stock</Text>
             </View>
             <View style={[styles.inventoryStatChip, { borderColor: 'rgba(244, 63, 94, 0.3)' }]}>
               <Text style={[styles.inventoryStatNum, { color: '#f43f5e' }]}>{outOfStockCount}</Text>
-              <Text style={styles.inventoryStatLabel}>⚪ Sold Out</Text>
+              <Text style={styles.inventoryStatLabel}> Sold Out</Text>
             </View>
           </View>
 
           {/* Menu Item Cards */}
           {menuItems.length === 0 ? (
             <View style={styles.noOrdersBox}>
-              <Text style={styles.noOrdersEmoji}>🍳</Text>
-              <Text style={styles.noOrdersText}>No dishes in menu yet.</Text>
-              <TouchableOpacity style={styles.addFirstDishBtn} onPress={onOpenAddItemModal}>
+              <View style={styles.emptyIcon}><InterfaceIcon name="menu" size={28} color="#ffb313" /></View>
+              <Text style={styles.noOrdersText}>Build your first menu</Text><Text style={styles.emptyHint}>Add a dish with its price and preparation time.</Text>
+              <TouchableOpacity style={styles.addFirstDishBtn} onPress={() => onOpenAddItemModal(currentShop.id)}>
                 <Text style={styles.addFirstDishText}>+ Add Your First Dish</Text>
               </TouchableOpacity>
             </View>
           ) : filteredMenu.length === 0 ? (
             <View style={styles.noOrdersBox}>
-              <Text style={styles.noOrdersEmoji}>🔍</Text>
+              <View style={styles.emptyIcon}><InterfaceIcon name="search" size={28} color="#ffb313" /></View>
               <Text style={styles.noOrdersText}>No dishes match your search or filter.</Text>
               <TouchableOpacity
                 style={styles.addFirstDishBtn}
@@ -685,21 +675,21 @@ export default function SellerPosView({
                     <Image source={{ uri: item.image }} style={styles.menuCardImage} />
                   ) : (
                     <View style={styles.menuCardImagePlaceholder}>
-                      <Text style={{ fontSize: 22 }}>🍽️</Text>
+                      <InterfaceIcon name="menu" size={24} />
                     </View>
                   )}
                   <View style={styles.menuCardInfo}>
                     <View style={styles.menuCardNameRow}>
                       <Text style={styles.menuCardName} numberOfLines={1}>{item.name}</Text>
                       <View style={[styles.dietTag, !item.isVeg && styles.dietTagNonVeg]}>
-                        <Text style={styles.dietTagText}>{item.isVeg ? '🟢 Veg' : '🔴 Non-Veg'}</Text>
+                        <Text style={styles.dietTagText}>{item.isVeg ? ' Veg' : ' Non-Veg'}</Text>
                       </View>
                     </View>
                     <View style={styles.menuCardMetaRow}>
                       <View style={styles.categoryChip}>
                         <Text style={styles.categoryChipText}>{item.category || 'Snacks'}</Text>
                       </View>
-                      <Text style={styles.prepTimeText}>⏳ {item.prepTime || '5 mins'}</Text>
+                      <Text style={styles.prepTimeText}> {item.prepTime || '5 mins'}</Text>
                     </View>
                   </View>
                 </View>
@@ -708,12 +698,7 @@ export default function SellerPosView({
                 <View style={styles.menuCardMiddleRow}>
                   <View style={styles.priceEditWrap}>
                     <Text style={styles.priceLabel}>₹</Text>
-                    <TextInput
-                      style={styles.priceInput}
-                      keyboardType="numeric"
-                      defaultValue={String(item.price)}
-                      onEndEditing={e => updateItemPrice(currentShop.id, item.id, e.nativeEvent.text)}
-                    />
+                    <Text style={styles.priceDisplay}>{item.price}</Text>
                   </View>
 
                   <View style={styles.stockSwitchWrap}>
@@ -723,11 +708,11 @@ export default function SellerPosView({
                         { color: item.isAvailable ? '#10b981' : '#f43f5e' }
                       ]}
                     >
-                      {item.isAvailable ? '🟢 IN STOCK' : '⚪ SOLD OUT'}
+                      {item.isAvailable ? ' IN STOCK' : ' SOLD OUT'}
                     </Text>
                     <Switch
                       value={item.isAvailable}
-                      onValueChange={() => toggleItemStock(currentShop.id, item.id)}
+                      onValueChange={() => toggleItemStock(currentShop.id, item.id).catch(error => Alert.alert('Could not update stock', error.message))}
                       trackColor={{ false: '#f43f5e', true: '#10b981' }}
                       thumbColor="#ffffff"
                     />
@@ -738,17 +723,17 @@ export default function SellerPosView({
                 <View style={styles.menuCardActionRow}>
                   <TouchableOpacity
                     style={styles.editDishBtn}
-                    onPress={() => onOpenEditItemModal(item)}
+                    onPress={() => onOpenEditItemModal(item, currentShop.id)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.editDishBtnText}>✏️  Edit Dish</Text>
+                    <Text style={styles.editDishBtnText}>  Edit Dish</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.deleteDishBtn}
                     onPress={() => handleDeleteDish(item.id, item.name)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.deleteDishBtnText}>🗑️  Delete</Text>
+                    <Text style={styles.deleteDishBtnText}>  Delete</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -762,44 +747,51 @@ export default function SellerPosView({
       {/* ═══════════════════════════════════════════════════ */}
       {activeTab === 'analytics' && (
         <View style={styles.panel}>
-          <Text style={styles.panelTitle}>📊 Canteen Performance</Text>
-          <Text style={styles.panelSub}>Real-time stats for {currentShop.name}</Text>
+          <Text style={styles.sellerSubtitle}>STATS</Text><Text style={styles.panelTitle}>Performance</Text>
+
 
           <View style={styles.analyticsGrid}>
-            <View style={styles.analyticsCard}>
-              <Text style={styles.analyticsVal}>₹{totalRevenue.toFixed(0)}</Text>
-              <Text style={styles.analyticsLabel}>Total Revenue (Completed)</Text>
+            <View style={[styles.analyticsCard, { backgroundColor: '#ffb313', borderColor: '#ffb313' }] }>
+              <Text style={[styles.analyticsVal, { color: '#090b0d' }] }>₹{totalRevenue.toFixed(0)}</Text>
+              <Text style={[styles.analyticsLabel, { color: '#362600' }]}>Completed revenue</Text>
             </View>
             <View style={styles.analyticsCard}>
               <Text style={styles.analyticsVal}>{shopOrders.length}</Text>
-              <Text style={styles.analyticsLabel}>Total Orders Received</Text>
+              <Text style={styles.analyticsLabel}>Orders received</Text>
             </View>
             <View style={styles.analyticsCard}>
               <Text style={[styles.analyticsVal, { color: '#10b981' }]}>
                 {shopOrders.filter(o => o.orderStatus === 'Completed').length}
               </Text>
-              <Text style={styles.analyticsLabel}>Completed Handoffs</Text>
+              <Text style={styles.analyticsLabel}>Completed pickups</Text>
             </View>
             <View style={styles.analyticsCard}>
               <Text style={[styles.analyticsVal, { color: '#f43f5e' }]}>
                 {shopOrders.filter(o => o.orderStatus === 'Abandoned').length}
               </Text>
-              <Text style={styles.analyticsLabel}>Unclaimed / No-Shows</Text>
+              <Text style={styles.analyticsLabel}>Unclaimed orders</Text>
             </View>
           </View>
 
           {/* Canteen Info Card */}
-          <Text style={[styles.panelTitle, { marginTop: 20 }]}>⚙️ Canteen Details</Text>
+          <Text style={[styles.panelTitle, { marginTop: 20 }]}>Canteen details</Text>
           <View style={styles.canteenInfoCard}>
-            <Text style={styles.infoLine}>📍 Location: {currentShop.location}</Text>
-            <Text style={styles.infoLine}>⏰ Hours: {currentShop.openingHours || '08:00 AM - 10:00 PM'}</Text>
-            <Text style={styles.infoLine}>💳 Merchant UPI: {currentShop.upiId || 'canteen@upi'}</Text>
-            <Text style={styles.infoLine}>📞 Phone: {currentShop.phone || '+91 98765 00000'}</Text>
+            {[
+              { label: 'Location', value: currentShop.location || 'Not set' },
+              { label: 'Hours', value: currentShop.openingHours, action: 'Set hours', section: 'Canteen' },
+              { label: 'Payments', value: currentShop.upiId || 'Cash only', action: currentShop.upiId ? 'Edit UPI' : 'Add UPI', section: 'Payments' },
+              { label: 'Phone', value: currentShop.phone || userProfile.phone || 'Not provided' },
+            ].map((row, index) => <View key={row.label} style={[styles.detailRow, index > 0 && styles.detailDivider]}>
+              <Text style={styles.detailLabel}>{row.label}</Text>
+              <View style={styles.detailValueWrap}>{!!row.value && <Text style={styles.detailValue}>{row.value}</Text>}
+                {!!row.action && (!row.value || row.label === 'Payments') && <TouchableOpacity accessibilityRole="button" onPress={() => onOpenSettings?.(row.section)} style={styles.detailAction}><Text style={styles.detailActionText}>{row.action}</Text></TouchableOpacity>}
+              </View>
+            </View>)}
           </View>
 
           {/* Delete Canteen Option */}
           <TouchableOpacity style={styles.deleteCanteenBtn} onPress={handleDeleteCurrentCanteen}>
-            <Text style={styles.deleteCanteenText}>🗑️ Delete This Canteen Counter</Text>
+            <Text style={styles.deleteCanteenText}> Delete This Canteen Counter</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -811,19 +803,19 @@ export default function SellerPosView({
           <View style={styles.verifyModalContent}>
             <View style={styles.verifyModalHeader}>
               <View>
-                <Text style={styles.verifyModalTitle}>🔐 Counter Handover</Text>
+                <Text style={styles.verifyModalTitle}> Counter Handover</Text>
                 <Text style={styles.verifyModalSub}>
                   Token: {orderToVerify?.tokenNumber} • {orderToVerify?.buyerName}
                 </Text>
               </View>
               <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setVerifyModalVisible(false)}>
-                <Text style={styles.modalCloseBtnText}>✕</Text>
+                <InterfaceIcon name="close" size={20} />
               </TouchableOpacity>
             </View>
 
             <View style={styles.verifyPinBox}>
               <Text style={styles.verifyInstruction}>
-                Ask student for their 4-digit Digital Pass PIN:
+                {orderToVerify?.paymentMethod === 'Cash' ? 'Collect the full cash amount, then ask for the customer pickup PIN:' : 'Confirm UPI receipt, then ask for the customer pickup PIN:'}
               </Text>
               <TextInput
                 style={styles.pinInputField}
@@ -837,7 +829,7 @@ export default function SellerPosView({
                   setPinError('');
                 }}
               />
-              {pinError ? <Text style={styles.pinErrorText}>⚠️ {pinError}</Text> : null}
+              {pinError ? <Text style={styles.pinErrorText}> {pinError}</Text> : null}
             </View>
 
             <View style={styles.verifyBtnRow}>
@@ -855,7 +847,7 @@ export default function SellerPosView({
                   }
                 }}
               >
-                <Text style={styles.verifyConfirmText}>Verify PIN & Complete 🚀</Text>
+                <Text style={styles.verifyConfirmText}>Verify PIN & Complete </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -891,7 +883,7 @@ export default function SellerPosView({
               }}
               activeOpacity={0.85}
             >
-              <Text style={styles.actionSheetBtnCancelText}>❌ Cancel Order (Refund UPI)</Text>
+              <Text style={styles.actionSheetBtnCancelText}>Cancel Order (arrange any UPI refund)</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -904,7 +896,7 @@ export default function SellerPosView({
               }}
               activeOpacity={0.85}
             >
-              <Text style={styles.actionSheetBtnNoShowText}>🚨 Mark No-Show Strike</Text>
+              <Text style={styles.actionSheetBtnNoShowText}> Mark No-Show Strike</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -955,7 +947,7 @@ export default function SellerPosView({
                       <View style={styles.scannerCampusDot} />
                       <Text style={styles.scannerCampusText}>SILVER OAK UNIVERSITY • VENDOR KDS</Text>
                     </View>
-                    <Text style={styles.scannerHeaderTitle}>📷 Scan Student Pass</Text>
+                    <Text style={styles.scannerHeaderTitle}> Scan Student Pass</Text>
                     <Text style={styles.scannerHeaderSub}>Align student's digital pass QR inside viewfinder</Text>
                   </View>
                   <TouchableOpacity
@@ -967,7 +959,7 @@ export default function SellerPosView({
                     }}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.scannerCloseCircleText}>✕</Text>
+                    <InterfaceIcon name="close" size={22} color="#ffffff" />
                   </TouchableOpacity>
                 </View>
 
@@ -983,8 +975,8 @@ export default function SellerPosView({
                   <View style={styles.reticleHintBox}>
                     <Text style={styles.reticleHintText}>
                       {isScanningActive
-                        ? '🎯 Holding student pass within frame auto-verifies'
-                        : '⚡ Verifying token handover...'}
+                        ? ' Holding student pass within frame auto-verifies'
+                        : ' Verifying token handover...'}
                     </Text>
                   </View>
                 </View>
@@ -999,7 +991,7 @@ export default function SellerPosView({
                       activeOpacity={0.8}
                     >
                       <Text style={[styles.scannerCtrlIcon, torchOn && styles.scannerCtrlIconActive]}>
-                        {torchOn ? '🔦 Torch ON' : '🔦 Torch'}
+                        {torchOn ? ' Torch ON' : ' Torch'}
                       </Text>
                     </TouchableOpacity>
 
@@ -1020,12 +1012,12 @@ export default function SellerPosView({
                       activeOpacity={0.85}
                     >
                       <LinearGradient
-                        colors={['#0747a6', '#0070d2', '#00a3c4']}
+                        colors={light ? ['#ffffff', '#ffffff', '#ffffff'] : ['#121417', '#121417', '#121417']}
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 0 }}
                         style={styles.scannerManualPinGradient}
                       >
-                        <Text style={styles.scannerManualPinText}>🔢 Enter 4-Digit PIN</Text>
+                        <Text style={styles.scannerManualPinText}> Enter 4-Digit PIN</Text>
                       </LinearGradient>
                     </TouchableOpacity>
                   </View>
@@ -1075,7 +1067,7 @@ export default function SellerPosView({
                 <View style={styles.scannerCampusDot} />
                 <Text style={styles.scannerCampusText}>SILVER OAK UNIVERSITY • VENDOR KDS</Text>
               </View>
-              <Text style={styles.scannerNoPermEmoji}>📷</Text>
+              <InterfaceIcon name="scan" size={36} color="#ffb313" />
               <Text style={styles.scannerNoPermTitle}>Camera Access Required</Text>
               <Text style={styles.scannerNoPermSub}>
                 To scan student pickup passes and complete queue-free handovers instantly, please allow SkipQ to access your camera.
@@ -1101,79 +1093,50 @@ export default function SellerPosView({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
+  priceDisplay: { color: '#f5f4f0', fontSize: 22, fontWeight: '700' },
+  detailRow: { minHeight: 54, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14 },
+  detailDivider: { borderTopWidth: 1, borderTopColor: '#26292e' },
+  detailLabel: { color: '#a5a9b2', fontSize: 12 },
+  detailValueWrap: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end', gap: 9 },
+  detailValue: { color: '#f5f4f0', fontSize: 12, textAlign: 'right', flexShrink: 1 },
+  detailAction: { borderWidth: 1, borderColor: '#ffb313', paddingHorizontal: 11, paddingVertical: 8, borderRadius: 18 },
+  detailActionText: { color: '#ffb313', fontSize: 11, fontWeight: '600' },
+  emptyIcon: { width: 60, height: 60, borderRadius: 20, backgroundColor: '#191c20', alignItems: 'center', justifyContent: 'center' },
+  emptyHint: { color: '#9b9fa9', fontSize: 12, lineHeight: 19, textAlign: 'center', marginTop: 8, marginBottom: 8 },
 
   container: {
     flex: 1,
-    backgroundColor: '#edf3f8',
+    backgroundColor: '#090b0d',
     padding: 16,
   },
   emptyContainer: {
     flex: 1,
-    backgroundColor: '#edf3f8',
+    backgroundColor: '#090b0d',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
   },
   emptyEmoji: { fontSize: 48, marginBottom: 12 },
-  emptyTitle: { color: '#0f172a', fontSize: 18, fontWeight: '800' },
-  emptySub: { color: '#64748b', fontSize: 12, textAlign: 'center', marginVertical: 8 },
+  emptyTitle: { color: '#f5f4f0', fontSize: 18, fontWeight: '800' },
+  emptySub: { color: '#9b9fa9', fontSize: 12, textAlign: 'center', marginVertical: 8 },
   createFirstBtn: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 12,
     marginTop: 10,
   },
-  createFirstBtnText: { color: '#ffffff', fontWeight: '800', fontSize: 14 },
+  createFirstBtnText: { color: '#090b0d', fontWeight: '800', fontSize: 14 },
 
   // — Seller Header: Ocean Breeze Hero Card —
-  sellerHeader: {
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 16,
-    shadowColor: '#0070d2',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
-    elevation: 8,
-  },
-  headerTopRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-  },
-  sellerSubtitle: {
-    color: 'rgba(255, 255, 255, 0.9)',
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  shopTitle: {
-    color: '#ffffff',
-    fontSize: 26,
-    fontWeight: '900',
-    marginBottom: 2,
-    letterSpacing: -0.3,
-  },
-  shopLoc: {
-    color: 'rgba(255, 255, 255, 0.85)',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  headerRightActions: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
-  rushBtnHeader: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
+  sellerHeader: { borderRadius: 20, padding: 18, marginBottom: 22, borderWidth: 1, borderColor: '#26292e' },
+  headerTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+  sellerSubtitle: { color: '#ffb313', fontSize: 9, letterSpacing: 1.4, fontWeight: '700' },
+  shopTitle: { color: '#f5f4f0', fontSize: 23, fontWeight: '800', letterSpacing: -0.6, marginTop: 6, marginBottom: 5 },
+  shopLoc: { color: '#9b9fa9', fontSize: 12, lineHeight: 18 },
+  headerRightActions: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  rushBtnHeader: { width: 36, height: 36, borderRadius: 11, backgroundColor: '#ffb313', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#ffb313' },
   rushBtnHeaderActive: {
     backgroundColor: 'rgba(245, 158, 11, 0.4)',
     borderColor: '#f59e0b',
@@ -1181,53 +1144,20 @@ const styles = StyleSheet.create({
   rushBtnIcon: {
     fontSize: 14,
   },
-  headerScanBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  headerScanBtnText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 18,
-  },
-  statBox: {
-    flex: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.16)',
-    paddingVertical: 14,
-    paddingHorizontal: 6,
-    borderRadius: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.22)',
-  },
-  statVal: {
-    color: '#ffffff',
-    fontSize: 22,
-    fontWeight: '900',
-  },
-  statLbl: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 3,
-  },
+  headerScanBtn: { minHeight: 36, paddingHorizontal: 10, borderRadius: 11, backgroundColor: '#ffb313', flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#ffb313' },
+  headerScanBtnText: { color: '#090b0d', fontSize: 11, fontWeight: '600' },
+  statsRow: { flexDirection: 'row', gap: 8, marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#26292e' },
+  statBox: { flex: 1, alignItems: 'flex-start', paddingHorizontal: 4 },
+  statVal: { color: '#f5f4f0', fontSize: 22, fontWeight: '700', letterSpacing: -0.6 },
+  statLbl: { color: '#9b9fa9', fontSize: 10, marginTop: 4 },
 
   // — Segmented Sub-Tab Bar —
   subTabBar: {
     flexDirection: 'row',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 24,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     padding: 4,
     marginBottom: 16,
     overflow: 'hidden',
@@ -1246,15 +1176,15 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   subTabBtnActive: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
   },
   subTabText: {
-    color: '#475569',
+    color: '#a5a9b2',
     fontSize: 13.5,
     fontWeight: '700',
   },
   subTabTextActive: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontSize: 13.5,
     fontWeight: '900',
   },
@@ -1267,60 +1197,30 @@ const styles = StyleSheet.create({
   },
 
   // — Filter Pills —
-  filterPillsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 14,
-  },
-  filterPill: {
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: '#e2e8f0',
-    overflow: 'hidden',
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 0,
-  },
-  filterPillActive: {
-    backgroundColor: '#0c52a3',
-    borderColor: '#0c52a3',
-  },
-  filterPillText: {
-    color: '#475569',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  filterPillTextActive: {
-    color: '#ffffff',
-    fontWeight: '800',
-  },
+  filterPillsRow: { flexDirection: 'row', padding: 4, backgroundColor: '#121417', borderRadius: 16, marginBottom: 18, gap: 4 },
+  filterPill: { flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  filterPillActive: { backgroundColor: '#ffb313' },
+  filterPillText: { color: '#9b9fa9', fontSize: 12, fontWeight: '600' },
+  filterPillTextActive: { color: '#090b0d', fontWeight: '700' },
 
   // — No Orders —
-  noOrdersBox: {
-    alignItems: 'center',
-    paddingVertical: 36,
-  },
+  noOrdersBox: { backgroundColor: '#090b0d', borderStyle: 'dashed', borderRadius: 20, borderWidth: 1, borderColor: '#26292e', alignItems: 'center', paddingVertical: 34, paddingHorizontal: 20 },
   noOrdersEmoji: { fontSize: 36, marginBottom: 8 },
-  noOrdersText: { color: '#64748b', fontSize: 13, textAlign: 'center' },
+  noOrdersText: { color: '#f5f4f0', fontSize: 16, fontWeight: '700', textAlign: 'center', marginTop: 16 },
   addFirstDishBtn: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 10,
     marginTop: 10,
   },
-  addFirstDishText: { color: '#ffffff', fontWeight: '800', fontSize: 12 },
+  addFirstDishText: { color: '#090b0d', fontWeight: '800', fontSize: 12 },
 
   // ═══════════════════════════
   // KDS Order Cards
   // ═══════════════════════════
   kdsCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 22,
     padding: 18,
     marginBottom: 16,
@@ -1347,18 +1247,18 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   tokenPill: {
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#292418',
     paddingHorizontal: 12,
     paddingVertical: 5,
     borderRadius: 10,
   },
   tokenPillText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 16,
     fontWeight: '900',
   },
   kdsPriceText: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 24,
     fontWeight: '900',
     letterSpacing: -0.5,
@@ -1370,17 +1270,17 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   customerName: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 15,
     fontWeight: '800',
   },
   itemSummaryText: {
-    color: '#475569',
+    color: '#a5a9b2',
     fontSize: 14,
     fontWeight: '500',
   },
   cashPill: {
-    backgroundColor: '#fef3c7',
+    backgroundColor: '#292418',
     borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -1406,13 +1306,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   slotTimeText: {
-    color: '#64748b',
+    color: '#9b9fa9',
     fontSize: 12,
     fontWeight: '600',
     marginBottom: 14,
   },
   notesBox: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#191c20',
     borderLeftWidth: 3,
     borderLeftColor: '#00a3c4',
     padding: 8,
@@ -1420,7 +1320,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   notesText: {
-    color: '#334155',
+    color: '#e5e6e8',
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1431,7 +1331,7 @@ const styles = StyleSheet.create({
   },
   btnVerifyPin: {
     flex: 1,
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     borderRadius: 16,
     paddingVertical: 14,
     alignItems: 'center',
@@ -1443,13 +1343,13 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   btnVerifyPinText: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontSize: 14,
     fontWeight: '800',
   },
   btnScanQr: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderWidth: 1.5,
     borderColor: '#00a3c4',
     borderRadius: 16,
@@ -1466,12 +1366,12 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 16,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#202329',
     alignItems: 'center',
     justifyContent: 'center',
   },
   btnMoreActionsText: {
-    color: '#475569',
+    color: '#a5a9b2',
     fontSize: 16,
     fontWeight: '900',
   },
@@ -1480,7 +1380,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   completedStatus: {
-    color: '#64748b',
+    color: '#9b9fa9',
     fontSize: 13,
     fontWeight: '700',
   },
@@ -1490,7 +1390,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   actionSheetCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 24,
@@ -1498,15 +1398,15 @@ const styles = StyleSheet.create({
   actionSheetTitle: {
     fontSize: 18,
     fontWeight: '900',
-    color: '#0f172a',
+    color: '#f5f4f0',
   },
   actionSheetSub: {
     fontSize: 13,
-    color: '#64748b',
+    color: '#9b9fa9',
     marginBottom: 18,
   },
   actionSheetBtnCancel: {
-    backgroundColor: '#fee2e2',
+    backgroundColor: '#21171a',
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
@@ -1518,7 +1418,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   actionSheetBtnNoShow: {
-    backgroundColor: '#fef3c7',
+    backgroundColor: '#292418',
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
@@ -1530,13 +1430,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   actionSheetBtnClose: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#202329',
     borderRadius: 14,
     paddingVertical: 12,
     alignItems: 'center',
   },
   actionSheetBtnCloseText: {
-    color: '#475569',
+    color: '#a5a9b2',
     fontWeight: '800',
     fontSize: 13,
   },
@@ -1544,31 +1444,12 @@ const styles = StyleSheet.create({
   // ═══════════════════════════
   // Menu Management
   // ═══════════════════════════
-  menuHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
-  },
-  panelTitle: {
-    color: '#0f172a',
-    fontSize: 18,
-    fontWeight: '900',
-    letterSpacing: -0.2,
-  },
-  panelSub: {
-    color: '#64748b',
-    fontSize: 12,
-    marginTop: 3,
-  },
-  addDishBtn: {
-    backgroundColor: '#0c52a3',
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderRadius: 12,
-  },
+  menuHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 18 },
+  panelTitle: { color: '#f5f4f0', marginTop: 7, marginBottom: 12, fontSize: 26, fontWeight: '700', letterSpacing: -0.4 },
+  panelSub: { color: '#7a8b9f', fontSize: 12, lineHeight: 18, marginTop: 5 },
+  addDishBtn: { backgroundColor: '#ffb313', paddingHorizontal: 14, paddingVertical: 11, borderRadius: 12 },
   addDishBtnText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 12,
     fontWeight: '900',
   },
@@ -1577,10 +1458,10 @@ const styles = StyleSheet.create({
   searchBarWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     paddingHorizontal: 14,
     marginBottom: 12,
   },
@@ -1590,7 +1471,7 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 13,
     paddingVertical: 12,
   },
@@ -1598,7 +1479,7 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   searchClearText: {
-    color: '#64748b',
+    color: '#9b9fa9',
     fontSize: 14,
     fontWeight: '800',
   },
@@ -1609,25 +1490,25 @@ const styles = StyleSheet.create({
     maxHeight: 38,
   },
   categoryPill: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     marginRight: 8,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   categoryPillActive: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     borderColor: '#0c52a3',
   },
   categoryPillText: {
-    color: '#475569',
+    color: '#a5a9b2',
     fontSize: 12,
     fontWeight: '700',
   },
   categoryPillTextActive: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontWeight: '900',
   },
 
@@ -1637,22 +1518,14 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 14,
   },
-  inventoryStatChip: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
+  inventoryStatChip: { flex: 1, backgroundColor: '#121417', borderRadius: 12, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#26292e' },
   inventoryStatNum: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 18,
     fontWeight: '900',
   },
   inventoryStatLabel: {
-    color: '#64748b',
+    color: '#9b9fa9',
     fontSize: 10,
     fontWeight: '700',
     marginTop: 2,
@@ -1660,12 +1533,12 @@ const styles = StyleSheet.create({
 
   // Menu Card
   menuCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 18,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.06,
@@ -1685,13 +1558,13 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 12,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#202329',
   },
   menuCardImagePlaceholder: {
     width: 60,
     height: 60,
     borderRadius: 12,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#202329',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1706,21 +1579,21 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   menuCardName: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 15,
     fontWeight: '800',
     flex: 1,
   },
   dietTag: {
-    backgroundColor: '#ecfdf5',
+    backgroundColor: '#15231c',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 5,
     borderWidth: 1,
-    borderColor: '#a7f3d0',
+    borderColor: '#47db85',
   },
   dietTagNonVeg: {
-    backgroundColor: '#fff1f2',
+    backgroundColor: '#21171a',
     borderColor: '#fecdd3',
   },
   dietTagText: {
@@ -1735,18 +1608,18 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   categoryChip: {
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#292418',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
   },
   categoryChipText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 10,
     fontWeight: '700',
   },
   prepTimeText: {
-    color: '#64748b',
+    color: '#9b9fa9',
     fontSize: 10,
     fontWeight: '600',
   },
@@ -1756,7 +1629,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#191c20',
     borderRadius: 10,
     paddingVertical: 8,
     paddingHorizontal: 12,
@@ -1768,13 +1641,13 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   priceLabel: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 16,
     fontWeight: '900',
   },
   priceInput: {
-    backgroundColor: '#ffffff',
-    color: '#0f172a',
+    backgroundColor: '#121417',
+    color: '#f5f4f0',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
@@ -1783,7 +1656,7 @@ const styles = StyleSheet.create({
     minWidth: 55,
     textAlign: 'center',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   stockSwitchWrap: {
     flexDirection: 'row',
@@ -1802,7 +1675,7 @@ const styles = StyleSheet.create({
   },
   editDishBtn: {
     flex: 1,
-    backgroundColor: '#eef2ff',
+    backgroundColor: '#202329',
     borderWidth: 1,
     borderColor: 'rgba(99, 102, 241, 0.25)',
     borderRadius: 10,
@@ -1810,13 +1683,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   editDishBtnText: {
-    color: '#4f46e5',
+    color: '#f5f4f0',
     fontSize: 12,
     fontWeight: '800',
   },
   deleteDishBtn: {
     flex: 1,
-    backgroundColor: '#fee2e2',
+    backgroundColor: '#21171a',
     borderWidth: 1,
     borderColor: 'rgba(244, 63, 94, 0.2)',
     borderRadius: 10,
@@ -1838,40 +1711,20 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 10,
   },
-  analyticsCard: {
-    flexBasis: '48%',
-    backgroundColor: '#ffffff',
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 1,
-  },
-  analyticsVal: {
-    color: '#0c52a3',
-    fontSize: 22,
-    fontWeight: '900',
-  },
-  analyticsLabel: {
-    color: '#64748b',
-    fontSize: 10,
-    marginTop: 2,
-  },
+  analyticsCard: { width: '48%', backgroundColor: '#121417', padding: 18, borderRadius: 16, borderWidth: 1, borderColor: '#26292e' },
+  analyticsVal: { color: '#f5f4f0', fontSize: 25, fontWeight: '700', letterSpacing: -0.5 },
+  analyticsLabel: { color: '#9b9fa9', fontSize: 11, lineHeight: 17, marginTop: 7 },
   canteenInfoCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     padding: 14,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     marginTop: 8,
     gap: 8,
   },
   infoLine: {
-    color: '#334155',
+    color: '#e5e6e8',
     fontSize: 12,
   },
   deleteCanteenBtn: {
@@ -1881,7 +1734,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     marginTop: 20,
-    backgroundColor: '#fff1f2',
+    backgroundColor: '#21171a',
   },
   deleteCanteenText: {
     color: '#e11d48',
@@ -1898,13 +1751,13 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
     maxHeight: '75%',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1913,12 +1766,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   modalTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 16,
     fontWeight: '800',
   },
   closeBtn: {
-    color: '#64748b',
+    color: '#9b9fa9',
     fontSize: 16,
     padding: 4,
   },
@@ -1926,45 +1779,45 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#191c20',
     padding: 12,
     borderRadius: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   canteenChoiceActive: {
     borderColor: '#0c52a3',
     borderWidth: 1,
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#292418',
   },
   canteenChoiceName: {
-    color: '#334155',
+    color: '#e5e6e8',
     fontSize: 14,
     fontWeight: '700',
   },
   canteenChoiceNameActive: {
-    color: '#0c52a3',
+    color: '#ffb313',
   },
   canteenChoiceLoc: {
-    color: '#64748b',
+    color: '#9b9fa9',
     fontSize: 11,
     marginTop: 2,
   },
   checkmark: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontWeight: '900',
     fontSize: 16,
   },
   modalCreateBtn: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     padding: 14,
     borderRadius: 12,
     alignItems: 'center',
     marginTop: 10,
   },
   modalCreateText: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontWeight: '900',
     fontSize: 13,
   },
@@ -1974,25 +1827,25 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#202329',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   modalCloseBtnText: {
-    color: '#64748b',
+    color: '#9b9fa9',
     fontSize: 14,
     fontWeight: '800',
   },
   verifyModalContent: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 20,
     padding: 20,
     width: '90%',
     maxWidth: 420,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.1,
@@ -2006,38 +1859,38 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   verifyModalTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 17,
     fontWeight: '800',
   },
   verifyModalSub: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 12,
     fontWeight: '700',
     marginTop: 3,
   },
   verifyPinBox: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#191c20',
     borderRadius: 14,
     padding: 18,
     alignItems: 'center',
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   verifyInstruction: {
-    color: '#475569',
+    color: '#a5a9b2',
     fontSize: 12,
     fontWeight: '600',
     marginBottom: 12,
     textAlign: 'center',
   },
   pinInputField: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#0c52a3',
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 26,
     fontWeight: '900',
     letterSpacing: 8,
@@ -2063,25 +1916,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   verifyConfirmText: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontSize: 14,
     fontWeight: '800',
   },
   bypassBtn: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#202329',
     padding: 10,
     borderRadius: 10,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   bypassBtnText: {
-    color: '#64748b',
+    color: '#9b9fa9',
     fontSize: 12,
     fontWeight: '700',
   },
   batchBanner: {
-    backgroundColor: '#fef3c7',
+    backgroundColor: '#292418',
     borderRadius: 14,
     borderWidth: 1.5,
     borderColor: '#fde68a',
@@ -2136,7 +1989,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
@@ -2149,7 +2002,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   batchPillName: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -2194,7 +2047,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(16, 185, 129, 0.3)',
   },
   orderCollectorTagText: {
-    color: '#a7f3d0',
+    color: '#47db85',
     fontSize: 10,
     fontWeight: '800',
   },
@@ -2217,7 +2070,7 @@ const styles = StyleSheet.create({
   },
   kdsActionBtnScan: {
     flex: 1,
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     paddingVertical: 13,
     borderRadius: 12,
     alignItems: 'center',
@@ -2229,14 +2082,14 @@ const styles = StyleSheet.create({
     elevation: 0,
   },
   kdsBtnTextScan: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontSize: 13.5,
     fontWeight: '900',
     letterSpacing: 0.2,
   },
   rootWrapper: {
     flex: 1,
-    backgroundColor: '#edf3f8',
+    backgroundColor: '#090b0d',
   },
   scannerFullScreenContainer: {
     backgroundColor: 'transparent',
@@ -2267,7 +2120,7 @@ const styles = StyleSheet.create({
     marginVertical: 16,
   },
   scannerNoPermTitle: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontSize: 20,
     fontWeight: '900',
     marginBottom: 8,
@@ -2281,7 +2134,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   enableCameraBtn: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     paddingHorizontal: 22,
     paddingVertical: 14,
     borderRadius: 14,
@@ -2295,7 +2148,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   enableCameraBtnText: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontSize: 14,
     fontWeight: '900',
   },
@@ -2345,7 +2198,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   scannerHeaderTitle: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontSize: 18,
     fontWeight: '900',
     letterSpacing: -0.3,
@@ -2366,7 +2219,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   scannerCloseCircleText: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontSize: 16,
     fontWeight: '900',
   },
@@ -2511,7 +2364,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   scannerManualPinText: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontSize: 14,
     fontWeight: '900',
     letterSpacing: 0.3,
@@ -2551,7 +2404,7 @@ const styles = StyleSheet.create({
     borderColor: '#334155',
   },
   readyTokenChipBadge: {
-    backgroundColor: '#e0f2fe',
+    backgroundColor: '#202329',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
@@ -2602,12 +2455,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   fastMatchBtnText: {
-    color: '#ffffff',
+    color: '#f5f4f0',
     fontSize: 12,
     fontWeight: '800',
   },
   readyListHeader: {
-    color: '#64748b',
+    color: '#9b9fa9',
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 0.5,

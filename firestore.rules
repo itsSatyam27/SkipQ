@@ -1,59 +1,221 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function ownUser(userId) { return signedIn() && request.auth.uid == userId; }
-    function seller() { return signedIn() && request.auth.token.seller == true; }
-    function canteenOwner(canteenId) {
-      return signedIn() && resource.data.ownerId == request.auth.uid;
+    function verified() { return request.auth != null && request.auth.token.email_verified == true
+      && (request.auth.token.firebase.sign_in_provider == 'google.com' || request.auth.token.googleVerified == true); }
+    function ready() {
+      let profile = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return verified() && profile.profileComplete == true && profile.email == request.auth.token.email.lower()
+        && !(profile.banStatus == 'perm_ban' || (profile.banStatus == 'temp_ban' && profile.banUntil > request.time));
     }
-
-    // A user's private profile is keyed by their verified Firebase UID, never by phone.
-    match /users/{userId} {
-      allow read: if ownUser(userId);
-      allow create: if ownUser(userId)
-        && request.resource.data.uid == request.auth.uid
-        && !request.resource.data.keys().hasAny(['walletBalance', 'banStatus', 'unclaimedOrderCount']);
-      allow update: if ownUser(userId)
-        && request.resource.data.uid == resource.data.uid
-        && !request.resource.data.diff(resource.data).affectedKeys()
-          .hasAny(['uid', 'authUid', 'phone', 'walletBalance', 'banStatus', 'unclaimedOrderCount', 'userType']);
+    function locationTestAccess() {
+      let access = get(/databases/$(database)/documents/locationTestAccess/$(request.auth.uid)).data;
+      return access.enabled == true && access.expiresAt > request.time;
+    }
+    function ownUser(id) { return verified() && request.auth.uid == id; }
+    function admin() { return verified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.enabled == true; }
+    function audited(data, kind, id, action) {
+      let log = getAfter(/databases/$(database)/documents/adminAudit/$(data.adminActionId)).data;
+      return admin() && data.updatedAt == request.time
+        && !exists(/databases/$(database)/documents/adminAudit/$(data.adminActionId))
+        && log.actorUid == request.auth.uid && log.targetType == kind && log.targetId == id
+        && log.action == action && log.createdAt == request.time;
+    }
+    function approved(uid) { return exists(/databases/$(database)/documents/sellerApprovals/$(uid))
+      && get(/databases/$(database)/documents/sellerApprovals/$(uid)).data.approved == true; }
+    function seller() { return ready() && approved(request.auth.uid)
+      && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'seller'; }
+    function assigned(order) { return seller() && order.sellerId == request.auth.uid; }
+    function active(order) { return order.orderStatus in ['Preparing', 'Ready for Pickup']; }
+    function line(items, index, menu) {
+      return items.size() <= index || validLine(items[index], menu);
+    }
+    function validLine(item, menu) {
+      let dish = item.sourceDish;
+      let index = item.menuIndex;
+      let price = item.price;
+      let qty = item.qty;
+      return index is int && index >= 0 && index < menu.size()
+        && dish == menu[index] && item.diff(dish).affectedKeys().hasOnly(['qty', 'sourceDish', 'menuIndex'])
+        && dish.isAvailable == true && price is number && price > 0 && price <= 100000
+        && qty is int && qty >= 1 && qty <= 20;
+    }
+    function cents(items, i) { return items.size() > i ? math.round(items[i].price * 100) * items[i].qty : 0; }
+    function total(items) { return (cents(items, 0) + cents(items, 1) + cents(items, 2) + cents(items, 3) + cents(items, 4)
+      ) / 100.0; }
+    function newOrder(id, order) {
+      let shop = get(/databases/$(database)/documents/canteens/$(order.shopId)).data;
+      let profile = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return ready() && order.keys().hasOnly(['id', 'testOrder', 'requestFingerprint', 'shopId', 'shopName', 'sellerId', 'buyerId', 'buyerName', 'buyerPhone', 'buyerRollNo', 'items', 'totalAmount', 'paymentMethod', 'paymentStatus', 'merchantUpi', 'heldDepositAmount', 'upfrontPaid', 'dueAtCounter', 'tokenNumber', 'pickupAttempts', 'pickupLockedUntil', 'orderStatus', 'estimatedPrepMins', 'specialInstructions', 'pickupSlot', 'facultyRoomNote', 'groupCollectorName', 'isFacultyExpress', 'location', 'timestamp', 'createdAt', 'updatedAt'])
+        && order.id == id && order.buyerId == request.auth.uid && order.sellerId == shop.ownerId && approved(shop.ownerId)
+        && shop.status == 'Open' && order.shopName == shop.name && order.buyerName == profile.name && order.buyerPhone == profile.phone
+        && order.isFacultyExpress == (profile.userType == 'faculty') && order.merchantUpi == shop.get('upiId', '')
+        && order.paymentMethod in ['Cash', 'UPI'] && (order.paymentMethod != 'UPI' || shop.upiId.matches('^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+$'))
+        && order.paymentStatus == (order.paymentMethod == 'Cash' ? 'PENDING_CASH' : 'PENDING_MERCHANT_CONFIRMATION')
+        && order.orderStatus == 'Preparing' && order.pickupAttempts == 0 && order.pickupLockedUntil == null
+        && order.createdAt == request.time && order.updatedAt == request.time
+        && order.items is list && order.items.size() >= 1 && order.items.size() <= 5
+        && line(order.items, 0, shop.menu) && line(order.items, 1, shop.menu) && line(order.items, 2, shop.menu)
+        && line(order.items, 3, shop.menu) && line(order.items, 4, shop.menu)
+        && order.totalAmount == total(order.items) && order.heldDepositAmount == 0 && order.upfrontPaid == 0
+        && order.dueAtCounter == (order.paymentMethod == 'Cash' ? order.totalAmount : 0)
+        && (order.get('testOrder', false)
+          ? (locationTestAccess() && order.location == null)
+          : (order.location.accuracy >= 0 && order.location.accuracy <= 100
+          && latlng.value(order.location.lat, order.location.lng).distance(latlng.value(shop.lat, shop.lng)) <= 500 + order.location.accuracy))
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)/pickupSecrets/$(id)).data.pin.matches('^[0-9]{4}$');
+    }
+    function validRefund(order, next) {
+      let paid = order.paymentMethod == 'UPI' && order.paymentStatus == 'CONFIRMED_BY_MERCHANT';
+      return next.refundStatus == (paid ? 'MERCHANT_REFUND_REQUIRED' : 'NOT_REQUIRED')
+        && next.refundAmount == (paid ? order.totalAmount : 0);
+    }
+    function pinAttempt(id, old, next) {
+      let check = getAfter(/databases/$(database)/documents/pickupVerifications/$(id)).data;
+      return old.orderStatus == 'Ready for Pickup'
+        && (old.pickupAttempts < 5 || old.pickupLockedUntil <= request.time)
+        && next.diff(old).affectedKeys().hasOnly(['pickupAttempts', 'pickupLockedUntil', 'updatedAt'])
+        && next.pickupAttempts == (old.pickupLockedUntil == null || old.pickupLockedUntil <= request.time ? 1 : old.pickupAttempts + 1)
+        && next.pickupLockedUntil >= request.time + duration.value(290, 's')
+        && next.pickupLockedUntil <= request.time + duration.value(310, 's')
+        && check.checkedAt == request.time && check.attempt == next.pickupAttempts;
+    }
+    function pickup(id, old, next) {
+      let check = get(/databases/$(database)/documents/pickupVerifications/$(id)).data;
+      let secret = get(/databases/$(database)/documents/users/$(old.buyerId)/pickupSecrets/$(id)).data;
+      return old.orderStatus == 'Ready for Pickup' && next.orderStatus == 'Completed'
+        && next.diff(old).affectedKeys().hasOnly(['orderStatus', 'completedAt', 'paymentStatus', 'updatedAt'])
+        && check.pin == secret.pin && check.checkedAt == old.updatedAt
+        && check.checkedAt > request.time - duration.value(5, 'm')
+        && next.completedAt == request.time
+        && (old.paymentMethod == 'Cash' ? next.paymentStatus == 'CASH_COLLECTED' : old.paymentStatus == 'CONFIRMED_BY_MERCHANT' && next.paymentStatus == old.paymentStatus);
+    }
+    function changeOrder(id, old, next) {
+      let isSeller = assigned(old);
+      return ready() && next.updatedAt == request.time && (
+        (isSeller && old.orderStatus == 'Preparing' && next.orderStatus == 'Ready for Pickup' && next.readyAt == request.time
+          && next.diff(old).affectedKeys().hasOnly(['orderStatus', 'readyAt', 'updatedAt']))
+        || (isSeller && active(old) && old.paymentMethod == 'UPI' && next.paymentStatus == 'CONFIRMED_BY_MERCHANT'
+          && next.paymentConfirmedAt == request.time && next.diff(old).affectedKeys().hasOnly(['paymentStatus', 'paymentConfirmedAt', 'updatedAt']))
+        || (active(old) && (old.buyerId == request.auth.uid || isSeller) && next.orderStatus == 'Cancelled'
+          && next.cancelledAt == request.time && next.cancelledBy == (old.buyerId == request.auth.uid ? 'buyer' : 'seller') && validRefund(old, next)
+          && next.diff(old).affectedKeys().hasOnly(['orderStatus', 'cancelledAt', 'cancelledBy', 'refundStatus', 'refundAmount', 'refundText', 'updatedAt']))
+        || (isSeller && old.orderStatus == 'Ready for Pickup' && old.readyAt <= request.time - duration.value(45, 'm')
+          && next.orderStatus == 'Abandoned' && validRefund(old, next)
+          && next.diff(old).affectedKeys().hasOnly(['orderStatus', 'refundStatus', 'refundAmount', 'refundText', 'updatedAt']))
+        || (isSeller && (pinAttempt(id, old, next) || pickup(id, old, next))));
+    }
+    function validProfile(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.userType in ['student', 'faculty', 'seller'];
+    }
+    match /users/{id} {
+      allow read: if admin();
+      allow update: if admin() && !exists(/databases/$(database)/documents/admins/$(id))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['banStatus', 'banUntil', 'banReason', 'updatedAt', 'adminActionId'])
+        && request.resource.data.banStatus in ['active', 'temp_ban', 'perm_ban']
+        && (request.resource.data.banStatus != 'temp_ban' || (request.resource.data.banUntil is timestamp && request.resource.data.banUntil > request.time))
+        && (request.resource.data.banStatus == 'temp_ban' || request.resource.data.banUntil == null)
+        && audited(request.resource.data, 'users', id, request.resource.data.banStatus);
+      allow update: if ownUser(id) && ready() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAt'])
+        && request.resource.data.lastActiveAt == request.time;
+      allow read: if ownUser(id);
+      allow create: if ownUser(id) && validProfile(request.resource.data)
+        && request.resource.data.keys().hasOnly(['uid', 'authUid', 'name', 'email', 'phone', 'userType', 'emailVerified', 'phoneVerified', 'profileComplete', 'walletBalance', 'banStatus', 'unclaimedOrderCount', 'createdAt', 'updatedAt', 'rollNo', 'facultyId', 'roomNumber', 'facultyRoomNote', 'universityId', 'stallName', 'stallLocation', 'merchantUpi'])
+        && request.resource.data.uid == id && request.resource.data.authUid == id
+        && request.resource.data.email == request.auth.token.email.lower()
+        && request.resource.data.emailVerified == true && request.resource.data.phoneVerified == false
+        && request.resource.data.profileComplete == true && request.resource.data.walletBalance == 0
+        && request.resource.data.banStatus == 'active' && request.resource.data.unclaimedOrderCount == 0
+        && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time
+        && request.resource.data.phone is string && request.resource.data.phone.matches('^[6-9][0-9]{9}$')
+        && !exists(/databases/$(database)/documents/phoneClaims/$(request.resource.data.phone))
+        && getAfter(/databases/$(database)/documents/phoneClaims/$(request.resource.data.phone)).data.claimed == true;
+      allow update: if ownUser(id) && ready() && validProfile(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'rollNo', 'facultyId', 'roomNumber', 'facultyRoomNote', 'universityId', 'stallName', 'stallLocation', 'merchantUpi', 'sellerShopId', 'updatedAt']);
       allow delete: if false;
+      match /pickupSecrets/{orderId} {
+        allow get: if ownUser(id);
+        allow create: if ownUser(id) && request.resource.data.keys().hasOnly(['pin', 'createdAt'])
+          && request.resource.data.pin.matches('^[0-9]{4}$') && request.resource.data.createdAt == request.time
+          && !exists(/databases/$(database)/documents/orders/$(orderId))
+          && getAfter(/databases/$(database)/documents/orders/$(orderId)).data.buyerId == id;
+        allow update, delete: if false;
+      }
     }
-
-    // Campus menus are public; signed-in vendors can create and manage their own canteens.
-    match /canteens/{canteenId} {
-      allow read: if true;
-      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update, delete: if signedIn() && (
-        resource.data.ownerId == request.auth.uid || canteenOwner(canteenId)
-      );
-    }
-
-    // Vendor applications are private.
-    match /sellerRequests/{userId} {
-      allow read: if ownUser(userId);
-      allow create: if ownUser(userId)
-        && request.resource.data.userId == request.auth.uid;
+    // Availability only: never exposes the linked UID, email, name or profile.
+    match /phoneClaims/{phone} {
+      allow get: if verified() && phone.matches('^[6-9][0-9]{9}$');
+      allow list: if false;
+      allow create: if verified() && phone.matches('^[6-9][0-9]{9}$')
+        && request.resource.data.keys().hasOnly(['claimed', 'createdAt'])
+        && request.resource.data.claimed == true && request.resource.data.createdAt == request.time
+        && !exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.phone == phone;
       allow update, delete: if false;
     }
-
-    // Orders are accessible to signed-in campus users (buyers tracking passes, sellers managing kitchen KDS)
-    match /orders/{orderId} {
-      allow read: if signedIn();
-      allow create: if signedIn() && (
-        request.resource.data.buyerId == request.auth.uid ||
-        request.resource.data.buyerId == 'student_guest'
-      );
-      allow update: if signedIn();
+    match /canteens/{id} {
+      allow read: if true;
+      allow create: if seller() && request.resource.data.ownerId == request.auth.uid && request.resource.data.id == id
+        && request.resource.data.name is string && request.resource.data.menu is list
+        && request.resource.data.lat is number && request.resource.data.lng is number;
+      allow update: if seller() && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId && request.resource.data.id == resource.data.id;
+      allow delete: if seller() && resource.data.ownerId == request.auth.uid;
+    }
+    match /sellerRequests/{id} {
+      allow read: if admin();
+      allow update: if admin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'reviewedBy', 'reviewReason', 'updatedAt', 'adminActionId'])
+        && request.resource.data.status in ['APPROVED', 'REJECTED'] && request.resource.data.reviewedBy == request.auth.uid
+        && get(/databases/$(database)/documents/users/$(id)).data.userType == 'seller'
+        && (request.resource.data.status != 'APPROVED' || get(/databases/$(database)/documents/users/$(id)).data.banStatus == 'active')
+        && getAfter(/databases/$(database)/documents/sellerApprovals/$(id)).data.approved == (request.resource.data.status == 'APPROVED')
+        && getAfter(/databases/$(database)/documents/sellerApprovals/$(id)).data.adminActionId == request.resource.data.adminActionId
+        && audited(request.resource.data, 'sellerRequests', id, request.resource.data.status);
+      allow read: if ownUser(id);
+      allow create: if ownUser(id) && ready() && get(/databases/$(database)/documents/users/$(id)).data.userType == 'seller' && request.resource.data.userId == id && request.resource.data.status == 'PENDING'
+        && request.resource.data.keys().hasOnly(['userId', 'status', 'stallName', 'location', 'upiId', 'universityId', 'submittedAt']);
+      allow update, delete: if false;
+    }
+    match /orders/{id} {
+      allow read: if admin();
+      allow read: if ready() && (resource.data.buyerId == request.auth.uid || (seller() && resource.data.sellerId == request.auth.uid));
+      allow get: if ready() && !exists(/databases/$(database)/documents/orders/$(id));
+      allow create: if newOrder(id, request.resource.data);
+      allow update: if changeOrder(id, resource.data, request.resource.data);
       allow delete: if false;
     }
-
-    match /universities/{universityId} {
-      allow read: if true;
-      allow write: if false;
+    match /pickupVerifications/{id} {
+      allow get: if assigned(get(/databases/$(database)/documents/orders/$(id)).data);
+      allow create, update: if assigned(get(/databases/$(database)/documents/orders/$(id)).data)
+        && request.resource.data.keys().hasOnly(['pin', 'attempt', 'checkedAt'])
+        && request.resource.data.pin.matches('^[0-9]{4}$') && request.resource.data.checkedAt == request.time
+        && getAfter(/databases/$(database)/documents/orders/$(id)).data.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/orders/$(id)).data.pickupAttempts == request.resource.data.attempt
+        && get(/databases/$(database)/documents/orders/$(id)).data.pickupAttempts != request.resource.data.attempt;
+      allow delete: if false;
     }
-
+    match /sellerApprovals/{id} {
+      allow get: if verified(); allow list: if admin();
+      allow create, update: if admin() && request.resource.data.keys().hasOnly(['approved', 'reviewedBy', 'updatedAt', 'adminActionId'])
+        && request.resource.data.approved is bool && request.resource.data.reviewedBy == request.auth.uid
+        && getAfter(/databases/$(database)/documents/sellerRequests/$(id)).data.adminActionId == request.resource.data.adminActionId
+        && audited(request.resource.data, 'sellerRequests', id, request.resource.data.approved ? 'APPROVED' : 'REJECTED');
+    }
+    match /locationTestAccess/{id} { allow get: if ownUser(id); allow list, write: if false; }
+    match /admins/{id} { allow get: if verified() && request.auth.uid == id; allow list, write: if false; }
+    match /adminAudit/{id} {
+      allow read: if admin();
+      allow create: if admin() && request.resource.data.keys().hasOnly(['actorUid', 'targetType', 'targetId', 'action', 'reason', 'createdAt'])
+        && request.resource.data.actorUid == request.auth.uid && request.resource.data.createdAt == request.time
+        && request.resource.data.reason is string && request.resource.data.reason.size() > 0 && request.resource.data.reason.size() <= 500
+        && request.resource.data.targetType in ['users', 'sellerRequests']
+        && getAfter(/databases/$(database)/documents/$(request.resource.data.targetType)/$(request.resource.data.targetId)).data.adminActionId == id
+        && getAfter(/databases/$(database)/documents/$(request.resource.data.targetType)/$(request.resource.data.targetId)).data.updatedAt == request.time;
+      allow update, delete: if false;
+    }
+    match /universities/{id} { allow read: if true; allow write: if false; }
     match /{document=**} { allow read, write: if false; }
   }
 }

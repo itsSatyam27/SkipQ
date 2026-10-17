@@ -133,7 +133,7 @@ def generate_pdf(output_path):
         fontName='Times-Bold',
         fontSize=9.5,
         leading=13,
-        alignment=TA_CENTER,
+        alignment=TA_LEFT,
         spaceBefore=10,
         spaceAfter=4,
         keepWithNext=True
@@ -263,14 +263,12 @@ def generate_pdf(output_path):
         "synchronized lecture breaks, creating extensive queue wait times, lost instructional hours, and operational "
         "overhead for cafeteria operators. Existing commercial food-delivery platforms cannot resolve these localized bottlenecks "
         "due to hefty commission structures, dependency on third-party couriers, and the total lack of perimeter geofencing. "
-        "This paper presents SkipQ, an edge-aware, real-time micro-ordering and queue-mitigation platform designed specifically "
-        "for higher education campuses. SkipQ combines client-side Haversine geofencing within a 300-meter threshold to suppress "
-        "phantom and off-campus orders, an atomic dual-role finite state machine linking student ordering with a vendor Point-of-Sale "
-        "(POS) terminal, and a resilient synchronization pipeline merging Cloud Firestore with zero-latency local BroadcastChannel "
-        "fallbacks. The system further introduces an Active Booking Pill with dynamic countdown states, ephemeral 4-digit PIN verification "
-        "handshakes, and algorithmic anti-ghosting penalty safeguards. Empirical deployment across Silver Oak University food outlets "
-        "demonstrates an 81.4% reduction in peak counter queuing dwell time, sub-120ms cross-client synchronization latency, and "
-        "zero order abandonment.</b>"
+        "This paper presents SkipQ, an Expo-based, real-time micro-ordering and queue-mitigation application for higher education campuses. "
+        "The current implementation uses client-side Haversine distance checks with a 500-meter ordering perimeter and a bounded GPS-accuracy "
+        "tolerance; it connects buyer ordering with a seller Point-of-Sale (POS) workflow through Cloud Firestore when configured. The application "
+        "also includes a Dynamic Active Booking Pill, a four-digit pickup-PIN handover flow, wallet and cancellation handling, and configurable "
+        "anti-ghosting controls. This paper documents the implemented architecture and defines a reproducible evaluation plan; it does not claim "
+        "unmeasured deployment outcomes.</b>"
     )
     story.append(Paragraph(abstract_text, abstract_style))
 
@@ -298,16 +296,16 @@ def generate_pdf(output_path):
         body_style
     ))
     story.append(Paragraph(
-        "To resolve these fundamental deficiencies, we developed and deployed SkipQ—a high-performance, real-time micro-ordering and queue "
+        "To address these deficiencies, we developed SkipQ—a real-time micro-ordering and queue "
         "mitigation system built natively for campus dining. SkipQ shifts the order placement and kitchen fulfillment paradigms through five "
         "distinct engineering innovations:",
         body_style
     ))
-    story.append(Paragraph("● <b>Perimeter Geofencing Engine:</b> Enforces strict mathematical GPS bounds (R &le; 300 meters) calculated via the Haversine formula on client hardware, ensuring orders can only be placed when physically present on campus.", bullet_style))
-    story.append(Paragraph("● <b>Dual-Role Synchronization:</b> Seamlessly binds student/faculty ordering clients with vendor POS kitchen displays through an event-driven hybrid state fabric combining Cloud Firestore and local cross-tab event broadcasts.", bullet_style))
-    story.append(Paragraph("● <b>Dynamic Island Booking Pass:</b> A non-intrusive floating island capsule and digital pass providing synchronized countdown timers, preparation stage tracking, and haptic/audio alerts.", bullet_style))
-    story.append(Paragraph("● <b>Zero-Trust PIN Handshake:</b> An ephemeral 4-digit token verification protocol that ensures food is only surrendered to the verified buyer, preventing theft and mistaken handoffs.", bullet_style))
-    story.append(Paragraph("● <b>Anti-Ghosting Penalty Engine:</b> Algorithmic enforcement of wallet forfeitures, temporary lockouts, and persistent bans for uncollected meals, mitigating vendor financial losses.", bullet_style))
+    story.append(Paragraph("&bull; <b>Perimeter Geofencing:</b> Uses a client-side Haversine calculation with a 500-meter ordering limit and a bounded location-accuracy tolerance.", bullet_style))
+    story.append(Paragraph("&bull; <b>Buyer and Seller Workflows:</b> Connects menu browsing, cart placement, seller queue management, order-state updates, and pickup completion.", bullet_style))
+    story.append(Paragraph("&bull; <b>Dynamic Booking Pass:</b> Provides a persistent active-order indicator, a digital pickup pass, status tracking, and audio or haptic feedback where supported.", bullet_style))
+    story.append(Paragraph("&bull; <b>Pickup PIN Verification:</b> Uses a four-digit pickup PIN as an operational handover check at the seller POS.", bullet_style))
+    story.append(Paragraph("&bull; <b>Anti-Ghosting Controls:</b> Records unclaimed-order handling and account restrictions; production enforcement depends on deployed backend endpoints and rules.", bullet_style))
 
     # SECTION II
     story.append(Paragraph("II. THEORETICAL FOUNDATION & RELATED WORK", heading1_style))
@@ -320,8 +318,8 @@ def generate_pdf(output_path):
     story.append(Paragraph("<i>W</i> = <i>W<sub>q</sub></i> + 1/&mu; = &lambda; / [&mu;(&mu; - &lambda;)] + 1/&mu; &nbsp;&nbsp;&nbsp;&nbsp;(1)", equation_style))
     story.append(Paragraph(
         "As &lambda; approaches service capacity, counter dwell times diverge asymptotically towards infinity. SkipQ decouples the ordering "
-        "and payment phase from physical counter arrival, converting synchronized arrival bursts into an asynchronous, pipeline-buffered "
-        "preparation queue with near-zero counter dwell time (<i>W<sub>q</sub></i> &rarr; 0).",
+        "and payment phase from physical counter arrival, converting synchronized arrival bursts into an asynchronous preparation queue. "
+        "The magnitude of any queue-time improvement must be established through measurement rather than assumed from the architecture alone.",
         body_style
     ))
 
@@ -335,16 +333,15 @@ def generate_pdf(output_path):
     story.append(Paragraph("<i>d</i> = 2<i>R</i> &middot; atan2(&radic;<i>a</i>, &radic;(1 - <i>a</i>)) &nbsp;&nbsp;&nbsp;&nbsp;(3)", equation_style))
     story.append(Paragraph(
         "where &phi; represents geodetic latitude, &lambda; represents longitude, and R is the mean Earth radius taken as 6,371,000 meters. "
-        "The application enforces a hard gating condition: PermitOrder = TRUE if <i>d</i> &le; 300 meters, else FALSE.",
+        "The current implementation permits ordering when the distance, adjusted by a bounded GPS-accuracy tolerance, is within 500 meters of the selected canteen.",
         body_style
     ))
 
     # SECTION III
     story.append(Paragraph("III. SYSTEM ARCHITECTURE & DESIGN", heading1_style))
     story.append(Paragraph(
-        "SkipQ is constructed as an edge-oriented, multi-tenant progressive application running across mobile operating systems (iOS, Android via Expo) "
-        "and web environments. The platform is partitioned into three core decoupled layers: the Client Presentation Layer, the Hybrid Real-Time "
-        "State Tier, and the Cloud Security and Transactional Backend.",
+        "SkipQ is an Expo and React Native application targeting Android, iOS, and web environments. Its architecture separates the client presentation "
+        "layer, local application state, optional Cloud Firestore synchronization, and deployable backend and security controls.",
         body_no_indent
     ))
 
@@ -379,12 +376,11 @@ def generate_pdf(output_path):
         story.append(img2)
         story.append(Paragraph("<b>FIGURE 2. END-TO-END ORDER LIFECYCLE SEQUENCE.</b> Chronological interaction sequence depicting geofence validation, optimistic UI updates, Firestore state replication, POS kitchen acknowledgement, and 4-digit PIN verification.", fig_caption_style))
 
-    story.append(Paragraph("I. Hybrid Synchronization Engine", heading2_style))
+    story.append(Paragraph("I. Synchronization and Local Persistence", heading2_style))
     story.append(Paragraph(
-        "A critical challenge in institutional Wi-Fi environments is frequent packet drops and captive portal latency. SkipQ implements a dual-layer "
-        "synchronization pipeline. Primary data consistency is maintained via Google Cloud Firestore snapshot listeners with optimistic client writes. "
-        "Simultaneously, the application exposes a secondary BroadcastChannel synchronization bus allowing cross-tab and local-process state "
-        "dissemination with sub-5ms latency, backed by persistent AsyncStorage caching for offline recovery.",
+        "When Firebase is configured, SkipQ uses Cloud Firestore listeners for order and canteen updates. The web build additionally uses "
+        "BroadcastChannel, with a localStorage event fallback, to notify other open browser tabs. AsyncStorage preserves selected local application "
+        "state on device. These mechanisms improve responsiveness but do not substitute for server-side validation of financial or order-state transitions.",
         body_no_indent
     ))
 
@@ -395,33 +391,32 @@ def generate_pdf(output_path):
 
     story.append(Paragraph("II. Anti-Ghosting & Abandonment Policy", heading2_style))
     story.append(Paragraph(
-        "Unclaimed meals represent severe fiscal waste for canteen owners. SkipQ enforces an automated anti-ghosting protocol. Each order is "
-        "stamped with an expected pickup window (default: 15 minutes post preparation). If a student fails to present their 4-digit PIN within the grace period:",
+        "Unclaimed meals can create avoidable waste for canteen operators. SkipQ contains client-side handling for abandoned orders, wallet adjustments, "
+        "and account restrictions. For production use, these sensitive operations must be mediated by the deployed backend endpoints and Firestore rules:",
         body_no_indent
     ))
-    story.append(Paragraph("● <b>Financial Forfeiture:</b> The pre-paid wallet balance or digital transaction is surrendered directly to the vendor to reimburse food preparation costs.", bullet_style))
-    story.append(Paragraph("● <b>Reputation Increment:</b> The user's unclaimed order counter is atomically incremented in Firestore.", bullet_style))
-    story.append(Paragraph("● <b>Progressive Lockout:</b> Reaching three infractions triggers a mandatory 24-hour temporary suspension. Continued violations culminate in permanent platform expulsion.", bullet_style))
+    story.append(Paragraph("&bull; <b>Refund and penalty policy:</b> Define business rules and make the deployed backend the authority for wallet transfers and refunds.", bullet_style))
+    story.append(Paragraph("&bull; <b>Unclaimed-order tracking:</b> Record order status and an unclaimed-order count through validated server-side operations.", bullet_style))
+    story.append(Paragraph("&bull; <b>Account restrictions:</b> Apply lockouts only after a documented threshold and a user-facing appeal or support process.", bullet_style))
 
     # SECTION V
-    story.append(Paragraph("V. EXPERIMENTAL EVALUATION", heading1_style))
+    story.append(Paragraph("V. IMPLEMENTATION VALIDATION PLAN", heading1_style))
     story.append(Paragraph(
-        "SkipQ was evaluated in a controlled field study conducted across three primary food canteens at Silver Oak University during a two-week "
-        "examination period characterized by peak student volume. Metrics were logged across 1,420 unique student orders and compared against baseline "
-        "manual queuing performance.",
+        "The repository contains component-level tests for distance calculations and wallet or order behaviour, but it does not include a completed "
+        "field-study dataset. Before making operational performance claims, a future study should define a baseline, obtain appropriate institutional "
+        "approval, collect anonymized measurements, and report sample size, timing, failure cases, and statistical treatment.",
         body_no_indent
     ))
 
     # TABLE 1
-    story.append(Paragraph("<b>TABLE 1. QUANTITATIVE PERFORMANCE AND QUEUE COMPARISON.</b>", table_title_style))
+    story.append(Paragraph("<b>TABLE 1. IMPLEMENTATION COVERAGE AND VALIDATION EVIDENCE.</b>", table_title_style))
     table_data = [
-        ["System Metric", "Manual Queue", "SkipQ Platform", "Delta / Gain"],
-        ["Mean Wait Time (Wq)", "14.2 min", "2.6 min", "-81.4%"],
-        ["Peak Counter Density", "42 persons", "4 persons", "-90.5%"],
-        ["Order Placement Time", "95 sec", "12 sec", "-87.3%"],
-        ["Order Abandonment Rate", "7.8%", "0.0%", "-100.0%"],
-        ["Vendor Hourly Capacity", "38 orders/hr", "92 orders/hr", "+142.1%"],
-        ["State Sync Latency", "N/A", "118 ms", "Real-Time"]
+        ["Area", "Implemented", "Current evidence", "Field metric"],
+        ["Geofence", "Haversine + tolerance", "distance unit test", "To measure"],
+        ["Order lifecycle", "Buyer, POS, pickup PIN", "order/wallet test", "To measure"],
+        ["Real-time updates", "Firestore; web tab events", "implementation review", "To measure"],
+        ["Persistence", "Firestore / AsyncStorage", "implementation review", "To measure"],
+        ["Security controls", "Rules + Functions available", "deployment checklist", "To validate"]
     ]
     t = Table(table_data, colWidths=[COL_WIDTH*0.38, COL_WIDTH*0.22, COL_WIDTH*0.22, COL_WIDTH*0.18])
     t.setStyle(TableStyle([
@@ -442,32 +437,33 @@ def generate_pdf(output_path):
     story.append(Spacer(1, 4))
 
     story.append(Paragraph(
-        "As summarized in Table 1, the implementation of SkipQ yielded an 81.4% decrease in mean queue dwell time, shrinking physical wait times "
-        "from 14.2 minutes to 2.6 minutes (representing only physical tray retrieval). Counter density during peak lecture breaks fell from over "
-        "40 individuals crowding cashier counters to an average of 4 individuals collecting verified meals.",
+        "Table 1 separates implemented capabilities from claims that require future measurement. A pilot evaluation should capture order placement time, "
+        "preparation and pickup duration, abandoned orders, synchronization delay, and seller throughput, then compare these measures with a documented "
+        "manual-queue baseline.",
         body_no_indent
     ))
 
     # SECTION VI
     story.append(Paragraph("VI. DISCUSSION & SECURITY CONSIDERATIONS", heading1_style))
     story.append(Paragraph(
-        "Institutional privacy and security were prioritized throughout system construction. Student location coordinates are evaluated strictly "
-        "on the client hardware; raw GPS coordinates are never transmitted or logged to central database collections. Only a binary boolean "
-        "validation flag is asserted during cryptographic Cloud Function execution.",
+        "The application performs proximity checks on the client before allowing cart and order actions. Client-side checks improve user feedback "
+        "but are not a complete security boundary; a production deployment should validate privileged order, payment, refund, and seller actions "
+        "through deployed Cloud Functions and restrictive Firestore rules.",
         body_no_indent
     ))
     story.append(Paragraph(
-        "Furthermore, vendor authentication mandates custom administrative claims (seller: true) issued exclusively via trusted Cloud IAM processes, "
-        "preventing unauthorized menu tampering or fraudulent payout diversions.",
+        "The repository includes a deployment guide that requires seller claims to be issued through a trusted administrative process and recommends "
+        "deploying the order endpoints and Firestore rules before live ordering is enabled. These controls must be configured and tested in the target "
+        "Firebase project; their presence in source control alone is not proof of a secure production deployment.",
         body_style
     ))
 
     # SECTION VII
     story.append(Paragraph("VII. CONCLUSION & FUTURE WORK", heading1_style))
     story.append(Paragraph(
-        "This paper presented SkipQ, an edge-native campus dining optimization platform that resolves the persistent challenge of cafeteria congestion "
-        "through client-side geofencing, real-time dual-role synchronization, and cryptographic digital pickup verification. The production results "
-        "demonstrate that localized micro-ordering can virtually eradicate physical queuing while increasing vendor throughput by over 140%.",
+        "This paper presented SkipQ, an Expo-based campus dining prototype that combines client-side proximity checks, buyer and seller ordering workflows, "
+        "real-time Firestore integration when configured, and a pickup-PIN handover flow. The implementation is positioned for controlled evaluation; "
+        "it does not establish queue reduction, abandonment, latency, or throughput outcomes without a documented study.",
         body_no_indent
     ))
     story.append(Paragraph(
@@ -488,14 +484,10 @@ def generate_pdf(output_path):
     refs = [
         "[1] D. Gross, J. F. Shortle, J. M. Thompson, and C. M. Harris, <i>Fundamentals of Queueing Theory</i>, 5th ed. Hoboken, NJ: John Wiley & Sons, 2018.",
         "[2] R. W. Sinnott, \"Virtues of the Haversine,\" <i>Sky and Telescope</i>, vol. 68, no. 2, p. 159, 1984.",
-        "[3] E. Curry et al., \"Real-time event processing for campus dining crowd management,\" <i>IEEE Trans. Hum.-Mach. Syst.</i>, vol. 49, no. 4, pp. 312-321, 2019.",
-        "[4] M. B. Eisenberg and J. Berkowitz, \"Information problem-solving in decentralized student services,\" in <i>Proc. ACM SIGCHI Conf. Human Factors Comput. Syst.</i>, 2020, pp. 841-852.",
-        "[5] S. Kumar and P. K. Sharma, \"Geofencing algorithms for hyper-local commercial services: A comparative evaluation,\" <i>IEEE Internet Things J.</i>, vol. 8, no. 11, pp. 9102-9114, 2021.",
-        "[6] J. Dean and S. Ghemawat, \"MapReduce: Simplified data processing on large clusters,\" <i>Commun. ACM</i>, vol. 51, no. 1, pp. 107-113, 2008.",
-        "[7] A. Lakshman and P. Malik, \"Cassandra: A decentralized structured storage system,\" <i>ACM SIGOPS Oper. Syst. Rev.</i>, vol. 44, no. 2, pp. 35-40, 2010.",
-        "[8] Google Cloud Platform, \"Cloud Firestore Architecture and Realtime Synchronization Protocols,\" Whitepaper, Tech. Rep. GCP-2023-FS, 2023.",
-        "[9] W3C Web Audio Working Group, \"Web Audio API: W3C Recommendation,\" World Wide Web Consortium, Tech. Rep., Jun. 2021.",
-        "[10] A. Tanenbaum and M. Van Steen, <i>Distributed Systems: Principles and Paradigms</i>, 3rd ed. Amsterdam: CreateSpace, 2017."
+        "[3] Firebase, \"Get data with Cloud Firestore: Listen to realtime updates,\" Firebase Documentation. [Online]. Available: https://firebase.google.com/docs/firestore/query-data/listen",
+        "[4] Firebase, \"Get started with Cloud Firestore Security Rules,\" Firebase Documentation. [Online]. Available: https://firebase.google.com/docs/firestore/security/get-started",
+        "[5] Expo, \"Expo SDK 57 Reference: Location,\" Expo Documentation. [Online]. Available: https://docs.expo.dev/versions/v57.0.0/sdk/location/",
+        "[6] W3C, \"Web Audio API,\" W3C Recommendation. [Online]. Available: https://www.w3.org/TR/webaudio/"
     ]
     for r in refs:
         story.append(Paragraph(r, ref_style))

@@ -1,6 +1,7 @@
 // Haversine formula to compute distance in meters between two GPS coordinates
 export function getDistanceInMeters(lat1, lon1, lat2, lon2) {
-  if (!lat1 || !lon1 || !lat2 || !lon2) return 0;
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)
+    || Math.abs(lat1) > 90 || Math.abs(lat2) > 90 || Math.abs(lon1) > 180 || Math.abs(lon2) > 180) return Infinity;
   const R = 6371000; // Earth's radius in meters
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
@@ -40,7 +41,7 @@ export function findClosestUniversity(userLat, userLng, universities) {
 
 export function sortUniversitiesByDistance(userLat, userLng, universities) {
   if (!universities || universities.length === 0) return [];
-  if (!userLat || !userLng) {
+  if (!Number.isFinite(userLat) || !Number.isFinite(userLng)) {
     return universities.map((u, idx) => ({
       ...u,
       distanceMeters: null,
@@ -72,6 +73,7 @@ export const MAX_ORDER_DISTANCE_METERS = 500;
  * @returns {boolean}
  */
 export function isWithinOrderingPerimeter(distMeters, locAccuracy = 0) {
+  if (!Number.isFinite(distMeters) || distMeters < 0 || !Number.isFinite(locAccuracy) || locAccuracy < 0 || locAccuracy > 100) return false;
   // Allow up to 50m of indoor GPS drift tolerance
   const driftBuffer = Math.min(50, Math.max(0, locAccuracy));
   return (distMeters - driftBuffer) <= MAX_ORDER_DISTANCE_METERS;

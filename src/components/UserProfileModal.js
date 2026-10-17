@@ -187,13 +187,13 @@ export default function UserProfileModal({ visible, onClose }) {
               </>
             )}
 
-            <Text style={styles.label}>Mobile Phone (SMS Notifications)</Text>
+            <Text style={styles.label}>Linked Phone Number</Text>
             <TextInput
               style={styles.input}
               placeholder="e.g. 9876543210"
               placeholderTextColor="#64748b"
               value={phone}
-              onChangeText={setPhone}
+              editable={false}
               keyboardType="phone-pad"
             />
 
@@ -203,7 +203,7 @@ export default function UserProfileModal({ visible, onClose }) {
               placeholder="e.g. user@silveroakuni.ac.in"
               placeholderTextColor="#64748b"
               value={email}
-              onChangeText={setEmail}
+              editable={false}
               keyboardType="email-address"
               autoCapitalize="none"
             />

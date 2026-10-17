@@ -1,3 +1,7 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { prepMinutes, prepLabel, itemCountLabel } from '../utils/orderDisplay.cjs';
+import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
+import InterfaceIcon from './InterfaceIcon';
 import React, { useContext, useMemo, useState } from 'react';
 import {
   StyleSheet,
@@ -11,13 +15,21 @@ import {
   Alert
 } from 'react-native';
 import { AppContext } from '../context/AppContext';
+import LocationControl from './LocationControl';
+import { isUsableLocation } from '../services/locationPolicy.cjs';
 import { getDistanceInMeters, formatDistance, isWithinOrderingPerimeter, MAX_ORDER_DISTANCE_METERS } from '../utils/distance';
 
 export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout, onOpenPassModal }) {
+  const styles = useSellerStyles(baseStyles);
+  const insets = useSafeAreaInsets();
+  const cartDockBottom = 70 + Math.max(12, insets.bottom) + 12;
+  const { light } = useSellerTheme();
   const {
     canteens,
     university,
     userLocation,
+    locationTesting,
+    requestUserLocation,
     banStatus,
     cart,
     addToCart,
@@ -37,7 +49,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
   const [expandedDish, setExpandedDish] = useState(null);
 
   const campusCanteens = useMemo(() => canteens.filter(c => c.universityId === university), [canteens, university]);
-  const hasUserLocation = Boolean(userLocation && userLocation.lat != null && userLocation.lng != null);
+  const hasUserLocation = isUsableLocation(userLocation);
   const souCampusDist = hasUserLocation
     ? getDistanceInMeters(userLocation.lat, userLocation.lng, 23.0917, 72.5349)
     : null;
@@ -47,12 +59,12 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
   const radarItems = useMemo(() => {
   const itemGroupMap = {};
   campusCanteens.forEach(shop => {
-    const shopLat = shop.lat || 23.0917;
-    const shopLng = shop.lng || 72.5349;
+    const shopLat = shop.lat ?? 23.0917;
+    const shopLng = shop.lng ?? 72.5349;
     const distMeters = hasUserLocation
       ? getDistanceInMeters(userLocation.lat, userLocation.lng, shopLat, shopLng)
       : null;
-    const isWithin300m = distMeters != null && isWithinOrderingPerimeter(distMeters, userLocation?.accuracy || 0);
+    const isWithin300m = locationTesting || (distMeters != null && isWithinOrderingPerimeter(distMeters, userLocation?.accuracy || 0));
 
     (shop.menu || []).forEach(item => {
       const q = searchQuery.toLowerCase().trim();
@@ -68,8 +80,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
         item.name.toLowerCase().includes(selectedCategory.toLowerCase());
 
       const matchesVeg = !vegOnly || item.isVeg === true;
-      const prepMinMatch = (item.prepTime || '').match(/\d+/);
-      const prepMinsVal = prepMinMatch ? parseInt(prepMinMatch[0], 10) : 5;
+      const prepMinsVal = prepMinutes(item.prepTime);
       const matchesFast = !fastPrepOnly || prepMinsVal <= 5;
 
       if (matchesQuery && matchesCat && matchesVeg && matchesFast) {
@@ -81,7 +92,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
             category: item.category || 'Snacks',
             isVeg: item.isVeg !== undefined ? item.isVeg : true,
             description: item.description,
-            image: item.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=400&q=80',
+            image: item.image || '',
             canteens: []
           };
         }
@@ -92,7 +103,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
           distMeters,
           isWithin300m,
           price: item.price,
-          prepTime: item.prepTime || '5m',
+          prepTime: prepLabel(item.prepTime),
           isAvailable: item.isAvailable,
           isVeg: item.isVeg,
           itemId: item.id,
@@ -104,7 +115,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
   });
 
   return Object.values(itemGroupMap);
-  }, [campusCanteens, fastPrepOnly, searchQuery, selectedCategory, userLocation?.lat, userLocation?.lng, userLocation?.accuracy, vegOnly]);
+  }, [locationTesting, campusCanteens, fastPrepOnly, searchQuery, selectedCategory, userLocation?.lat, userLocation?.lng, userLocation?.accuracy, vegOnly]);
   const categories = ['All', 'Snacks', 'Beverages', 'Meals', 'Rolls', 'Sandwiches', 'Desserts'];
 
   // Cart calculations
@@ -117,26 +128,27 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
     return found ? found.qty : 0;
   };
 
-  const handleAddToCart = (shopObj, itemObj, isWithin300m, distMeters) => {
+  const handleAddToCart = async (shopObj, itemObj) => {
     if (banStatus === 'perm_ban') {
       Alert.alert('Account Restricted', 'Your account is permanently suspended due to repeated uncollected orders.');
       return;
     }
-    if (!hasUserLocation) {
-      Alert.alert(
-        '📍 GPS Location Required',
-        'Please enable device location permissions so we can verify you are within Silver Oak University campus (<500m).',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-    if (!isWithin300m || (distMeters != null && distMeters > MAX_ORDER_DISTANCE_METERS)) {
-      Alert.alert(
-        '📍 Campus Geofence Restriction',
-        `You are currently ${formatDistance(distMeters)} away from ${shopObj.name}. SkipQ strictly allows ordering only when you are physically on campus (<500m).`,
-        [{ text: 'Got it', style: 'cancel' }]
-      );
-      return;
+    if (!locationTesting) {
+      let location = userLocation;
+      if (!isUsableLocation(location)) {
+        try { location = await requestUserLocation(); } catch { return; }
+      }
+      if (!isUsableLocation(location)) return;
+      const distMeters = getDistanceInMeters(location.lat, location.lng, shopObj.lat ?? 23.0917, shopObj.lng ?? 72.5349);
+      const isWithin300m = isWithinOrderingPerimeter(distMeters, location.accuracy);
+      if (!isWithin300m) {
+        Alert.alert(
+          'Outside pickup range',
+          `You are currently ${formatDistance(distMeters)} away from ${shopObj.name}. SkipQ strictly allows ordering only when you are physically on campus (<500m).`,
+          [{ text: 'Got it', style: 'cancel' }]
+        );
+        return;
+      }
     }
     if (cart.shopId && cart.shopId !== shopObj.id && cartTotalItems > 0) {
       Alert.alert(
@@ -166,46 +178,19 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
         <View style={styles.greetingRow}>
           <View>
             <Text style={styles.greetingTitle}>
-              {userProfile?.name ? `Hey ${userProfile.name.split(' ')[0]} 👋` : 'Hey Foodie 👋'}
+              {userProfile?.name ? `Hey ${userProfile.name.split(' ')[0]} ` : 'Hey Foodie '}
             </Text>
             <Text style={styles.greetingSub}>Order ahead & pick up with zero queue</Text>
           </View>
 
-          {/* Discreet GPS Status Chip */}
-          <TouchableOpacity
-            style={[styles.rangePill, isWithinCampus ? styles.rangePillActive : styles.rangePillAway]}
-            onPress={() => {
-              if (!hasUserLocation) {
-                Alert.alert(
-                  '📍 Location Services Needed',
-                  'Please enable GPS location to verify campus perimeter status (<500m).',
-                  [{ text: 'OK' }]
-                );
-              } else if (!isWithinCampus) {
-                Alert.alert(
-                  '📍 Off Campus (>500m)',
-                  `You are ${formatDistance(souCampusDist)} from Silver Oak University. Ordering is restricted to students physically on campus (<500m).`,
-                  [{ text: 'OK' }]
-                );
-              } else {
-                Alert.alert(
-                  '📍 On Campus',
-                  `You are within ${formatDistance(souCampusDist)} of Silver Oak University. Live order ordering is active!`,
-                  [{ text: 'OK' }]
-                );
-              }
-            }}
-          >
-            <View style={[styles.rangeDot, isWithinCampus ? styles.rangeDotActive : styles.rangeDotAway]} />
-            <Text style={[styles.rangeText, isWithinCampus ? styles.rangeTextActive : styles.rangeTextAway]}>
-              {!hasUserLocation ? 'GPS pending' : isWithinCampus ? 'On Campus' : `${formatDistance(souCampusDist)} away`}
-            </Text>
-          </TouchableOpacity>
+          <LocationControl compact />
         </View>
+
+        {!hasUserLocation && !locationTesting && <LocationControl />}
 
         {/* Minimal Search Box */}
         <View style={styles.searchBar}>
-          <Text style={styles.searchIcon}>🔍</Text>
+          <View style={{ padding: 6 }}><InterfaceIcon name="search" size={24} color="#ffb313" /></View>
           <TextInput
             style={styles.searchInput}
             placeholder="Search puff, chai, frankie, meals..."
@@ -215,7 +200,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
           />
           {Boolean(searchQuery) && (
             <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={styles.searchClearText}>✕</Text>
+              <Text style={styles.searchClearText}></Text>
             </TouchableOpacity>
           )}
         </View>
@@ -245,7 +230,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
             style={[styles.vegFilterChip, vegOnly && styles.vegFilterChipActive]}
             onPress={() => setVegOnly(!vegOnly)}
           >
-            <Text style={styles.vegFilterText}>{vegOnly ? '🟢 Veg Only ✓' : '🌱 Veg'}</Text>
+            <Text style={styles.vegFilterText}>{vegOnly ? ' Veg Only ' : ' Veg'}</Text>
           </TouchableOpacity>
 
           {/* Quick Prep Toggle Chip */}
@@ -253,7 +238,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
             style={[styles.fastFilterChip, fastPrepOnly && styles.fastFilterChipActive]}
             onPress={() => setFastPrepOnly(!fastPrepOnly)}
           >
-            <Text style={styles.fastFilterText}>{fastPrepOnly ? '⚡ ≤5m ✓' : '⚡ ≤5m'}</Text>
+            <Text style={styles.fastFilterText}>{fastPrepOnly ? ' ≤5m ' : ' ≤5m'}</Text>
           </TouchableOpacity>
         </ScrollView>
 
@@ -283,13 +268,13 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
         <FlatList
           data={radarItems}
           keyExtractor={item => item.name}
-          contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: 160 }]}
+          contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: cartDockBottom + 100 }]}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             campusCanteens.length === 0 ? (
               <View style={styles.emptyWrap}>
                 <View style={styles.emptyIconCircle}>
-                  <Text style={styles.emptyIcon}>🏪</Text>
+                  <View style={{ padding: 6 }}><InterfaceIcon name="menu" size={24} color="#ffb313" /></View>
                 </View>
                 <Text style={styles.emptyTitle}>No Live Canteens on Campus Yet</Text>
                 <Text style={styles.emptySub}>
@@ -305,13 +290,13 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                     onPress={() => setRole('seller')}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.emptyVendorActionBtnText}>🏪 Open Vendor POS / Register Canteen 🚀</Text>
+                    <Text style={styles.emptyVendorActionBtnText}> Open Vendor POS / Register Canteen </Text>
                   </TouchableOpacity>
                 </View>
               </View>
             ) : (
               <View style={styles.emptyWrap}>
-                <Text style={styles.emptyIcon}>🍽️</Text>
+                <View style={{ padding: 6 }}><InterfaceIcon name="menu" size={24} color="#ffb313" /></View>
                 <Text style={styles.emptyTitle}>No dishes found</Text>
                 <Text style={styles.emptySub}>
                   {searchQuery
@@ -330,7 +315,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                   }}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.clearFilterBtnText}>✕ Reset Filters</Text>
+                  <Text style={styles.clearFilterBtnText}> Reset Filters</Text>
                 </TouchableOpacity>
               </View>
             )
@@ -349,23 +334,23 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                 <View style={styles.dishMainRow}>
                   {/* Dish Image with Veg Dot Badge */}
                   <View style={styles.imageWrap}>
-                    <Image source={{ uri: group.image }} style={styles.dishImg} resizeMode="cover" />
-                    <View style={[styles.vegDotBadge, group.isVeg ? styles.vegBadgeGreen : styles.vegBadgeRed]}>
-                      <View style={[styles.vegDotInner, group.isVeg ? styles.vegDotGreen : styles.vegDotRed]} />
-                    </View>
+                    {group.image ? <Image source={{ uri: group.image }} style={styles.dishImg} resizeMode="cover" /> : <View style={[styles.dishImg, { alignItems: 'center', justifyContent: 'center' }]}><InterfaceIcon name="menu" size={25} color="#a5a9b2" /></View>}
+
                   </View>
 
                   {/* Dish Details */}
                   <View style={styles.dishDetails}>
                     <View style={styles.titlePriceRow}>
+                    <View style={[styles.nameDietBadge, group.isVeg ? styles.vegBadgeGreen : styles.vegBadgeRed]}>
+                      <View style={[styles.vegDotInner, group.isVeg ? styles.vegDotGreen : styles.vegDotRed]} />
+                    </View>
                       <Text style={styles.dishTitle} numberOfLines={1}>
                         {group.name}
                       </Text>
-                      <Text style={styles.dishPrice}>₹{primaryShop.price}</Text>
                     </View>
 
                     <Text style={styles.dishStallMeta} numberOfLines={1}>
-                      {primaryShop.shopName} • ⏳ {primaryShop.prepTime}
+                      {primaryShop.shopName} •  {primaryShop.prepTime}
                     </Text>
 
                     {Boolean(group.description) && (
@@ -389,6 +374,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                     )}
                   </View>
 
+                  <Text style={styles.dishPrice}>₹{primaryShop.price}</Text>
                   {/* Right Action: Add button or Stepper */}
                   <View style={styles.dishActionCol}>
                     {!primaryShop.isAvailable ? (
@@ -439,7 +425,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                           <View style={{ flex: 1 }}>
                             <Text style={styles.altStallName}>{alt.shopName}</Text>
                             <Text style={styles.altStallMeta}>
-                              {formatDistance(alt.distMeters)} • ⏳ {alt.prepTime}
+                              {formatDistance(alt.distMeters)} •  {alt.prepTime}
                             </Text>
                           </View>
                           <Text style={styles.altStallPrice}>₹{alt.price}</Text>
@@ -475,12 +461,12 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
         <FlatList
           data={campusCanteens}
           keyExtractor={item => item.id}
-          contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: 160 }]}
+          contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: cartDockBottom + 100 }]}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <View style={styles.emptyIconCircle}>
-                <Text style={styles.emptyIcon}>🏪</Text>
+                <View style={{ padding: 6 }}><InterfaceIcon name="menu" size={24} color="#ffb313" /></View>
               </View>
               <Text style={styles.emptyTitle}>No Canteen Stalls Registered</Text>
               <Text style={styles.emptySub}>
@@ -491,13 +477,13 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                 onPress={() => setRole('seller')}
                 activeOpacity={0.8}
               >
-                <Text style={styles.emptyVendorActionBtnText}>🏪 Open Vendor POS / Register Canteen 🚀</Text>
+                <Text style={styles.emptyVendorActionBtnText}> Open Vendor POS / Register Canteen </Text>
               </TouchableOpacity>
             </View>
           }
           renderItem={({ item: shop }) => {
-            const shopLat = shop.lat || 23.0917;
-            const shopLng = shop.lng || 72.5349;
+            const shopLat = shop.lat ?? 23.0917;
+            const shopLng = shop.lng ?? 72.5349;
             const distMeters = hasUserLocation
               ? getDistanceInMeters(userLocation.lat, userLocation.lng, shopLat, shopLng)
               : null;
@@ -511,17 +497,17 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                     <Text style={styles.stallName}>{shop.name}</Text>
                     <View style={[styles.stallStatusBadge, isOpen ? styles.statusOpen : styles.statusClosed]}>
                       <Text style={[styles.stallStatusText, isOpen ? styles.statusTextOpen : styles.statusTextClosed]}>
-                        {isOpen ? '🟢 Open' : '🔴 Closed'}
+                        {isOpen ? ' Open' : ' Closed'}
                       </Text>
                     </View>
                   </View>
 
-                  <Text style={styles.stallLocation}>📍 {shop.location}</Text>
+                  <Text style={styles.stallLocation}> {shop.location}</Text>
 
                   <View style={styles.stallMetaRow}>
-                    <Text style={styles.stallMetaChip}>⏳ {shop.avgWaitMins || 5}m wait</Text>
-                    <Text style={styles.stallMetaChip}>👥 {shop.currentQueue || 0} in queue</Text>
-                    <Text style={styles.stallMetaChip}>📍 {distMeters != null ? formatDistance(distMeters) : 'Location pending'}</Text>
+                    <Text style={styles.stallMetaChip}> {shop.avgWaitMins || 5}m wait</Text>
+                    <Text style={styles.stallMetaChip}> {shop.currentQueue || 0} in queue</Text>
+                    <Text style={styles.stallMetaChip}> {distMeters != null ? formatDistance(distMeters) : 'Location pending'}</Text>
                   </View>
 
                   <TouchableOpacity
@@ -532,7 +518,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                     }}
                   >
                     <Text style={styles.viewStallMenuText}>
-                      Browse Menu ({shop.menu ? shop.menu.length : 0} items) ➔
+                      Browse Menu ({itemCountLabel(shop.menu?.length || 0)})
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -544,11 +530,11 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
 
       {/* Floating Cart Checkout Bar */}
       {cartTotalItems > 0 && (
-        <View style={styles.floatingCartDock}>
+        <View style={[styles.floatingCartDock, { bottom: cartDockBottom }]}>
           <TouchableOpacity style={styles.floatingCartPill} onPress={onOpenCartCheckout} activeOpacity={0.9}>
             <View style={styles.cartPillLeft}>
               <View style={styles.cartIconBadge}>
-                <Text style={styles.cartIconText}>🛒</Text>
+                <View style={{ padding: 6 }}><InterfaceIcon name="orders" size={24} color="#ffb313" /></View>
               </View>
               <View>
                 <Text style={styles.cartPillTitle}>{cartTotalItems} item{cartTotalItems > 1 ? 's' : ''} in cart</Text>
@@ -557,7 +543,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
             </View>
             <View style={styles.cartPillRight}>
               <Text style={styles.cartPillPrice}>₹{cartTotalPrice}</Text>
-              <Text style={styles.cartPillAction}>View Cart ➔</Text>
+              <Text style={styles.cartPillAction}>View Cart </Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -566,10 +552,11 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
+  nameDietBadge: { width: 13, height: 13, borderRadius: 3, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   screenContainer: {
     flex: 1,
-    backgroundColor: '#edf3f8',
+    backgroundColor: '#090b0d',
   },
   topSection: {
     width: '100%',
@@ -578,7 +565,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 4,
-    backgroundColor: '#edf3f8',
+    backgroundColor: '#090b0d',
   },
   greetingRow: {
     flexDirection: 'row',
@@ -587,13 +574,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   greetingTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 22,
     fontWeight: '900',
     letterSpacing: -0.4,
   },
   greetingSub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     marginTop: 1,
     fontWeight: '600',
@@ -612,7 +599,7 @@ const styles = StyleSheet.create({
     borderColor: '#99f6e4',
   },
   rangePillAway: {
-    backgroundColor: '#fef3c7',
+    backgroundColor: '#292418',
     borderColor: '#fde68a',
   },
   rangeDot: {
@@ -639,12 +626,12 @@ const styles = StyleSheet.create({
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 16,
     paddingHorizontal: 14,
     height: 44,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     marginBottom: 10,
     shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 2 },
@@ -658,13 +645,13 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 13.5,
     fontWeight: '600',
     paddingVertical: 0,
   },
   searchClearText: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     paddingHorizontal: 4,
   },
@@ -678,9 +665,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: 20,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.04,
@@ -688,8 +675,8 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   catChipActive: {
-    backgroundColor: '#0c52a3',
-    borderColor: '#0c52a3',
+    backgroundColor: '#ffb313',
+    borderColor: '#ffb313',
     shadowColor: '#0c52a3',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
@@ -697,30 +684,30 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   catChipText: {
-    color: '#475569',
+    color: '#b6bac2',
     fontSize: 12,
     fontWeight: '700',
   },
   catChipTextActive: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontWeight: '900',
   },
   catDivider: {
     width: 1,
     height: 18,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: '#26292e',
     marginHorizontal: 4,
   },
   vegFilterChip: {
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 20,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderWidth: 1,
     borderColor: '#a7f3d0',
   },
   vegFilterChipActive: {
-    backgroundColor: '#ecfdf5',
+    backgroundColor: '#15231c',
     borderColor: '#10b981',
   },
   vegFilterText: {
@@ -732,12 +719,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 20,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderWidth: 1,
     borderColor: '#fde68a',
   },
   fastFilterChipActive: {
-    backgroundColor: '#fef3c7',
+    backgroundColor: '#292418',
     borderColor: '#f59e0b',
   },
   fastFilterText: {
@@ -747,11 +734,11 @@ const styles = StyleSheet.create({
   },
   segmentContainer: {
     flexDirection: 'row',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 18,
     padding: 3,
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     marginTop: 2,
     marginBottom: 6,
     overflow: 'hidden',
@@ -769,15 +756,15 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   segmentBtnActive: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
   },
   segmentText: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     fontWeight: '700',
   },
   segmentTextActive: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontWeight: '900',
   },
   contentList: {
@@ -789,12 +776,12 @@ const styles = StyleSheet.create({
     paddingBottom: 90,
   },
   dishCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 20,
     padding: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.06,
@@ -824,7 +811,7 @@ const styles = StyleSheet.create({
     width: 14,
     height: 14,
     borderRadius: 4,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
@@ -857,24 +844,24 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   dishTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 15,
     fontWeight: '900',
     flex: 1,
   },
   dishPrice: {
-    color: '#0c52a3',
+    color: '#f5f4f0',
     fontSize: 16,
     fontWeight: '900',
   },
   dishStallMeta: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 11.5,
     fontWeight: '600',
     marginTop: 2,
   },
   dishDesc: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 11,
     marginTop: 2,
     lineHeight: 15,
@@ -883,7 +870,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   expandStallsText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 10.5,
     fontWeight: '800',
   },
@@ -892,7 +879,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   addBtn: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 12,
@@ -902,14 +889,14 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   addBtnText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 12,
     fontWeight: '900',
   },
   qtyStepper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#202329',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#bae6fd',
@@ -921,12 +908,12 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   stepperBtnText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 14,
     fontWeight: '900',
   },
   stepperQtyText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 13,
     fontWeight: '900',
     paddingHorizontal: 4,
@@ -955,21 +942,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   altStallName: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 12,
     fontWeight: '800',
   },
   altStallMeta: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 10.5,
   },
   altStallPrice: {
-    color: '#0c52a3',
+    color: '#f5f4f0',
     fontSize: 13,
     fontWeight: '900',
   },
   altAddBtn: {
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#202329',
     borderColor: '#bae6fd',
     borderWidth: 1,
     paddingHorizontal: 10,
@@ -977,7 +964,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   altAddText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 11,
     fontWeight: '900',
   },
@@ -985,28 +972,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#202329',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 10,
   },
   altStepperText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 13,
     fontWeight: '900',
   },
   altQtyText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 12,
     fontWeight: '900',
   },
   stallCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 22,
     overflow: 'hidden',
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
@@ -1027,7 +1014,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   stallName: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 16,
     fontWeight: '900',
     flex: 1,
@@ -1054,7 +1041,7 @@ const styles = StyleSheet.create({
     color: '#dc2626',
   },
   stallLocation: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     marginBottom: 8,
     fontWeight: '600',
@@ -1065,24 +1052,24 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   stallMetaChip: {
-    color: '#475569',
+    color: '#b6bac2',
     fontSize: 10.5,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#17191d',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
     fontWeight: '700',
   },
   viewStallMenuBtn: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#17191d',
     paddingVertical: 10,
     borderRadius: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   viewStallMenuText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 12,
     fontWeight: '900',
   },
@@ -1096,12 +1083,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   emptyTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 16,
     fontWeight: '900',
   },
   emptySub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12.5,
     marginTop: 4,
     textAlign: 'center',
@@ -1110,7 +1097,7 @@ const styles = StyleSheet.create({
   },
   clearFilterBtn: {
     marginTop: 14,
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     borderRadius: 12,
     paddingHorizontal: 18,
     paddingVertical: 10,
@@ -1122,7 +1109,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   clearFilterBtnText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 12.5,
     fontWeight: '900',
   },
@@ -1130,7 +1117,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#202329',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
@@ -1138,13 +1125,13 @@ const styles = StyleSheet.create({
     borderColor: '#bae6fd',
   },
   emptyVendorBox: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 20,
     padding: 18,
     marginTop: 20,
     marginHorizontal: 16,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     alignItems: 'center',
     shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 4 },
@@ -1153,19 +1140,19 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   emptyVendorTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 15,
     fontWeight: '900',
     marginBottom: 4,
   },
   emptyVendorSub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     lineHeight: 17,
     textAlign: 'center',
   },
   emptyVendorActionBtn: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     borderRadius: 12,
     paddingVertical: 11,
     paddingHorizontal: 18,
@@ -1178,7 +1165,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   emptyVendorActionBtnText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 13,
     fontWeight: '900',
   },
@@ -1192,7 +1179,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     borderRadius: 20,
     paddingVertical: 12,
     paddingHorizontal: 16,
@@ -1219,12 +1206,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   cartPillTitle: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 13.5,
     fontWeight: '900',
   },
   cartPillShop: {
-    color: 'rgba(255, 255, 255, 0.85)',
+    color: '#42320c',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -1234,13 +1221,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cartPillPrice: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 15,
     fontWeight: '900',
   },
   cartPillAction: {
-    backgroundColor: '#ffffff',
-    color: '#0c52a3',
+    backgroundColor: '#121417',
+    color: '#ffb313',
     fontSize: 11.5,
     fontWeight: '900',
     paddingHorizontal: 10,

@@ -1,3 +1,6 @@
+import { orderDate as getOrderDate } from '../utils/orderDisplay.cjs';
+import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
+import InterfaceIcon from './InterfaceIcon';
 import React, { useState, useContext, useEffect, useRef } from 'react';
 import {
   StyleSheet,
@@ -14,17 +17,21 @@ import {
   Linking
 } from 'react-native';
 import { AppContext } from '../context/AppContext';
+import LocationControl from './LocationControl';
+import { isUsableLocation } from '../services/locationPolicy.cjs';
 import { playOrderPlacedSound } from '../utils/audio';
 import { getDistanceInMeters, formatDistance, isWithinOrderingPerimeter, MAX_ORDER_DISTANCE_METERS } from '../utils/distance';
 
 const BREAK_SLOTS = [
-  { id: 'ASAP', label: '⚡ ASAP', sub: 'Cook Now' },
-  { id: '11:15 AM - Morning Recess', label: '🔔 11:15 AM', sub: 'Recess Break' },
-  { id: '01:10 PM - Lunch Break', label: '🍱 01:10 PM', sub: 'Lunch Break' },
-  { id: '03:45 PM - Evening Break', label: '☕ 03:45 PM', sub: 'Evening Tea' },
+  { id: 'ASAP', label: ' ASAP', sub: 'Cook Now' },
+  { id: '11:15 AM - Morning Recess', label: ' 11:15 AM', sub: 'Recess Break' },
+  { id: '01:10 PM - Lunch Break', label: ' 01:10 PM', sub: 'Lunch Break' },
+  { id: '03:45 PM - Evening Break', label: ' 03:45 PM', sub: 'Evening Tea' },
 ];
 
 export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal, onOrderPlaced }) {
+  const styles = useSellerStyles(baseStyles);
+  const { light } = useSellerTheme();
   const {
     cart,
     updateCartQty,
@@ -37,6 +44,9 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
     userProfile,
     canteens,
     userLocation,
+    locationTesting,
+    requestUserLocation,
+    locationStatus,
     reorderItems,
     rateOrder,
     rushModeActive
@@ -45,7 +55,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
   const scrollViewRef = useRef(null);
 
   // Cart & Checkout state
-  const [paymentMethod, setPaymentMethod] = useState('PhonePe');
+  const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [instructions, setInstructions] = useState(cart.specialInstructions || '');
   const [pickupSlot, setPickupSlot] = useState('ASAP');
   const [isGroupOrder, setIsGroupOrder] = useState(false);
@@ -97,23 +107,23 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
   const cartItems = cart?.items || [];
   const cartTotalItems = cartItems.reduce((sum, it) => sum + it.qty, 0);
   const totalAmount = cartItems.reduce((sum, it) => sum + it.price * it.qty, 0);
-  const deposit10Percent = Math.max(5, Math.ceil(totalAmount * 0.1));
+  const deposit10Percent = 0;
   const isCash = paymentMethod === 'Cash';
   const upfrontPayable = isCash ? deposit10Percent : totalAmount;
-  const dueAtCounter = isCash ? Math.max(0, totalAmount - deposit10Percent) : 0;
+  const dueAtCounter = isCash ? totalAmount : 0;
 
   // Past orders (all orders except current active preparing one if any)
   const pastOrders = (orders || []).filter(o => o.id !== activeOrderId || !hasActivePass);
 
   // Campus Geofence Calculation (<500m perimeter)
   const matchedShop = (canteens || []).find(c => c.id === cart?.shopId) || {};
-  const shopLat = matchedShop.lat || 23.0917;
-  const shopLng = matchedShop.lng || 72.5349;
-  const hasUserLocation = Boolean(userLocation && userLocation.lat != null && userLocation.lng != null);
+  const shopLat = matchedShop.lat ?? 23.0917;
+  const shopLng = matchedShop.lng ?? 72.5349;
+  const hasUserLocation = isUsableLocation(userLocation);
   const stallDistanceMeters = hasUserLocation
     ? getDistanceInMeters(userLocation.lat, userLocation.lng, shopLat, shopLng)
     : null;
-  const isWithinStallPerimeter =
+  const isWithinStallPerimeter = locationTesting ||
     stallDistanceMeters != null &&
     isWithinOrderingPerimeter(stallDistanceMeters, userLocation?.accuracy || 0);
 
@@ -134,22 +144,21 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
       return;
     }
 
-    if (!hasUserLocation) {
-      Alert.alert(
-        '📍 GPS Location Required',
-        'Please enable device location permissions so SkipQ can verify you are physically on campus (<500m) before ordering.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-
-    if (!isWithinStallPerimeter || (stallDistanceMeters != null && stallDistanceMeters > MAX_ORDER_DISTANCE_METERS)) {
-      Alert.alert(
-        '📍 Geofence Block — Off Campus',
-        `Hardware GPS detects you are ${formatDistance(stallDistanceMeters)} away from ${cart.shopName || 'Silver Oak University'} (>500m campus limit).\n\nSkipQ orders can only be placed while physically within the campus perimeter.`,
-        [{ text: 'Got it', style: 'cancel' }]
-      );
-      return;
+    if (!locationTesting) {
+      let location = userLocation;
+      if (!isUsableLocation(location)) {
+        try { location = await requestUserLocation(); } catch { return; }
+      }
+      if (!isUsableLocation(location)) return;
+      const currentDistance = getDistanceInMeters(location.lat, location.lng, shopLat, shopLng);
+      if (!isWithinOrderingPerimeter(currentDistance, location.accuracy)) {
+        Alert.alert(
+          'Outside pickup range',
+          `Hardware GPS detects you are ${formatDistance(currentDistance)} away from ${cart.shopName || 'Silver Oak University'} (>500m campus limit).\n\nSkipQ orders can only be placed while physically within the campus perimeter.`,
+          [{ text: 'Got it', style: 'cancel' }]
+        );
+        return;
+      }
     }
 
     if (paymentMethod === 'Wallet' && walletBalance < totalAmount) {
@@ -188,14 +197,11 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
         groupCollectorName: isGroupOrder ? groupCollectorName.trim() : ''
       };
 
-      // Direct UPI deep-linking trigger if on mobile (only when paying with UPI / Cash token)
-      if (paymentMethod !== 'Wallet' && Platform.OS !== 'web') {
-        const shopUpiId = matchedShop.upiId || 'skipq.canteen@upi';
-        const upiUri = `upi://pay?pa=${shopUpiId}&pn=${encodeURIComponent(cart.shopName)}&am=${upfrontPayable}&cu=INR&tn=${encodeURIComponent(isCash ? 'SkipQ 10% Preorder Token' : 'SkipQ Order')}`;
-        Linking.openURL(upiUri).catch(() => {});
+      const confirmed = await placeOrder(orderData);
+      if (confirmed.paymentMethod === 'UPI' && Platform.OS !== 'web') {
+        const uri = `upi://pay?pa=${encodeURIComponent(confirmed.merchantUpi)}&pn=${encodeURIComponent(confirmed.shopName)}&am=${confirmed.totalAmount}&cu=INR&tn=${encodeURIComponent(confirmed.tokenNumber)}`;
+        Linking.openURL(uri).catch(() => Alert.alert('Open your UPI app', `Pay ₹${confirmed.totalAmount} to ${confirmed.merchantUpi}. Ask the seller to confirm receipt.`));
       }
-
-      await placeOrder(orderData);
       try {
         await playOrderPlacedSound();
       } catch (e) {}
@@ -204,19 +210,10 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
         onOrderPlaced();
       }
 
-      Alert.alert(
-        isCash
-          ? '🎉 Pre-order Token Confirmed!'
-          : paymentMethod === 'Wallet'
-          ? '🎉 Paid via SkipQ Wallet!'
-          : '🎉 100% Online Order Placed!',
-        isCash
-          ? `10% commitment token (₹${deposit10Percent}) submitted. Please pay remaining ₹${dueAtCounter} in cash at ${cart.shopName} counter.\n\n⏱️ You have 2 minutes to cancel for an instant UPI refund if needed.`
-          : paymentMethod === 'Wallet'
-          ? `₹${totalAmount} paid from your SkipQ Security Wallet. Digital pickup pass is generated below!\n\n⏱️ Free cancellation with 100% wallet refund available within 2 minutes.`
-          : `Your payment of ₹${totalAmount} via ${paymentMethod} has been sent to ${cart.shopName}. Digital pickup pass is generated below!\n\n⏱️ Free cancellation with 100% instant UPI refund available within 2 minutes.`,
-        [{ text: 'View Token Pass' }]
-      );
+      Alert.alert('Order confirmed', confirmed.paymentMethod === 'Cash'
+        ? `Pay ₹${confirmed.totalAmount} in cash at ${confirmed.shopName} when you collect your order.`
+        : `Pay ₹${confirmed.totalAmount} to ${confirmed.merchantUpi}. Payment remains pending until the canteen confirms receipt. Contact the canteen directly for any refund.`,
+        [{ text: 'View Pickup Pass' }]);
       if (scrollViewRef.current) {
         scrollViewRef.current.scrollTo({ y: 0, animated: true });
       }
@@ -245,22 +242,9 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
     setReviewComment(orderObj.review || '');
   };
 
-  const handleSubmitRating = () => {
-    if (ratingTargetOrder) {
-      rateOrder(ratingTargetOrder.id, ratingStars, reviewComment);
-      setRatingTargetOrder(null);
-      setReviewComment('');
-      Alert.alert('Thank You!', 'Your rating has been saved for this canteen.');
-    }
-  };
+  const handleSubmitRating = () => { rateOrder(); setRatingTargetOrder(null); };
 
-  const paymentApps = [
-    { id: 'Wallet', label: `💳 SkipQ Wallet (₹${walletBalance.toFixed(0)})` },
-    { id: 'PhonePe', label: '💜 PhonePe' },
-    { id: 'GPay', label: '💙 GPay' },
-    { id: 'Paytm', label: '🟦 Paytm / UPI' },
-    { id: 'Cash', label: '💵 Pay at Stall' }
-  ];
+  const paymentApps = [{ id: 'Cash', label: ' Cash at pickup' }, { id: 'UPI', label: ' UPI (seller confirms)' }];
 
   const formatTimer = (sec) => {
     if (sec === null || sec <= 0) return '00:00';
@@ -274,7 +258,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
       {/* Reorder Floating Toast */}
       {reorderSuccessNotice && (
         <View style={styles.toastNotice}>
-          <Text style={styles.toastNoticeText}>✅ {reorderSuccessNotice}</Text>
+          <Text style={styles.toastNoticeText}> {reorderSuccessNotice}</Text>
         </View>
       )}
 
@@ -287,8 +271,8 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
         {/* Header Title */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.headerTitle}>Cart & Orders</Text>
-            <Text style={styles.headerSub}>Items ready to buy, live pickup pass & past orders</Text>
+            <Text style={styles.headerTitle}>{cartTotalItems > 0 ? 'Review order' : 'Your orders'}</Text>
+            <Text style={styles.headerSub}>{cartTotalItems > 0 ? `CART ? ${cartTotalItems} ${cartTotalItems === 1 ? 'ITEM' : 'ITEMS'}` : 'CART & ORDERS'}</Text>
           </View>
           {cartTotalItems > 0 && (
             <TouchableOpacity style={styles.clearCartBtn} onPress={clearCart}>
@@ -300,10 +284,10 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
         {/* ============================================================ */}
         {/* SECTION 1: ITEMS TO BUY (Active Cart) */}
         {/* ============================================================ */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeaderRow}>
+        <View style={[styles.sectionCard, cartTotalItems === 0 ? styles.emptySection : styles.checkoutSection]}>
+          {false && <View style={styles.sectionHeaderRow}>
             <View style={styles.sectionHeaderLeft}>
-              <Text style={styles.sectionIcon}>🛒</Text>
+              <Text style={styles.sectionIcon}></Text>
               <Text style={styles.sectionTitle}>Items to Buy</Text>
             </View>
             {cartTotalItems > 0 && (
@@ -311,13 +295,13 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                 <Text style={styles.badgeText}>{cartTotalItems} {cartTotalItems === 1 ? 'item' : 'items'}</Text>
               </View>
             )}
-          </View>
+          </View>}
 
           {cartTotalItems > 0 ? (
             <View style={styles.cartContentBox}>
               {/* Stall Name Tag */}
               <View style={styles.stallBanner}>
-                <Text style={styles.stallBannerText}>🏪 {cart.shopName || 'Campus Food Stall'}</Text>
+                <Text style={styles.stallBannerText}> {cart.shopName || 'Campus Food Stall'}</Text>
                 <Text style={styles.stallCampusTag}>Silver Oak University</Text>
               </View>
 
@@ -327,7 +311,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                   <View key={item.id || idx} style={styles.cartItemRow}>
                     <View style={styles.cartItemLeft}>
                       <View style={styles.vegIndicator}>
-                        <View style={[styles.vegDot, { backgroundColor: item.veg !== false ? '#10b981' : '#ef4444' }]} />
+                        <View style={[styles.vegDot, { backgroundColor: item.isVeg !== false ? '#10b981' : '#ef4444' }]} />
                       </View>
                       <View style={{ flex: 1, paddingRight: 8 }}>
                         <Text style={styles.cartItemName} numberOfLines={1}>{item.name}</Text>
@@ -361,7 +345,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
               {/* Rush Mode Alert */}
               {rushModeActive && (
                 <View style={styles.cartRushNotice}>
-                  <Text style={styles.cartRushTitle}>🔥 KITCHEN HIGH RUSH ACTIVE</Text>
+                  <Text style={styles.cartRushTitle}> KITCHEN HIGH RUSH ACTIVE</Text>
                   <Text style={styles.cartRushSub}>
                     High order traffic at campus counters. +10 mins estimated preparation buffer applied.
                   </Text>
@@ -410,7 +394,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
               <View style={styles.roommateCard}>
                 <View style={styles.roommateRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.roommateTitle}>👥 Roommate / Group Pickup</Text>
+                    <Text style={styles.roommateTitle}> Roommate / Group Pickup</Text>
                     <Text style={styles.roommateSub}>Let a friend or roommate pick this up</Text>
                   </View>
                   <Switch
@@ -467,16 +451,16 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                 {isCash ? (
                   <View style={styles.cashNoticeBox}>
                     <Text style={styles.cashNoticeTitle}>
-                      💵 10% UPI Token Pre-order + 90% Cash at Stall
+                       Cash at pickup
                     </Text>
                     <Text style={styles.cashNoticeSub}>
-                      Pay only ₹{deposit10Percent} now via UPI to confirm kitchen prep. Pay remaining ₹{dueAtCounter} in cash at the canteen counter. ⏱️ 100% refundable if cancelled within 2 minutes.
+                      Pay the full ₹{dueAtCounter} at the canteen counter. No advance deposit or wallet payment.
                     </Text>
                   </View>
                 ) : paymentMethod === 'Wallet' ? (
                   <View style={styles.onlineNoticeBox}>
                     <Text style={styles.onlineNoticeTitle}>
-                      💳 SkipQ Security Wallet Payment
+                       SkipQ Security Wallet Payment
                     </Text>
                     <Text style={styles.onlineNoticeSub}>
                       Available Balance: ₹{walletBalance.toFixed(0)}. Instant zero-friction pass generation with no UPI app switching.
@@ -485,10 +469,10 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                 ) : (
                   <View style={styles.onlineNoticeBox}>
                     <Text style={styles.onlineNoticeTitle}>
-                      ⚡ 100% Online UPI Payment ({paymentMethod})
+                       UPI payment — seller confirmation required
                     </Text>
                     <Text style={styles.onlineNoticeSub}>
-                      Pay ₹{totalAmount} upfront with zero counter cash hassle. ⏱️ Free cancellation with 100% instant UPI refund within 2 minutes.
+                      Pay ₹{totalAmount} directly to the canteen. A payment app opening does not confirm payment. Refunds are handled by the canteen.
                     </Text>
                   </View>
                 )}
@@ -507,11 +491,11 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                 {isCash ? (
                   <>
                     <View style={[styles.billRow, { borderTopWidth: 1, borderTopColor: '#e2d9cc', paddingTop: 8, marginTop: 4 }]}>
-                      <Text style={[styles.billLabel, { color: '#0284c7', fontWeight: '800' }]}>⚡ Pay Now via UPI (10% Token)</Text>
-                      <Text style={[styles.billValue, { color: '#0284c7', fontWeight: '800' }]}>₹{deposit10Percent}</Text>
+                      <Text style={[styles.billLabel, { color: '#ffb313', fontWeight: '800' }]}>Advance payment</Text>
+                      <Text style={[styles.billValue, { color: '#ffb313', fontWeight: '800' }]}>₹{deposit10Percent}</Text>
                     </View>
                     <View style={styles.billRow}>
-                      <Text style={[styles.billLabel, { color: '#b45309', fontWeight: '800' }]}>💵 Pay at Counter (Cash)</Text>
+                      <Text style={[styles.billLabel, { color: '#b45309', fontWeight: '800' }]}> Pay at Counter (Cash)</Text>
                       <Text style={[styles.billValue, { color: '#b45309', fontWeight: '800' }]}>₹{dueAtCounter}</Text>
                     </View>
                   </>
@@ -528,83 +512,53 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                 )}
               </View>
 
-              {/* Geofence Status Banner if Off Campus or GPS Pending */}
-              {!hasUserLocation ? (
-                <View style={styles.geofenceNoticeBoxPending}>
-                  <Text style={styles.geofenceNoticeIcon}>📍</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.geofenceNoticeTitle}>GPS Location Required</Text>
-                    <Text style={styles.geofenceNoticeSub}>Please enable location to verify campus perimeter.</Text>
-                  </View>
-                </View>
-              ) : !isWithinStallPerimeter ? (
-                <View style={styles.geofenceNoticeBoxBlocked}>
-                  <Text style={styles.geofenceNoticeIcon}>🚫</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.geofenceNoticeTitleBlocked}>
-                      Off Campus: {formatDistance(stallDistanceMeters)} Away
-                    </Text>
-                    <Text style={styles.geofenceNoticeSubBlocked}>
-                      Orders can only be placed inside the 500m Silver Oak campus perimeter.
-                    </Text>
-                  </View>
-                </View>
-              ) : null}
+              <LocationControl />
 
               {/* Place Order CTA */}
               <TouchableOpacity
                 style={[
                   styles.placeOrderBtn,
-                  (!hasUserLocation || !isWithinStallPerimeter) && styles.placeOrderBtnBlocked
+                  (!locationTesting && (!hasUserLocation || !isWithinStallPerimeter)) && styles.placeOrderBtnBlocked
                 ]}
                 onPress={handlePlaceOrder}
-                disabled={isSubmitting}
+                disabled={isSubmitting || (!locationTesting && locationStatus === 'locating')}
                 activeOpacity={0.88}
               >
                 {isSubmitting ? (
                   <ActivityIndicator color="#ffffff" />
-                ) : !hasUserLocation ? (
+                ) : !locationTesting && !hasUserLocation ? (
                   <>
-                    <Text style={styles.placeOrderBtnText}>📍 GPS Location Required</Text>
+                    <Text style={styles.placeOrderBtnText}>Enable GPS to order</Text>
                     <Text style={styles.placeOrderBtnSub}>Tap to check location</Text>
                   </>
                 ) : !isWithinStallPerimeter ? (
                   <>
-                    <Text style={styles.placeOrderBtnText}>🚫 Blocked: {formatDistance(stallDistanceMeters)} Away</Text>
+                    <Text style={styles.placeOrderBtnText}> Blocked: {formatDistance(stallDistanceMeters)} Away</Text>
                     <Text style={styles.placeOrderBtnSub}>Must be within 500m of campus to order</Text>
                   </>
                 ) : isCash ? (
                   <>
-                    <Text style={styles.placeOrderBtnText}>💵 Pay ₹{deposit10Percent} UPI Token & Pre-order</Text>
+                    <Text style={styles.placeOrderBtnText}>Place Order · Cash at Pickup</Text>
                     <Text style={styles.placeOrderBtnSub}>Pay ₹{dueAtCounter} Cash at Stall • Instant Token</Text>
                   </>
                 ) : paymentMethod === 'Wallet' ? (
                   <>
-                    <Text style={styles.placeOrderBtnText}>⚡ Pay ₹{totalAmount} with SkipQ Wallet</Text>
+                    <Text style={styles.placeOrderBtnText}> Pay ₹{totalAmount} with SkipQ Wallet</Text>
                     <Text style={styles.placeOrderBtnSub}>Instant Digital Pass • Wallet Bal: ₹{walletBalance.toFixed(0)}</Text>
                   </>
                 ) : (
                   <>
-                    <Text style={styles.placeOrderBtnText}>⚡ Pay ₹{totalAmount} via {paymentMethod}</Text>
-                    <Text style={styles.placeOrderBtnSub}>100% Online • Instant Digital Pickup Pass</Text>
+                    <Text style={styles.placeOrderBtnText}>Place Order · Pay ₹{totalAmount} via UPI</Text>
+                    <Text style={styles.placeOrderBtnSub}>Payment pending until seller confirmation</Text>
                   </>
                 )}
               </TouchableOpacity>
             </View>
           ) : (
-            <View style={styles.emptyCartBox}>
-              <Text style={styles.emptyCartIcon}>🍽️</Text>
-              <Text style={styles.emptyCartTitle}>Your cart is empty</Text>
-              <Text style={styles.emptyCartSub}>
-                Browse delicious dishes from college food stalls, add your favourites and skip the long queue!
-              </Text>
-              <TouchableOpacity
-                style={styles.exploreDishesBtn}
-                onPress={onNavigateToExplore}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.exploreDishesBtnText}>Browse Dishes in Explore ➔</Text>
-              </TouchableOpacity>
+            <View style={styles.compactEmptyCart}>
+              <View style={styles.emptyCartVector}><InterfaceIcon name="cart" size={23} color="#ffb313" /></View>
+              <View style={{ flex: 1 }}><Text style={styles.compactEmptyTitle}>Your cart is empty</Text><Text style={styles.compactEmptyCopy}>Add dishes and skip the queue.</Text></View>
+              <TouchableOpacity accessibilityRole="button" onPress={onNavigateToExplore} style={styles.compactBrowse}><Text style={styles.compactBrowseText}>Browse</Text></TouchableOpacity>
             </View>
           )}
         </View>
@@ -625,7 +579,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
               </View>
               {secondsLeft > 0 && (
                 <View style={styles.timerPill}>
-                  <Text style={styles.timerText}>⏳ {formatTimer(secondsLeft)}</Text>
+                  <Text style={styles.timerText}> {formatTimer(secondsLeft)}</Text>
                 </View>
               )}
             </View>
@@ -634,7 +588,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
               <View>
                 <Text style={styles.tokenPrefix}>CAMPUS PICKUP TOKEN</Text>
                 <Text style={styles.tokenNumber}>#{activeOrderObj.tokenNumber || activeOrderObj.id}</Text>
-                <Text style={styles.activePassShop}>🏪 {activeOrderObj.canteenName || activeOrderObj.shopName}</Text>
+                <Text style={styles.activePassShop}> {activeOrderObj.canteenName || activeOrderObj.shopName}</Text>
               </View>
               <View style={styles.pinContainer}>
                 <Text style={styles.pinLabel}>COUNTER PIN</Text>
@@ -649,7 +603,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
             </View>
 
             <TouchableOpacity style={styles.viewPassBtn} onPress={onOpenPassModal} activeOpacity={0.85}>
-              <Text style={styles.viewPassBtnText}>🎫 View Full Digital Pickup Pass & Barcode ➔</Text>
+              <Text style={styles.viewPassBtnText}> View Full Digital Pickup Pass & Barcode </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -657,11 +611,11 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
         {/* ============================================================ */}
         {/* SECTION 3: PAST ORDERS HISTORY                               */}
         {/* ============================================================ */}
-        <View style={styles.sectionCard}>
+        <View style={styles.historySection}>
           <View style={styles.sectionHeaderRow}>
             <View style={styles.sectionHeaderLeft}>
-              <Text style={styles.sectionIcon}>📜</Text>
-              <Text style={styles.sectionTitle}>Past Orders History</Text>
+              <Text style={styles.sectionIcon}></Text>
+              <Text style={styles.sectionTitle}>Past orders</Text>
             </View>
             <View style={styles.badgePillSecondary}>
               <Text style={styles.badgeTextSecondary}>{pastOrders.length} past</Text>
@@ -670,7 +624,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
 
           {pastOrders.length === 0 ? (
             <View style={styles.emptyHistoryBox}>
-              <Text style={styles.emptyHistoryIcon}>🧾</Text>
+              <Text style={styles.emptyHistoryIcon}></Text>
               <Text style={styles.emptyHistoryTitle}>No past orders yet</Text>
               <Text style={styles.emptyHistorySub}>
                 Your completed orders, receipts, and fast 1-tap re-orders will be listed right here.
@@ -681,7 +635,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
               {pastOrders.map((ord) => {
                 const isCompleted = ord.orderStatus === 'Completed';
                 const isCancelled = ord.orderStatus === 'Cancelled';
-                const orderDate = new Date(ord.createdAt || ord.timestamp || ord.orderTime || Date.now());
+                const orderDate = getOrderDate(ord);
 
                 return (
                   <View key={ord.id} style={styles.pastOrderCard}>
@@ -690,12 +644,12 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                       <View style={{ flex: 1 }}>
                         <Text style={styles.pastOrderShop}>{ord.canteenName || ord.shopName || 'Campus Food Stall'}</Text>
                         <Text style={styles.pastOrderDate}>
-                          {orderDate.toLocaleDateString('en-IN', {
+                          {orderDate ? orderDate.toLocaleDateString('en-IN', {
                             month: 'short',
                             day: 'numeric',
                             hour: '2-digit',
                             minute: '2-digit'
-                          })}
+                          }) : 'Date unavailable'}
                         </Text>
                       </View>
                       <View
@@ -737,20 +691,20 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                     {/* Total & Action Buttons */}
                     <View style={styles.pastOrderBottom}>
                       <View>
-                        <Text style={styles.pastOrderTotalLabel}>Total Paid</Text>
+                        <Text style={styles.pastOrderTotalLabel}>{isCompleted ? 'Total paid' : 'Total'}</Text>
                         <Text style={styles.pastOrderTotalVal}>₹{ord.totalAmount}</Text>
                       </View>
 
                       <View style={styles.pastOrderActions}>
-                        {/* Rate Button */}
-                        <TouchableOpacity
+                        {/* Only completed pickups may be rated. */}
+                        {isCompleted && <TouchableOpacity
                           style={styles.rateBtn}
                           onPress={() => handleOpenRating(ord)}
                         >
                           <Text style={styles.rateBtnText}>
                             {ord.rating ? `⭐ ${ord.rating}` : '⭐ Rate'}
                           </Text>
-                        </TouchableOpacity>
+                        </TouchableOpacity>}
 
                         {/* 1-Tap Re-order Button */}
                         <TouchableOpacity
@@ -758,7 +712,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                           onPress={() => handleReorder(ord)}
                           activeOpacity={0.8}
                         >
-                          <Text style={styles.reorderBtnText}>🔄 Re-order</Text>
+                          <Text style={styles.reorderBtnText}> Re-order</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -784,7 +738,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
               {[1, 2, 3, 4, 5].map(star => (
                 <TouchableOpacity key={star} onPress={() => setRatingStars(star)} style={styles.starTouch}>
                   <Text style={[styles.starIcon, ratingStars >= star ? styles.starFilled : styles.starEmpty]}>
-                    ★
+
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -815,10 +769,18 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
+  emptySection: { padding: 14, borderStyle: 'dashed', backgroundColor: 'transparent' },
+  compactEmptyCart: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  emptyCartVector: { width: 42, height: 42, borderRadius: 13, backgroundColor: '#17191d', alignItems: 'center', justifyContent: 'center' },
+  compactEmptyTitle: { color: '#f5f4f0', fontSize: 14, fontWeight: '700' },
+  compactEmptyCopy: { color: '#a5a9b2', fontSize: 12, lineHeight: 18, marginTop: 4 },
+  compactBrowse: { backgroundColor: '#ffb313', borderRadius: 13, minHeight: 42, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
+  compactBrowseText: { color: '#090b0d', fontSize: 12, fontWeight: '700' },
+  historySection: { marginTop: 18 },
   container: {
     flex: 1,
-    backgroundColor: '#edf3f8',
+    backgroundColor: '#090b0d',
   },
   scrollContainer: {
     flex: 1,
@@ -836,7 +798,7 @@ const styles = StyleSheet.create({
     top: 10,
     left: 16,
     right: 16,
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 16,
@@ -848,7 +810,7 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   toastNoticeText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 14,
     fontWeight: '800',
     textAlign: 'center',
@@ -860,13 +822,13 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   headerTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 22,
     fontWeight: '900',
     letterSpacing: -0.5,
   },
   headerSub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     marginTop: 2,
     fontWeight: '600',
@@ -883,10 +845,10 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   sectionCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     padding: 16,
     marginBottom: 16,
     shadowColor: '#64748b',
@@ -910,7 +872,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
   },
   sectionTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 16,
     fontWeight: '900',
     letterSpacing: -0.2,
@@ -929,18 +891,18 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   badgePillSecondary: {
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#202329',
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 20,
   },
   badgeTextSecondary: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 12,
     fontWeight: '700',
   },
   stallBanner: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#17191d',
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 12,
@@ -949,15 +911,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   stallBannerText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 13,
     fontWeight: '800',
   },
   stallCampusTag: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -980,7 +942,7 @@ const styles = StyleSheet.create({
     width: 14,
     height: 14,
     borderWidth: 1.5,
-    borderColor: '#cbd5e1',
+    borderColor: '#26292e',
     borderRadius: 3,
     alignItems: 'center',
     justifyContent: 'center',
@@ -992,12 +954,12 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   cartItemName: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 14,
     fontWeight: '800',
   },
   cartItemPrice: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     marginTop: 2,
     fontWeight: '600',
@@ -1005,7 +967,7 @@ const styles = StyleSheet.create({
   stepperWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#202329',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#bae6fd',
@@ -1018,19 +980,19 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   stepperBtnText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 15,
     fontWeight: '900',
   },
   stepperQtyText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 14,
     fontWeight: '900',
     minWidth: 18,
     textAlign: 'center',
   },
   cartItemSubtotal: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 14,
     fontWeight: '900',
     minWidth: 44,
@@ -1041,18 +1003,18 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   inputLabel: {
-    color: '#475569',
+    color: '#b6bac2',
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.5,
     marginBottom: 6,
   },
   instructionInput: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#17191d',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    color: '#0f172a',
+    borderColor: '#26292e',
+    color: '#f5f4f0',
     fontSize: 13,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -1071,22 +1033,22 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 12,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#17191d',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   paymentPillSelected: {
-    backgroundColor: '#e6f2fb',
-    borderColor: '#0c52a3',
+    backgroundColor: '#202329',
+    borderColor: '#ffb313',
     borderWidth: 1.5,
   },
   paymentPillText: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     fontWeight: '700',
   },
   paymentPillTextSelected: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontWeight: '900',
   },
   cashNoticeBox: {
@@ -1099,7 +1061,7 @@ const styles = StyleSheet.create({
   },
   cashNoticeAlert: {
     borderColor: '#f59e0b',
-    backgroundColor: '#fef3c7',
+    backgroundColor: '#292418',
   },
   cashNoticeTitle: {
     color: '#b45309',
@@ -1134,12 +1096,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   billBox: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#17191d',
     borderRadius: 14,
     padding: 14,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     gap: 6,
   },
   billRow: {
@@ -1148,33 +1110,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   billLabel: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 13,
     fontWeight: '600',
   },
   billValue: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 13,
     fontWeight: '800',
   },
   billRowTotal: {
     borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
+    borderTopColor: '#26292e',
     paddingTop: 10,
     marginTop: 6,
   },
   billTotalLabel: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 15,
     fontWeight: '900',
   },
   billTotalValue: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 18,
     fontWeight: '900',
   },
   placeOrderBtn: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     borderRadius: 16,
     paddingVertical: 15,
     alignItems: 'center',
@@ -1189,7 +1151,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#cbd5e1',
   },
   placeOrderBtnText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 16,
     fontWeight: '900',
   },
@@ -1257,20 +1219,20 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   emptyCartTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 17,
     fontWeight: '900',
     marginBottom: 4,
   },
   emptyCartSub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 13,
     textAlign: 'center',
     lineHeight: 18,
     marginBottom: 16,
   },
   exploreDishesBtn: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 18,
@@ -1281,12 +1243,12 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   exploreDishesBtnText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 13,
     fontWeight: '900',
   },
   activePassCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 22,
     borderWidth: 1.5,
     borderColor: '#00a3c4',
@@ -1327,7 +1289,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   timerPill: {
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#202329',
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 20,
@@ -1335,7 +1297,7 @@ const styles = StyleSheet.create({
     borderColor: '#bae6fd',
   },
   timerText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 12,
     fontWeight: '900',
   },
@@ -1346,25 +1308,25 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   tokenPrefix: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.5,
   },
   tokenNumber: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 26,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   activePassShop: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     marginTop: 2,
     fontWeight: '600',
   },
   pinContainer: {
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#202329',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#bae6fd',
@@ -1373,33 +1335,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pinLabel: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 9,
     fontWeight: '800',
   },
   pinCode: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 18,
     fontWeight: '900',
     letterSpacing: 2,
     marginTop: 2,
   },
   activePassItems: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#17191d',
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 8,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   activeItemsSummary: {
-    color: '#475569',
+    color: '#b6bac2',
     fontSize: 12,
     fontWeight: '600',
   },
   viewPassBtn: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     borderRadius: 12,
     paddingVertical: 11,
     alignItems: 'center',
@@ -1410,7 +1372,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   viewPassBtnText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 13,
     fontWeight: '900',
   },
@@ -1424,13 +1386,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   emptyHistoryTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 15,
     fontWeight: '800',
     marginBottom: 4,
   },
   emptyHistorySub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     textAlign: 'center',
     lineHeight: 16,
@@ -1439,10 +1401,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   pastOrderCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     padding: 14,
     shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 2 },
@@ -1457,12 +1419,12 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   pastOrderShop: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 15,
     fontWeight: '800',
   },
   pastOrderDate: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 11,
     marginTop: 2,
   },
@@ -1478,7 +1440,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fee2e2',
   },
   statusReady: {
-    backgroundColor: '#e0f2fe',
+    backgroundColor: '#202329',
   },
   orderStatusText: {
     fontSize: 11,
@@ -1491,10 +1453,10 @@ const styles = StyleSheet.create({
     color: '#dc2626',
   },
   statusTextReady: {
-    color: '#0284c7',
+    color: '#ffb313',
   },
   pastOrderItemsBox: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#17191d',
     borderRadius: 8,
     padding: 8,
     marginBottom: 10,
@@ -1507,19 +1469,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pastOrderItemQty: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 12,
     fontWeight: '800',
     width: 24,
   },
   pastOrderItemName: {
     flex: 1,
-    color: '#334155',
+    color: '#e5e6e8',
     fontSize: 12,
     fontWeight: '600',
   },
   pastOrderItemPrice: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1530,12 +1492,12 @@ const styles = StyleSheet.create({
     paddingTop: 4,
   },
   pastOrderTotalLabel: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 10,
     fontWeight: '700',
   },
   pastOrderTotalVal: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 15,
     fontWeight: '900',
   },
@@ -1561,10 +1523,10 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 8,
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
   },
   reorderBtnText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 12,
     fontWeight: '900',
   },
@@ -1576,10 +1538,10 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   ratingModalContent: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     padding: 22,
     width: '100%',
     maxWidth: 380,
@@ -1590,13 +1552,13 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   ratingModalTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 18,
     fontWeight: '900',
     textAlign: 'center',
   },
   ratingModalSub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 13,
     textAlign: 'center',
     marginTop: 2,
@@ -1621,11 +1583,11 @@ const styles = StyleSheet.create({
     color: '#e2e8f0',
   },
   ratingInput: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#17191d',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    color: '#0f172a',
+    borderColor: '#26292e',
+    color: '#f5f4f0',
     fontSize: 13,
     padding: 12,
     height: 70,
@@ -1641,11 +1603,11 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     borderRadius: 12,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#17191d',
     alignItems: 'center',
   },
   cancelRatingText: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 14,
     fontWeight: '800',
   },
@@ -1653,16 +1615,16 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     borderRadius: 12,
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     alignItems: 'center',
   },
   submitRatingText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 14,
     fontWeight: '900',
   },
   cartRushNotice: {
-    backgroundColor: '#fef3c7',
+    backgroundColor: '#292418',
     borderWidth: 1,
     borderColor: '#f59e0b',
     padding: 12,
@@ -1682,7 +1644,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   cartFacultyCard: {
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#202329',
     borderWidth: 1,
     borderColor: '#bae6fd',
     borderRadius: 12,
@@ -1695,19 +1657,19 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   cartFacultyTitle: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   cartFacultyDesc: {
-    color: '#334155',
+    color: '#e5e6e8',
     fontSize: 11,
     marginBottom: 8,
   },
   cartFacultyInput: {
-    backgroundColor: '#ffffff',
-    color: '#0f172a',
+    backgroundColor: '#121417',
+    color: '#f5f4f0',
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
@@ -1725,37 +1687,37 @@ const styles = StyleSheet.create({
   },
   slotCard: {
     flexBasis: '48%',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#17191d',
     padding: 10,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   slotCardActive: {
-    borderColor: '#0c52a3',
-    backgroundColor: '#e6f2fb',
+    borderColor: '#ffb313',
+    backgroundColor: '#202329',
     borderWidth: 1.5,
   },
   slotCardTitle: {
-    color: '#475569',
+    color: '#b6bac2',
     fontSize: 12,
     fontWeight: '800',
   },
   slotCardTitleActive: {
-    color: '#0c52a3',
+    color: '#ffb313',
   },
   slotCardSub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 10,
     marginTop: 2,
   },
   roommateCard: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#17191d',
     padding: 12,
     borderRadius: 12,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
   },
   roommateRow: {
     flexDirection: 'row',
@@ -1763,24 +1725,55 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   roommateTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 12,
     fontWeight: '800',
   },
   roommateSub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 10,
     marginTop: 1,
   },
   collectorInput: {
-    backgroundColor: '#ffffff',
-    color: '#0f172a',
+    backgroundColor: '#121417',
+    color: '#f5f4f0',
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     marginTop: 8,
   },
+  checkoutSection: { backgroundColor: 'transparent', borderWidth: 0, padding: 0, marginTop: 0 },
+  stallBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e', borderRadius: 14, padding: 13, gap: 12, marginBottom: 12 },
+  stallBannerText: { color: '#ffb313', fontSize: 12, fontWeight: '700', flex: 1 },
+  stallCampusTag: { color: '#a5a9b2', fontSize: 10, flexShrink: 1 },
+  cartItemRow: { flexDirection: 'row', alignItems: 'center', gap: 9, padding: 13, marginBottom: 9, borderWidth: 1, borderColor: '#26292e', borderRadius: 14, backgroundColor: '#121417' },
+  cartItemName: { color: '#f5f4f0', fontSize: 13, fontWeight: '700' },
+  cartItemPrice: { color: '#a5a9b2', fontSize: 11, marginTop: 4 },
+  slotGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
+  slotCard: { width: '48%', padding: 13, borderWidth: 1, borderColor: '#26292e', backgroundColor: '#121417', borderRadius: 13 },
+  slotCardActive: { backgroundColor: '#211a07', borderColor: '#ffb313' },
+  slotCardTitle: { color: '#f5f4f0', fontSize: 12, fontWeight: '700' },
+  slotCardTitleActive: { color: '#ffb313' },
+  slotCardSub: { color: '#a5a9b2', fontSize: 10, marginTop: 5 },
+  inputLabel: { color: '#b6bac2', fontSize: 10, letterSpacing: 1, fontWeight: '600', marginBottom: 10 },
+  roommateCard: { padding: 14, borderRadius: 14, borderWidth: 1, borderColor: '#26292e', backgroundColor: '#121417', marginVertical: 18 },
+  instructionInput: { minHeight: 46, color: '#f5f4f0', fontSize: 12, backgroundColor: '#121417', borderRadius: 13, borderWidth: 1, borderColor: '#26292e', padding: 13 },
+  paymentPill: { flex: 1, minHeight: 44, borderRadius: 13, alignItems: 'center', justifyContent: 'center', padding: 10, backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e' },
+  paymentPillSelected: { backgroundColor: '#211a07', borderColor: '#ffb313' },
+  paymentPillText: { color: '#b6bac2', fontSize: 11, fontWeight: '600' },
+  paymentPillTextSelected: { color: '#ffb313' },
+  billBox: { padding: 14, backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e', borderRadius: 14, marginTop: 18, marginBottom: 14 },
+  placeOrderBtn: { backgroundColor: '#ffb313', padding: 15, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginTop: 14, minHeight: 54 },
+  placeOrderBtnText: { color: '#090b0d', fontSize: 14, fontWeight: '700' },
+  placeOrderBtnSub: { color: '#42320c', fontSize: 10, marginTop: 5 },
+
+  emptySection: { backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e', borderStyle: 'dashed', borderRadius: 20, padding: 15, marginBottom: 18, shadowOpacity: 0, shadowRadius: 0, elevation: 0, overflow: 'hidden' },
+  compactEmptyCart: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: 'transparent' },
+  compactEmptyTitle: { color: '#f5f4f0', fontSize: 14, fontWeight: '700' },
+  compactEmptyCopy: { color: '#a5a9b2', fontSize: 12, lineHeight: 18, marginTop: 5 },
+  emptyCartVector: { width: 42, height: 42, borderRadius: 13, backgroundColor: '#17191d', alignItems: 'center', justifyContent: 'center' },
+
 });

@@ -1,17 +1,24 @@
+import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
+import InterfaceIcon from './InterfaceIcon';
 import React, { useContext, useEffect, useState } from 'react';
 import { Alert, Linking, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { AppContext } from '../context/AppContext';
 import WalletTopUpModal from './WalletTopUpModal';
 
-const Field = ({ label, last, ...props }) => (
+const Field = ({ label, last, ...props }) => {
+  const styles = useSellerStyles(baseStyles);
+  return (
   <View style={[styles.field, last && styles.fieldLast]}>
     <Text style={styles.fieldLabel}>{label}</Text>
     <TextInput style={styles.fieldInput} placeholderTextColor="#94a3b8" {...props} />
   </View>
 );
+};
 
 export default function StudentProfileScreen() {
+  const styles = useSellerStyles(baseStyles);
+  const { light } = useSellerTheme();
   const { userProfile, updateUserProfile, walletBalance, logoutUser, restartOnboarding, setRole, sellerShopId } = useContext(AppContext);
   const [name, setName] = useState(userProfile?.name || '');
   const [rollNo, setRollNo] = useState(userProfile?.rollNo || '');
@@ -33,14 +40,10 @@ export default function StudentProfileScreen() {
 
   const save = async () => {
     if (!name.trim()) return Alert.alert('Add your name', 'Your name helps the counter identify your order.');
-    await updateUserProfile({
-      name: name.trim(),
-      rollNo: rollNo.trim(),
-      phone: phone.trim(),
-      userType,
-      facultyRoomNote: facultyRoomNote.trim()
-    });
-    Alert.alert('Saved', 'Your profile is up to date.');
+    try {
+      await updateUserProfile({ name: name.trim(), rollNo: rollNo.trim(), facultyRoomNote: facultyRoomNote.trim() });
+      Alert.alert('Saved', 'Your profile is up to date.');
+    } catch (error) { Alert.alert('Could not save', error.message); }
   };
 
   const handleOpenTopUp = value => {
@@ -102,66 +105,12 @@ export default function StudentProfileScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Ocean Breeze Hero Wallet Card */}
-        <LinearGradient
-          colors={['#0747a6', '#0070d2', '#00a3c4']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.walletCard}
-        >
-          <View style={styles.walletHeader}>
-            <View>
-              <Text style={styles.walletLabel}>SKIPQ SECURITY WALLET</Text>
-              <Text style={styles.walletAmount}>₹{walletBalance.toFixed(0)}</Text>
-            </View>
-            <View style={styles.walletMark}>
-              <Text style={styles.walletMarkText}>Q</Text>
-            </View>
-          </View>
-          <Text style={styles.walletMessage}>Available balance for quick counter food ordering & deposits.</Text>
-          <View style={styles.quickAmounts}>
-            {[100, 200, 500].map(amount => (
-              <TouchableOpacity key={amount} style={styles.amountButton} onPress={() => handleOpenTopUp(amount)}>
-                <Text style={styles.amountText}>+ ₹{amount}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <View style={styles.customAmountRow}>
-            <TextInput
-              style={styles.amountInput}
-              value={topUpAmount}
-              onChangeText={setTopUpAmount}
-              keyboardType="numeric"
-              placeholder="Custom amount"
-              placeholderTextColor="rgba(255, 255, 255, 0.6)"
-            />
-            <TouchableOpacity style={styles.addButton} onPress={() => handleOpenTopUp(topUpAmount)}>
-              <Text style={styles.addButtonText}>ADD</Text>
-            </TouchableOpacity>
-          </View>
-        </LinearGradient>
+        <View style={styles.detailsCard}>
+          <Text style={styles.cardTitle}>Pay at your canteen</Text>
+          <Text style={styles.cardCaption}>Choose cash at pickup or UPI confirmed by the seller. Wallet payments and top-ups are unavailable.</Text>
+        </View>
+        <View style={styles.detailsCard}><Text style={styles.cardTitle}>Account type</Text><Text style={styles.cardCaption}>{userType === 'seller' ? 'Seller' : userType === 'faculty' ? 'Faculty' : 'Student'} · Registered to your Google account</Text></View>
 
-        {/* Account Type Selector */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionKicker}>ACCOUNT TYPE</Text>
-          <Text style={styles.sectionHint}>Select how you collect orders at campus counters</Text>
-        </View>
-        <View style={styles.segment}>
-          <TouchableOpacity
-            style={[styles.segmentOption, userType === 'student' && styles.segmentSelected]}
-            onPress={() => setUserType('student')}
-          >
-            <Text style={[styles.segmentTitle, userType === 'student' && styles.segmentTitleSelected]}>Student</Text>
-            <Text style={[styles.segmentSub, userType === 'student' && styles.segmentSubSelected]}>Standard pickup</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.segmentOption, userType === 'faculty' && styles.segmentSelected]}
-            onPress={() => setUserType('faculty')}
-          >
-            <Text style={[styles.segmentTitle, userType === 'faculty' && styles.segmentTitleSelected]}>Faculty</Text>
-            <Text style={[styles.segmentSub, userType === 'faculty' && styles.segmentSubSelected]}>Express collection</Text>
-          </TouchableOpacity>
-        </View>
         {userType === 'faculty' && (
           <View style={styles.noteCard}>
             <Text style={styles.noteTitle}>⭐ Faculty Express is active</Text>
@@ -182,7 +131,8 @@ export default function StudentProfileScreen() {
           <Text style={styles.cardCaption}>Only the counter details that matter.</Text>
           <Field label="NAME" value={name} onChangeText={setName} placeholder="Your full name" />
           <Field label="ENROLLMENT NUMBER" value={rollNo} onChangeText={setRollNo} placeholder="e.g. 210101120042" />
-          <Field label="PHONE" value={phone} onChangeText={setPhone} placeholder="+91 98765 43210" keyboardType="phone-pad" last />
+          <Field label="PHONE" value={phone} onChangeText={setPhone} placeholder="+91 98765 43210" keyboardType="phone-pad" editable={false} />
+          <Field label="GOOGLE EMAIL" value={userProfile?.email || ''} editable={false} last />
           <TouchableOpacity style={styles.saveButton} onPress={save}>
             <Text style={styles.saveButtonText}>SAVE CHANGES</Text>
           </TouchableOpacity>
@@ -194,10 +144,10 @@ export default function StudentProfileScreen() {
             <>
               <TouchableOpacity style={styles.actionRow} onPress={() => setRole('seller')}>
                 <View>
-                  <Text style={[styles.actionTitle, { color: '#0c52a3' }]}>🏪 Merchant Kitchen POS</Text>
+                  <Text style={[styles.actionTitle, { color: '#ffb313' }]}> Merchant Kitchen POS</Text>
                   <Text style={styles.actionSub}>Switch to KDS for {userProfile?.stallName || 'your stall'}</Text>
                 </View>
-                <Text style={[styles.actionArrow, { color: '#0c52a3' }]}>›</Text>
+                <Text style={[styles.actionArrow, { color: '#ffb313' }]}>›</Text>
               </TouchableOpacity>
               <View style={styles.divider} />
             </>
@@ -240,10 +190,10 @@ export default function StudentProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#edf3f8',
+    backgroundColor: '#090b0d',
   },
   content: {
     width: '100%',
@@ -260,13 +210,13 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   eyebrow: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 1.2,
   },
   title: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 28,
     fontWeight: '900',
     letterSpacing: -0.6,
@@ -296,9 +246,9 @@ const styles = StyleSheet.create({
   identityCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     borderRadius: 22,
     padding: 16,
     marginBottom: 16,
@@ -312,13 +262,13 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 18,
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
   },
   avatarText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 22,
     fontWeight: '900',
   },
@@ -326,30 +276,30 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   name: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 17,
     fontWeight: '900',
   },
   campus: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     marginTop: 2,
     fontWeight: '600',
   },
   memberId: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 11,
     fontWeight: '800',
     marginTop: 5,
   },
   saveMini: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#17191d',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
   saveMiniText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 0.5,
@@ -376,7 +326,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
   },
   walletAmount: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 36,
     fontWeight: '900',
     letterSpacing: -1,
@@ -393,7 +343,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   walletMarkText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 18,
     fontWeight: '900',
   },
@@ -418,7 +368,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   amountText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -432,7 +382,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.16)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.28)',
-    color: '#ffffff',
+    color: '#090b0d',
     borderRadius: 12,
     paddingHorizontal: 12,
     height: 44,
@@ -440,14 +390,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   addButton: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 18,
   },
   addButtonText: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 0.6,
@@ -457,24 +407,24 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   sectionKicker: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   sectionHint: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     marginTop: 2,
   },
   segment: {
     flexDirection: 'row',
     padding: 4,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 18,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -488,7 +438,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   segmentSelected: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     shadowColor: '#0c52a3',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
@@ -496,12 +446,12 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   segmentTitle: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 13,
     fontWeight: '800',
   },
   segmentTitleSelected: {
-    color: '#ffffff',
+    color: '#090b0d',
   },
   segmentSub: {
     color: '#94a3b8',
@@ -513,7 +463,7 @@ const styles = StyleSheet.create({
     color: '#ccfbf1',
   },
   noteCard: {
-    backgroundColor: '#e6f2fb',
+    backgroundColor: '#202329',
     borderRadius: 16,
     padding: 14,
     marginBottom: 16,
@@ -521,19 +471,19 @@ const styles = StyleSheet.create({
     borderColor: '#bae6fd',
   },
   noteTitle: {
-    color: '#0c52a3',
+    color: '#ffb313',
     fontSize: 13,
     fontWeight: '900',
   },
   noteText: {
-    color: '#475569',
+    color: '#b6bac2',
     fontSize: 12,
     lineHeight: 16,
     marginTop: 3,
   },
   noteInput: {
-    backgroundColor: '#ffffff',
-    color: '#0f172a',
+    backgroundColor: '#121417',
+    color: '#f5f4f0',
     borderWidth: 1,
     borderColor: '#bae6fd',
     borderRadius: 10,
@@ -545,11 +495,11 @@ const styles = StyleSheet.create({
   },
 
   detailsCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderRadius: 22,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     marginBottom: 16,
     shadowColor: '#64748b',
     shadowOffset: { width: 0, height: 2 },
@@ -558,12 +508,12 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   cardTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 17,
     fontWeight: '900',
   },
   cardCaption: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 12,
     marginTop: 2,
     marginBottom: 14,
@@ -577,21 +527,21 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0,
   },
   fieldLabel: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.8,
     marginBottom: 4,
   },
   fieldInput: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 14,
     fontWeight: '700',
     padding: 0,
     minHeight: 24,
   },
   saveButton: {
-    backgroundColor: '#0c52a3',
+    backgroundColor: '#ffb313',
     borderRadius: 14,
     alignItems: 'center',
     paddingVertical: 14,
@@ -603,16 +553,16 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   saveButtonText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 0.8,
   },
 
   actionsCard: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#121417',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#26292e',
     borderRadius: 20,
     overflow: 'hidden',
     shadowColor: '#64748b',
@@ -629,7 +579,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   actionTitle: {
-    color: '#0f172a',
+    color: '#f5f4f0',
     fontSize: 14,
     fontWeight: '800',
   },
@@ -639,7 +589,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   actionSub: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 11,
     marginTop: 2,
   },
@@ -655,7 +605,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#17191d',
     marginLeft: 18,
   },
   bottomSpace: {

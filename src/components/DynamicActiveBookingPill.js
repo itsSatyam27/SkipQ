@@ -1,3 +1,5 @@
+import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
+import InterfaceIcon from './InterfaceIcon';
 import React, { useEffect, useState, useRef } from 'react';
 import {
   StyleSheet,
@@ -15,6 +17,8 @@ export default function DynamicActiveBookingPill({
   onClose,
   onOpenPassModal
 }) {
+  const styles = useSellerStyles(baseStyles);
+  const { light } = useSellerTheme();
   const slideAnim = useRef(new Animated.Value(-120)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const timerBarAnim = useRef(new Animated.Value(1)).current;
@@ -162,7 +166,7 @@ export default function DynamicActiveBookingPill({
   const progressPercent = isReady ? 100 : isInPrep ? 65 : 25;
 
   return (
-    <View style={styles.overlayContainer} pointerEvents={visible ? 'auto' : 'none'}>
+    <View style={[styles.overlayContainer, { pointerEvents: visible ? 'auto' : 'none' }]}>
       {/* Full-screen touch detector to dismiss when tapping anywhere else */}
       <TouchableWithoutFeedback onPress={handleDismiss}>
         <View style={styles.backdrop} />
@@ -205,7 +209,7 @@ export default function DynamicActiveBookingPill({
                 </View>
               ) : (
                 <View style={styles.countdownPill}>
-                  <Text style={styles.timerEmoji}>⏱️</Text>
+                  <Text style={styles.timerEmoji}>⏱</Text>
                   <Text style={styles.timerText}>{formatTime(timeLeftSec)}</Text>
                 </View>
               )}
@@ -215,7 +219,7 @@ export default function DynamicActiveBookingPill({
                 onPress={handleDismiss}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Text style={styles.closeChipText}>✕</Text>
+                <Text style={styles.closeChipText}></Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -223,7 +227,7 @@ export default function DynamicActiveBookingPill({
           {/* Middle Row: Stall & Item summary */}
           <View style={styles.middleRow}>
             <Text style={styles.shopName} numberOfLines={1}>
-              🏪 {activeOrder.canteenName || activeOrder.shopName || 'Silver Oak Canteen'}
+               {activeOrder.canteenName || activeOrder.shopName || 'Silver Oak Canteen'}
             </Text>
             <Text style={styles.itemSummary} numberOfLines={1}>
               {(activeOrder.items || [])
@@ -245,7 +249,7 @@ export default function DynamicActiveBookingPill({
                 )}
                 {activeOrder.groupCollectorName ? (
                   <View style={styles.collectorPill}>
-                    <Text style={styles.collectorPillText}>👥 {activeOrder.groupCollectorName}</Text>
+                    <Text style={styles.collectorPillText}> {activeOrder.groupCollectorName}</Text>
                   </View>
                 ) : null}
               </View>
@@ -267,7 +271,7 @@ export default function DynamicActiveBookingPill({
 
           {/* Footer Call to Action & Auto-minimize notice */}
           <View style={styles.bottomRow}>
-            <Text style={styles.ctaText}>Tap for Counter PIN & QR Code ➔</Text>
+            <Text style={styles.ctaText}>Tap for Counter PIN & QR Code </Text>
             <Text style={styles.autoDismissHint}>Auto-closes in 10s</Text>
           </View>
 
@@ -291,7 +295,7 @@ export default function DynamicActiveBookingPill({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   overlayContainer: {
     position: 'absolute',
     top: 0,
@@ -350,7 +354,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   tokenText: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 15,
     fontWeight: '900',
     letterSpacing: 0.5,
@@ -418,7 +422,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   shopName: {
-    color: '#ffffff',
+    color: '#090b0d',
     fontSize: 14,
     fontWeight: '800',
   },
@@ -450,7 +454,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   autoDismissHint: {
-    color: '#64748b',
+    color: '#a5a9b2',
     fontSize: 10,
     fontWeight: '600',
   },

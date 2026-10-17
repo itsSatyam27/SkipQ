@@ -39,7 +39,18 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# Local verification tools, screenshots, and emulator output
+.codex/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
 # generated native folders
 /ios
 /android
+
+# Native Firebase app config is supplied locally or as an EAS file variable.
+/google-services.json
+/GoogleService-Info.plist
+/admin/dist/
 

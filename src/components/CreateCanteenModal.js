@@ -1,3 +1,4 @@
+import InterfaceIcon from './InterfaceIcon';
 import React, { useState, useContext } from 'react';
 import {
   StyleSheet,
@@ -44,8 +45,8 @@ export default function CreateCanteenModal({ visible, onClose }) {
         name: name.trim(),
         location: locationName.trim(),
         openingHours: openingHours.trim(),
-        upiId: upiId.trim() || `${name.toLowerCase().replace(/\s+/g, '')}@upi`,
-        phone: phone.trim() || '+91 98765 00000',
+        upiId: upiId.trim(),
+        phone: phone.trim(),
         tags: parsedTags.length > 0 ? parsedTags : ['Campus Eats'],
         lat: useCurrentGps ? (userLocation?.lat ?? 23.0917) : 23.0917,
         lng: useCurrentGps ? (userLocation?.lng ?? 72.5349) : 72.5349,
@@ -53,7 +54,7 @@ export default function CreateCanteenModal({ visible, onClose }) {
         menu: []
       });
 
-      Alert.alert('🎉 Canteen Created!', `"${name}" is now registered and live on the student food radar.`);
+      Alert.alert(' Canteen Created!', `"${name}" is now registered and live on the student food radar.`);
       setName('');
       setLocationName('');
       onClose();
@@ -72,11 +73,11 @@ export default function CreateCanteenModal({ visible, onClose }) {
           {/* Header */}
           <View style={styles.modalHeader}>
             <View>
-              <Text style={styles.modalTitle}>🏪 Register New Canteen</Text>
+              <Text style={styles.modalTitle}> Register New Canteen</Text>
               <Text style={styles.modalSubtitle}>Add your live food counter to campus radar</Text>
             </View>
             <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-              <Text style={styles.closeBtnText}>✕</Text>
+              <InterfaceIcon name="close" size={22} />
             </TouchableOpacity>
           </View>
 
@@ -104,7 +105,7 @@ export default function CreateCanteenModal({ visible, onClose }) {
             {/* GPS Pin */}
             <View style={styles.gpsContainer}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.gpsLabel}>📍 Canteen Coordinates</Text>
+                <Text style={styles.gpsLabel}> Canteen Coordinates</Text>
                 <Text style={styles.gpsCoords}>
                   Lat: {(userLocation?.lat ?? 23.0917).toFixed(4)}, Lng: {(userLocation?.lng ?? 72.5349).toFixed(4)}
                 </Text>
@@ -112,11 +113,13 @@ export default function CreateCanteenModal({ visible, onClose }) {
               <TouchableOpacity
                 style={styles.gpsBtn}
                 onPress={async () => {
-                  await requestUserLocation();
-                  Alert.alert('GPS Locked', 'Pinned to your current physical location.');
+                  try {
+                    const location = await requestUserLocation();
+                    if (location) Alert.alert('Location updated', 'Pinned to your current physical location.');
+                  } catch (error) { Alert.alert('Location unavailable', error.message || 'Enable device location and retry.'); }
                 }}
               >
-                <Text style={styles.gpsBtnText}>🎯 Recalibrate</Text>
+                <Text style={styles.gpsBtnText}> Recalibrate</Text>
               </TouchableOpacity>
             </View>
 
@@ -169,7 +172,7 @@ export default function CreateCanteenModal({ visible, onClose }) {
               <Text style={styles.cancelBtnText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.submitBtn} onPress={handleSave}>
-              <Text style={styles.submitBtnText}>Launch Canteen 🚀</Text>
+              <Text style={styles.submitBtnText}>Launch Canteen </Text>
             </TouchableOpacity>
           </View>
         </View>

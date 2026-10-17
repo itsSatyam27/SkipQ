@@ -1,4 +1,9 @@
-import React from 'react';
+import { useSellerTheme } from '../context/SellerTheme';
+import InterfaceIcon from './InterfaceIcon';
+import React, { useContext, useEffect, useRef, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AppContext } from '../context/AppContext';
+import useReducedMotion from '../hooks/useReducedMotion';
 import {
   StyleSheet,
   View,
@@ -6,10 +11,35 @@ import {
   Modal,
   TouchableOpacity,
   TouchableWithoutFeedback,
-  Animated
+  Animated,
+  Platform,
+  Easing
 } from 'react-native';
 
 export default function CustomAlertModal({ alertData, onClose }) {
+  const insets = useSafeAreaInsets();
+  const context = useContext(AppContext);
+  const { light } = useSellerTheme();
+  const dark = !light;
+  const reduced = useReducedMotion();
+  const progress = useRef(new Animated.Value(0)).current;
+  const [displayed, setDisplayed] = useState(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const actions = alertData?.buttons || [];
+  // Never expire a choice, destructive action, retry, or callback awaiting a tap.
+  const isToast = !!alertData && (actions.length === 0 || (actions.length === 1 && !actions[0].onPress && !actions[0].style && /^(ok|okay|got it)$/i.test(actions[0].text || 'OK')));
+  useEffect(() => {
+    if (!isToast) { setDisplayed(null); return; }
+    setDisplayed(alertData);
+    progress.setValue(0);
+    const enter = Animated.timing(progress, { toValue: 1, duration: reduced ? 0 : 240, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' });
+    enter.start();
+    const timer = setTimeout(() => {
+      Animated.timing(progress, { toValue: 0, duration: reduced ? 0 : 200, useNativeDriver: Platform.OS !== 'web' }).start(({ finished }) => { if (finished) closeRef.current(); });
+    }, 3500);
+    return () => { clearTimeout(timer); progress.stopAnimation(); };
+  }, [alertData, isToast, reduced, progress]);
   if (!alertData) return null;
 
   const { title = '', message = '', buttons = [] } = alertData;
@@ -18,7 +48,7 @@ export default function CustomAlertModal({ alertData, onClose }) {
   const fullText = (title + ' ' + message).toLowerCase();
 
   let accentColor = '#0c52a3';
-  let iconEmoji = '✨';
+  let iconName = 'orders';
   let badgeBg = '#e6f2fb';
 
   if (
@@ -30,10 +60,12 @@ export default function CustomAlertModal({ alertData, onClose }) {
     fullText.includes('🎉')
   ) {
     accentColor = '#059669';
-    iconEmoji = fullText.includes('₹') ? '💳' : '✅';
+    iconName = 'check';
     badgeBg = '#ecfdf5';
   } else if (
     fullText.includes('error') ||
+    fullText.includes('could not') ||
+    fullText.includes('denied') ||
     fullText.includes('delete') ||
     fullText.includes('cancel') ||
     fullText.includes('restricted') ||
@@ -41,7 +73,7 @@ export default function CustomAlertModal({ alertData, onClose }) {
     fullText.includes('fail')
   ) {
     accentColor = '#dc2626';
-    iconEmoji = fullText.includes('delete') ? '🗑️' : '⚠️';
+    iconName = 'close';
     badgeBg = '#fef2f2';
   } else if (
     fullText.includes('warning') ||
@@ -51,7 +83,7 @@ export default function CustomAlertModal({ alertData, onClose }) {
     fullText.includes('lock')
   ) {
     accentColor = '#d97706';
-    iconEmoji = fullText.includes('proximity') ? '📍' : '⚡';
+    iconName = 'clock';
     badgeBg = '#fef3c7';
   }
 
@@ -69,6 +101,14 @@ export default function CustomAlertModal({ alertData, onClose }) {
   };
 
   const hasCancel = effectiveButtons.some(b => b.style === 'cancel');
+
+  if (isToast) return displayed && <View style={[styles.toastHost, { top: Math.max(insets.top, 12) + 8, pointerEvents: 'box-none' }]}>
+    <Animated.View accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.toast, { backgroundColor: dark ? '#17191d' : '#fff', borderColor: dark ? '#34302a' : '#dce5ef', opacity: progress, transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [-90, 0] }) }] }]}>
+      <View style={[styles.toastIcon, { backgroundColor: dark ? '#292418' : badgeBg }]}><InterfaceIcon name={iconName} size={21} color={dark ? '#ffb313' : accentColor} /></View>
+      <View style={{ flex: 1 }}>{!!title && <Text style={[styles.toastTitle, { color: dark ? '#f5f4f0' : '#172d48' }]}>{title}</Text>}{!!message && <Text style={[styles.toastMessage, { color: dark ? '#b6bac2' : '#64748b' }]}>{message}</Text>}</View>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Dismiss notification" onPress={onClose} style={styles.toastDismiss}><InterfaceIcon name="close" size={17} color={dark ? '#b6bac2' : '#64748b'} /></TouchableOpacity>
+    </Animated.View>
+  </View>;
 
   return (
     <Modal
@@ -89,7 +129,7 @@ export default function CustomAlertModal({ alertData, onClose }) {
             <View style={[styles.dialogCard, { borderColor: `${accentColor}40` }]}>
               {/* Top Accent Glowing Icon */}
               <View style={[styles.iconHalo, { backgroundColor: badgeBg, borderColor: `${accentColor}50` }]}>
-                <Text style={styles.iconEmoji}>{iconEmoji}</Text>
+                <InterfaceIcon name={iconName} size={28} color={accentColor} />
               </View>
 
               {/* Title */}
@@ -155,6 +195,12 @@ export default function CustomAlertModal({ alertData, onClose }) {
 }
 
 const styles = StyleSheet.create({
+  toastHost: { position: 'absolute', left: 14, right: 14, zIndex: 10000, alignItems: 'center' },
+  toast: { width: '100%', maxWidth: 520, borderWidth: 1, borderRadius: 18, padding: 14, flexDirection: 'row', alignItems: 'flex-start', gap: 11, shadowColor: '#000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.18, shadowRadius: 16, elevation: 12 },
+  toastIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  toastTitle: { fontSize: 14, fontWeight: '700', lineHeight: 20 },
+  toastMessage: { fontSize: 12, lineHeight: 18, marginTop: 3 },
+  toastDismiss: { width: 40, minHeight: 40, alignSelf: 'center', alignItems: 'center', justifyContent: 'center', marginRight: -4 },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',

@@ -1,39 +1,12 @@
-# Secure backend deployment
+# Spark security and release status
 
-The mobile app no longer contains an SMS-provider credential or accepts a
-client-generated OTP. Complete these steps before testing sign-in.
+Follow [SPARK_SETUP.md](SPARK_SETUP.md).
 
-1. In the Firebase project, install the Functions dependencies:
+- Google-verified email is required. Profile creation and unique phone claims are atomic; client rules lock saved email, phone and account type. Phone ownership is not yet SMS-verified.
+- Orders use menu-validated prices, scoped reads, immutable ownership, seller approval and terminal-state checks. Clients cannot approve sellers, set wallet balances, or reset bans.
+- Pickup secrets are buyer-only. Rules compare the seller's submitted PIN with the secret before completion; attempts are persisted and limited. Merchant-confirmed UPI is required before UPI pickup.
+- Cancellation records merchant refund requirements; the app never transfers refunds. No-show records need operator review and do not automatically ban users in this Spark version.
+- Native Google sign-in exchanges credentials directly with Firebase Authentication. Expo Go uses the AuthSession proxy for development/testing; no Google tokens are stored in Firestore or passed through the legacy API. Native final-build/device testing is pending.
+- Old functions remain as legacy source/test coverage and are not deployed or called by the Spark app. No paid API endpoints are required.
 
-   ```powershell
-   Set-Location functions
-   npm install
-   ```
-
-2. Store the Fast2SMS key only as a Firebase secret (never in `.env` or an Expo
-   public variable):
-
-   ```powershell
-   firebase functions:secrets:set FAST2SMS_API_KEY
-   firebase deploy --only functions:api,firestore:rules
-   ```
-
-3. Set `EXPO_PUBLIC_API_BASE_URL` in the local `.env` to the deployed function
-   URL, for example `https://asia-south1-PROJECT_ID.cloudfunctions.net/api`.
-
-4. Use the Firebase Admin SDK to add the `seller: true` custom claim only after
-   a canteen owner has been approved. The deployed Firestore rules allow menu
-   changes only for that approved seller's own canteen.
-
-5. Deploy the order endpoints before enabling live ordering. Cash deposits,
-   wallet deductions, pickup refunds, bans, and no-show penalties are handled by
-   authenticated Cloud Function transactions. The rules intentionally reject
-   direct client writes to `orders`; this prevents modified apps from changing
-   payment or order state.
-
-6. After reviewing a seller request, grant the seller claim from a trusted
-   Admin SDK process. The app refreshes that claim on sign-in and then enables
-   the seller POS. Never grant this claim from the client.
-
-Rotate the previously exposed Fast2SMS key in the provider console before this
-deployment. Removing it from source does not invalidate a copied key.
+Review and migrate legacy phone claims and pickup secrets before accepting registrations against older data. Existing ban records and phone claims must be retained. Rules tests run against the isolated emulator; native JavaScript bundling does not validate OAuth certificate configuration.

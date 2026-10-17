@@ -1,433 +1,150 @@
-import React, { useState, useContext, useEffect } from 'react';
-import { StyleSheet, View, StatusBar, TouchableOpacity, Text } from 'react-native';
+import { SellerThemeProvider, useSellerTheme } from './src/context/SellerTheme';
+import React, { useContext, useEffect, useState } from 'react';
+import { Platform, StatusBar, Text, TouchableOpacity, View } from 'react-native';
+import * as SplashScreen from 'expo-splash-screen';
+import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { PlatformPressable } from '@react-navigation/elements';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppProvider, AppContext } from './src/context/AppContext';
 import Header from './src/components/Header';
+import NavigationIcon from './src/components/NavigationIcon';
+import useReducedMotion from './src/hooks/useReducedMotion';
 import StudentRadarView from './src/components/StudentRadarView';
 import StudentCartScreen from './src/components/StudentCartScreen';
 import StudentProfileScreen from './src/components/StudentProfileScreen';
 import SellerPosView from './src/components/SellerPosView';
+import SellerPendingScreen from './src/components/SellerPendingScreen';
 import DigitalPickupPassModal from './src/components/DigitalPickupPassModal';
 import AddMenuItemModal from './src/components/AddMenuItemModal';
 import CreateCanteenModal from './src/components/CreateCanteenModal';
 import OnboardingFlow from './src/components/OnboardingFlow';
-import FirebaseConfigModal from './src/components/FirebaseConfigModal';
 import DynamicActiveBookingPill from './src/components/DynamicActiveBookingPill';
 import CustomAlertModal from './src/components/CustomAlertModal';
 import VendorProfileModal from './src/components/VendorProfileModal';
 import { registerAlertListener, unregisterAlertListener } from './src/utils/customAlert';
 
-function MainScreen() {
-  const {
-    role,
-    setRole,
-    cart,
-    activeOrderId,
-    orders,
-    firebaseConfigModalVisible,
-    setFirebaseConfigModalVisible,
-    refreshFirebaseState,
-    addToCart
-  } = useContext(AppContext);
+if (Platform.OS !== 'web') {
+  SplashScreen.preventAutoHideAsync().catch(() => {});
+  SplashScreen.setOptions({ duration: 250, fade: true });
+}
+const Stack = createNativeStackNavigator();
+const Tabs = createBottomTabNavigator();
+const theme = { ...DefaultTheme, colors: { ...DefaultTheme.colors, primary: '#0747a6', background: '#edf3f8', card: '#ffffff', text: '#0f172a', border: '#e2e8f0' } };
+const tabOptions = { headerShown: false, tabBarButton: TabButton, tabBarActiveTintColor: '#0747a6', tabBarInactiveTintColor: '#64748b',
+  tabBarLabelStyle: { fontSize: 12, lineHeight: 16, fontWeight: '700' },
+  tabBarIconStyle: { height: 28 },
+  tabBarStyle: { backgroundColor: '#ffffff', borderColor: '#e2e8f0', borderWidth: 1, borderTopWidth: 1,
+    borderRadius: 32, paddingTop: 4, paddingHorizontal: 8, marginTop: 8,
+    ...Platform.select({ web: { boxShadow: '0px 5px 20px rgba(23, 57, 92, 0.07)' },
+      default: { shadowColor: '#17395c', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.07, shadowRadius: 10, elevation: 3 } }) },
+  sceneStyle: { backgroundColor: '#edf3f8' } };
+const tabIcon = (name, seller = false) => ({ color, focused }) => <NavigationIcon name={name} color={color} focused={focused} highlight={!seller} />;
 
-  const [currentTab, setCurrentTab] = useState('explore'); // 'explore' | 'cart' | 'profile'
-  const [activeBookingPillVisible, setActiveBookingPillVisible] = useState(false);
+function ExploreScreen({ navigation }) {
+  const { addToCart } = useContext(AppContext);
+  return <StudentRadarView onSelectOrderItem={(shop, item) => { addToCart(shop, item); navigation.navigate('Cart'); }}
+    onOpenCartCheckout={() => navigation.navigate('Cart')} onOpenPassModal={() => navigation.navigate('PickupPass')} />;
+}
+function CartScreen({ navigation }) {
+  return <View style={{ flex: 1 }}>
+    <StudentCartScreen onNavigateToExplore={() => navigation.navigate('Explore')}
+    onOpenPassModal={() => navigation.navigate('PickupPass')} onOrderPlaced={() => navigation.navigate('PickupPass')} /></View>;
+}
+function ProfileScreen({ navigation }) { return <View style={{ flex: 1 }}><StudentProfileScreen onNavigateToExplore={() => navigation.navigate('Explore')} /></View>; }
+function KitchenScreen({ navigation, route }) {
+  const { sellerApproved } = useContext(AppContext);
+  if (!sellerApproved) return <SellerPendingScreen />;
+  const selectedTab = { Orders: 'orders', Menu: 'menu', Stats: 'analytics' }[route.name];
+  return <View style={{ flex: 1 }}>
+    <SellerPosView selectedTab={selectedTab} onTabChange={tab => navigation.navigate({ orders: 'Orders', menu: 'Menu', analytics: 'Stats' }[tab])}
+    onOpenAddItemModal={shopId => navigation.navigate('AddDish', { shopId })} onOpenEditItemModal={(item, shopId) => navigation.navigate('EditDish', { item, shopId })}
+    onOpenCreateCanteenModal={() => navigation.navigate('CreateCanteen')} onOpenSettings={section => navigation.navigate('Account', { section, settingsRequest: Date.now() })} /></View>;
+}
+function SellerAccountScreen({ route }) {
+  return <VendorProfileModal visible embedded requestedSection={route.params?.section} settingsRequest={route.params?.settingsRequest} />;
+}
+function TabButton(props) {
+  return <PlatformPressable {...props} pressColor="transparent" pressOpacity={0.78}
+    android_ripple={{ color: 'transparent', borderless: false }}
+    style={[props.style, { borderRadius: 18 }]} />;
+}
+function HomeScreen({ navigation }) {
+  const { light } = useSellerTheme();
+  const { role, cart, activeOrderId, orders } = useContext(AppContext);
+  const insets = useSafeAreaInsets();
+  const reducedMotion = useReducedMotion();
+  const [pillVisible, setPillVisible] = useState(false);
+  const count = cart.items.reduce((sum, item) => sum + item.qty, 0);
+  const order = orders.find(item => item.id === activeOrderId);
+  return <View style={{ flex: 1, backgroundColor: light ? '#f6f7f9' : '#090b0d' }}>
+    <Header onOpenPassModal={() => navigation.navigate('PickupPass')}
+      onOpenProfileModal={() => navigation.navigate('Home', { screen: role === 'seller' ? 'Account' : 'Profile' })}
+      isPillVisible={pillVisible} onToggleActivePill={() => setPillVisible(value => !value)} />
+    <DynamicActiveBookingPill visible={pillVisible} activeOrder={order} onClose={() => setPillVisible(false)}
+      onOpenPassModal={() => { setPillVisible(false); navigation.navigate('PickupPass'); }} />
+    <Tabs.Navigator key={role} screenOptions={({ route }) => ({ ...tabOptions, animation: reducedMotion ? 'none' : 'fade', transitionSpec: { animation: 'timing', config: { duration: 160 } }, tabBarAccessibilityLabel: route.name,
+      ...({ tabBarActiveTintColor: '#090b0d', tabBarInactiveTintColor: light ? '#596579' : '#a5a9b2', tabBarActiveBackgroundColor: '#ffb313', tabBarItemStyle: { borderRadius: 18, marginVertical: 2 }, tabBarLabelStyle: { fontSize: 11, lineHeight: 15, fontWeight: '600', marginBottom: 0 }, sceneStyle: { backgroundColor: light ? '#f6f7f9' : '#090b0d' } }),
+      tabBarStyle: { ...tabOptions.tabBarStyle, ...({ backgroundColor: light ? '#fff' : '#17191d', borderColor: light ? '#dce0e7' : '#26292e', borderRadius: 24, paddingHorizontal: 7, paddingTop: 3, elevation: 0, shadowOpacity: 0 }), position: 'absolute', height: 70, paddingBottom: 4,
+        left: Math.max(20, insets.left), right: Math.max(20, insets.right),
+        bottom: Math.max(12, insets.bottom), marginTop: 0 } })} backBehavior="history">
+      {role === 'seller' ? <>
+        <Tabs.Screen name="Orders" component={KitchenScreen} options={{ title: 'Orders', tabBarIcon: tabIcon('Orders', true) }} />
+        <Tabs.Screen name="Menu" component={KitchenScreen} options={{ title: 'Menu', tabBarIcon: tabIcon('Menu', true) }} />
+        <Tabs.Screen name="Stats" component={KitchenScreen} options={{ title: 'Stats', tabBarIcon: tabIcon('Stats', true) }} />
+        <Tabs.Screen name="Account" component={SellerAccountScreen} options={{ title: 'Account', tabBarIcon: tabIcon('Account', true) }} />
+      </> : <>
+        <Tabs.Screen name="Explore" component={ExploreScreen} options={{ tabBarIcon: tabIcon('Explore', true) }} />
+        <Tabs.Screen name="Cart" component={CartScreen} options={{ tabBarIcon: tabIcon('Cart', true), tabBarBadge: count || undefined }} />
+        <Tabs.Screen name="Profile" component={ProfileScreen} options={{ tabBarIcon: tabIcon('Profile', true) }} />
+      </>}
+    </Tabs.Navigator>
+  </View>;
+}
+function PickupScreen({ navigation }) {
+  const { activeOrderId, orders } = useContext(AppContext);
+  if (!orders.some(order => order.id === activeOrderId)) return <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: '#edf3f8' }}>
+    <Text style={{ fontSize: 20, fontWeight: '800', color: '#0f172a' }}>No active pickup pass</Text>
+    <Text style={{ marginVertical: 12, color: '#64748b' }}>Place an order to get a pickup pass.</Text>
+    <TouchableOpacity accessibilityRole="button" onPress={() => navigation.goBack()}><Text style={{ color: '#0747a6', fontWeight: '700', paddingVertical: 12 }}>← Back</Text></TouchableOpacity>
+  </View>;
+  return <DigitalPickupPassModal visible onClose={() => navigation.goBack()} />;
+}
+function DishScreen({ navigation, route }) { return <AddMenuItemModal visible shopId={route.params?.shopId} editItem={route.params?.item} onClose={() => navigation.goBack()} />; }
+function CanteenScreen({ navigation }) { return <CreateCanteenModal visible onClose={() => navigation.goBack()} />; }
+function VendorScreen({ navigation }) { return <VendorProfileModal visible onClose={() => navigation.goBack()} />; }
+
+export function AppNavigator() { return <SellerThemeProvider><ThemedAppNavigator /></SellerThemeProvider>; }
+function ThemedAppNavigator() {
+  const { light } = useSellerTheme();
+  const { isOnboardingComplete, userProfile, role } = useContext(AppContext);
   const [globalAlert, setGlobalAlert] = useState(null);
-
-  useEffect(() => {
-    registerAlertListener(alertData => {
-      setGlobalAlert(alertData);
-    });
-    return () => {
-      unregisterAlertListener();
-    };
-  }, []);
-
-  const [passModalVisible, setPassModalVisible] = useState(false);
-  const [addItemModalVisible, setAddItemModalVisible] = useState(false);
-  const [editingMenuItem, setEditingMenuItem] = useState(null);
-  const [createCanteenModalVisible, setCreateCanteenModalVisible] = useState(false);
-  const [vendorProfileModalVisible, setVendorProfileModalVisible] = useState(false);
-
-  const handleSelectOrderItem = (shopObj, itemObj) => {
-    addToCart(shopObj, itemObj);
-    setCurrentTab('cart');
-  };
-
-  const handleOpenCartCheckout = () => {
-    setCurrentTab('cart');
-  };
-
-  const handleOpenEditItem = itemObj => {
-    setEditingMenuItem(itemObj);
-    setAddItemModalVisible(true);
-  };
-
-  const activeOrderObj = orders.find(o => o.id === activeOrderId);
-  const hasActivePass =
-    activeOrderObj && activeOrderObj.orderStatus !== 'Completed' && activeOrderObj.orderStatus !== 'Cancelled';
-
-  const cartTotalItems = (cart?.items || []).reduce((sum, it) => sum + it.qty, 0);
-
-  return (
-    <View style={styles.appContainer}>
-      <StatusBar
-        barStyle="dark-content"
-        backgroundColor="#edf3f8"
-      />
-
-      {/* Modern Top Header */}
-      <Header
-        onOpenPassModal={() => setPassModalVisible(true)}
-        onOpenProfileModal={() => setCurrentTab('profile')}
-        isPillVisible={activeBookingPillVisible}
-        onToggleActivePill={() => setActiveBookingPillVisible(prev => !prev)}
-      />
-
-      {/* Floating Dynamic Countdown Island Capsule */}
-      <DynamicActiveBookingPill
-        visible={activeBookingPillVisible}
-        activeOrder={activeOrderObj}
-        onClose={() => setActiveBookingPillVisible(false)}
-        onOpenPassModal={() => {
-          setActiveBookingPillVisible(false);
-          setPassModalVisible(true);
-        }}
-      />
-
-      {/* Main View Switcher */}
-      {role === 'buyer' ? (
-        currentTab === 'explore' ? (
-          <StudentRadarView
-            onSelectOrderItem={handleSelectOrderItem}
-            onOpenCartCheckout={handleOpenCartCheckout}
-            onOpenPassModal={() => setPassModalVisible(true)}
-          />
-        ) : currentTab === 'cart' ? (
-          <StudentCartScreen
-            onNavigateToExplore={() => setCurrentTab('explore')}
-            onOpenPassModal={() => setPassModalVisible(true)}
-            onOrderPlaced={() => setActiveBookingPillVisible(true)}
-          />
-        ) : (
-          <StudentProfileScreen
-            onNavigateToExplore={() => setCurrentTab('explore')}
-          />
-        )
-      ) : (
-        <SellerPosView
-          onOpenAddItemModal={() => {
-            setEditingMenuItem(null);
-            setAddItemModalVisible(true);
-          }}
-          onOpenEditItemModal={handleOpenEditItem}
-          onOpenCreateCanteenModal={() => setCreateCanteenModalVisible(true)}
-        />
-      )}
-
-      {/* Modals */}
-      <DigitalPickupPassModal
-        visible={passModalVisible}
-        onClose={() => setPassModalVisible(false)}
-      />
-
-      <AddMenuItemModal
-        visible={addItemModalVisible}
-        editItem={editingMenuItem}
-        onClose={() => {
-          setAddItemModalVisible(false);
-          setEditingMenuItem(null);
-        }}
-      />
-
-      <CreateCanteenModal
-        visible={createCanteenModalVisible}
-        onClose={() => setCreateCanteenModalVisible(false)}
-      />
-
-      <VendorProfileModal
-        visible={vendorProfileModalVisible}
-        onClose={() => setVendorProfileModalVisible(false)}
-      />
-
-      <FirebaseConfigModal
-        visible={firebaseConfigModalVisible}
-        onClose={() => setFirebaseConfigModalVisible(false)}
-        onConfigSaved={() => {
-          refreshFirebaseState();
-        }}
-      />
-
-      {/* Global Dark Glassmorphic Alert Dialog */}
-      <CustomAlertModal
-        alertData={globalAlert}
-        onClose={() => setGlobalAlert(null)}
-      />
-
-      {/* Floating Frosted Glass Bottom Dock */}
-      <View style={styles.bottomDockContainer}>
-        <View style={styles.bottomBar}>
-          {role === 'buyer' ? (
-            <>
-              {/* 1. Explore Tab: All dishes & stalls */}
-              <TouchableOpacity
-                style={[styles.bottomTab, currentTab === 'explore' && styles.bottomTabActive]}
-                onPress={() => setCurrentTab('explore')}
-                activeOpacity={0.8}
-              >
-                <View style={[styles.tabIconWrap, currentTab === 'explore' && styles.tabIconWrapActive]}>
-                  <Text style={styles.tabIcon}>🍽️</Text>
-                </View>
-                <Text style={[styles.tabLabel, currentTab === 'explore' && styles.tabLabelActive]}>Explore</Text>
-              </TouchableOpacity>
-
-              {/* 2. Cart Tab: Items to buy, active pass & past orders */}
-              <TouchableOpacity
-                style={[styles.bottomTab, currentTab === 'cart' && styles.bottomTabActiveCart]}
-                onPress={() => setCurrentTab('cart')}
-                activeOpacity={0.8}
-              >
-                <View style={styles.cartTabWrap}>
-                  <Text style={styles.tabIcon}>🛒</Text>
-                  {cartTotalItems > 0 ? (
-                    <View style={styles.cartTabBadge}>
-                      <Text style={styles.cartTabBadgeText}>{cartTotalItems}</Text>
-                    </View>
-                  ) : hasActivePass ? (
-                    <View style={styles.activeDot} />
-                  ) : null}
-                </View>
-                <Text
-                  style={[
-                    styles.tabLabel,
-                    currentTab === 'cart'
-                      ? styles.tabLabelActiveCart
-                      : cartTotalItems > 0
-                      ? { color: '#00a3c4', fontWeight: '800' }
-                      : null
-                  ]}
-                >
-                  Cart
-                </Text>
-              </TouchableOpacity>
-
-              {/* 3. Profile Tab: Student info, wallet, bypass & canteen switcher */}
-              <TouchableOpacity
-                style={[styles.bottomTab, currentTab === 'profile' && styles.bottomTabActive]}
-                onPress={() => setCurrentTab('profile')}
-                activeOpacity={0.8}
-              >
-                <View style={[styles.tabIconWrap, currentTab === 'profile' && styles.tabIconWrapActive]}>
-                  <Text style={styles.tabIcon}>👤</Text>
-                </View>
-                <Text style={[styles.tabLabel, currentTab === 'profile' && styles.tabLabelActive]}>Profile</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              {/* Seller POS Tabs */}
-              <TouchableOpacity
-                style={[styles.bottomTab, styles.bottomTabActiveSeller]}
-                onPress={() => {}}
-              >
-                <View style={[styles.tabIconWrap, styles.tabIconWrapActiveSeller]}>
-                  <Text style={styles.tabIcon}>📋</Text>
-                </View>
-                <Text style={[styles.tabLabel, styles.tabLabelActiveSeller]}>Live Queue</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.bottomTab}
-                onPress={() => {
-                  setEditingMenuItem(null);
-                  setAddItemModalVisible(true);
-                }}
-              >
-                <Text style={styles.tabIcon}>➕</Text>
-                <Text style={styles.tabLabel}>Add Dish</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.bottomTab} onPress={() => setVendorProfileModalVisible(true)}>
-                <Text style={styles.tabIcon}>👤</Text>
-                <Text style={styles.tabLabel}>Account</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-      </View>
-    </View>
-  );
+  useEffect(() => { registerAlertListener(setGlobalAlert); return unregisterAlertListener; }, []);
+  if (isOnboardingComplete === null && Platform.OS !== 'web') return null;
+  return <View style={{ flex: 1, backgroundColor: '#edf3f8' }} onLayout={() => {
+    if (Platform.OS !== 'web' && isOnboardingComplete !== null) SplashScreen.hideAsync().catch(() => {});
+  }}>
+    <StatusBar barStyle={!light ? 'light-content' : 'dark-content'} backgroundColor={light ? '#f6f7f9' : '#090b0d'} />
+    <NavigationContainer theme={theme}>
+      <Stack.Navigator key={`${userProfile.uid || 'guest'}:${isOnboardingComplete ? role : 'setup'}`} screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#edf3f8' } }}>
+        {isOnboardingComplete ? <>
+          <Stack.Screen name="Home" component={HomeScreen} />
+          <Stack.Group screenOptions={{ presentation: 'transparentModal', animation: 'none' }}>
+            <Stack.Screen name="PickupPass" component={PickupScreen} />
+            {role === 'seller' && <>
+              <Stack.Screen name="AddDish" component={DishScreen} />
+              <Stack.Screen name="EditDish" component={DishScreen} />
+              <Stack.Screen name="CreateCanteen" component={CanteenScreen} />
+              <Stack.Screen name="VendorSettings" component={VendorScreen} />
+            </>}
+          </Stack.Group>
+        </> : <Stack.Screen name="Setup" component={OnboardingFlow} />}
+      </Stack.Navigator>
+    </NavigationContainer>
+    <CustomAlertModal alertData={globalAlert} onClose={() => setGlobalAlert(null)} />
+  </View>;
 }
-
-function AppRoot() {
-  const { isOnboardingComplete } = useContext(AppContext);
-
-  if (isOnboardingComplete === null) {
-    return (
-      <View style={[styles.appContainer, { justifyContent: 'center', alignItems: 'center' }]}>
-        <StatusBar barStyle="dark-content" backgroundColor="#edf3f8" />
-        <View style={styles.loadingLogo}>
-          <Text style={styles.loadingLogoText}>Q</Text>
-        </View>
-        <Text style={styles.loadingText}>SkipQ • Silver Oak University</Text>
-      </View>
-    );
-  }
-
-  if (!isOnboardingComplete) {
-    return <OnboardingFlow />;
-  }
-
-  return <MainScreen />;
-}
-
 export default function App() {
-  return (
-    <AppProvider>
-      <AppRoot />
-    </AppProvider>
-  );
+  return <SafeAreaProvider><AppProvider><AppNavigator /></AppProvider></SafeAreaProvider>;
 }
-
-const styles = StyleSheet.create({
-  appContainer: {
-    flex: 1,
-    backgroundColor: '#edf3f8',
-  },
-  bottomDockContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    paddingTop: 10,
-    backgroundColor: '#edf3f8',
-  },
-  bottomBar: {
-    flexDirection: 'row',
-    width: '100%',
-    maxWidth: 760,
-    alignSelf: 'center',
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    borderWidth: 1.5,
-    borderColor: '#e2e8f0',
-    paddingVertical: 7,
-    paddingHorizontal: 7,
-    overflow: 'hidden',
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 0,
-  },
-  bottomTab: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    borderRadius: 18,
-    overflow: 'hidden',
-  },
-  bottomTabActive: {
-    backgroundColor: '#0c52a3',
-  },
-  bottomTabActiveCart: {
-    backgroundColor: '#0c52a3',
-  },
-  bottomTabActiveSeller: {
-    backgroundColor: '#0c52a3',
-  },
-  tabLabelActiveSeller: {
-    color: '#ffffff',
-    fontWeight: '900',
-  },
-  tabIconWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabIconWrapActive: {
-    transform: [{ scale: 1.08 }],
-  },
-  tabIconWrapActiveCart: {
-    transform: [{ scale: 1.08 }],
-  },
-  tabIconWrapActiveSeller: {
-    transform: [{ scale: 1.08 }],
-  },
-  cartTabWrap: {
-    position: 'relative',
-  },
-  passTabWrap: {
-    position: 'relative',
-  },
-  tabIcon: {
-    fontSize: 16,
-  },
-  tabLabel: {
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.1,
-  },
-  tabLabelActive: {
-    color: '#ffffff',
-    fontWeight: '800',
-  },
-  tabLabelActiveCart: {
-    color: '#ffffff',
-    fontWeight: '800',
-  },
-  cartTabBadge: {
-    position: 'absolute',
-    top: -5,
-    right: -10,
-    backgroundColor: '#00a3c4',
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 3,
-    borderWidth: 1.5,
-    borderColor: '#ffffff',
-  },
-  cartTabBadgeText: {
-    color: '#ffffff',
-    fontSize: 8.5,
-    fontWeight: '900',
-  },
-  activeDot: {
-    position: 'absolute',
-    top: -2,
-    right: -6,
-    backgroundColor: '#00a3c4',
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    borderWidth: 1.5,
-    borderColor: '#ffffff',
-  },
-  loadingLogo: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
-    backgroundColor: '#0c52a3',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#0c52a3',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  loadingLogoText: {
-    color: '#ffffff',
-    fontSize: 28,
-    fontWeight: '900',
-  },
-  loadingText: {
-    color: '#64748b',
-    fontSize: 13,
-    marginTop: 14,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-});
-

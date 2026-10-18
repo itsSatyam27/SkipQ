@@ -38,14 +38,15 @@ function fixture() {
   ]);
   let sentCode;
   let providerOk = true;
-  const handlers = createHandlers({ db, Timestamp, now: () => clock, smsKey: () => 'test-secret',
-    auth: {
-      verifyIdToken: async token => { if (token === 'invalid') throw new Error('Invalid token'); const uid = token === 'admin-token' ? 'admin' : token; return token === 'anonymous' ? { uid: 'guest' } : { uid, email: `${uid}@example.com`, email_verified: token !== 'unverified', firebase: { sign_in_provider: 'google.com' }, auth_time: Math.floor(clock / 1000), seller: token === 'seller' }; },
-      getUser: async uid => { if (!users.has(uid)) { const e = new Error('Missing'); e.code = 'auth/user-not-found'; throw e; } return users.get(uid); },
-      updateUser: async (uid, values) => { const user = users.get(uid); if (!user) throw new Error('Missing'); Object.assign(user, values); return user; },
-      createUser: async user => users.set(user.uid, user),
-      createCustomToken: async uid => `verified-${uid}`
-    }, fetchSms: async (_url, options) => { sentCode = JSON.parse(options.body).variables_values; return { ok: providerOk, json: async () => ({ return: providerOk }) }; }
+  const auth = {
+    verifyIdToken: async token => { if (token === 'invalid') throw new Error('Invalid token'); const uid = token === 'admin-token' ? 'admin' : token; return token === 'anonymous' ? { uid: 'guest' } : { uid, email: `${uid}@example.com`, email_verified: token !== 'unverified', firebase: { sign_in_provider: 'google.com' }, auth_time: Math.floor(clock / 1000), seller: token === 'seller' }; },
+    getUser: async uid => { if (!users.has(uid)) { const e = new Error('Missing'); e.code = 'auth/user-not-found'; throw e; } return users.get(uid); },
+    updateUser: async (uid, values) => { const user = users.get(uid); if (!user) throw new Error('Missing'); Object.assign(user, values); return user; },
+    createUser: async user => users.set(user.uid, user),
+    createCustomToken: async uid => `verified-${uid}`
+  };
+  const handlers = createHandlers({ db, auth, Timestamp, now: () => clock, smsKey: () => 'test-secret',
+    fetchSms: async (_url, options) => { sentCode = JSON.parse(options.body).variables_values; return { ok: providerOk, json: async () => ({ return: providerOk }) }; }
   });
   store.set('users/buyer', { uid: 'buyer', name: 'Student', email: 'buyer@example.com', phone: '9876543210', userType: 'student', profileComplete: true, banStatus: 'active' });
   store.set('users/seller', { uid: 'seller', name: 'Seller', email: 'seller@example.com', phone: '8765432109', userType: 'seller', profileComplete: true, banStatus: 'active', universityId: 'sou' });
@@ -62,7 +63,7 @@ function fixture() {
     await handler({ method: 'POST', path, body: data, ip: '127.0.0.1', get: () => token ? `Bearer ${token}` : '' }, res);
     return result;
   }
-  return { store, users, handlers, buyer, seller, body, http, now: () => clock, advance: ms => { clock += ms; }, sentCode: () => sentCode, providerFailure: () => { providerOk = false; } };
+  return { store, users, db, auth, handlers, buyer, seller, body, http, now: () => clock, advance: ms => { clock += ms; }, sentCode: () => sentCode, providerFailure: () => { providerOk = false; } };
 }
 
 module.exports = { fixture, Timestamp };

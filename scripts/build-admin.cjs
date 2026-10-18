@@ -8,5 +8,6 @@ for (const [key, name] of Object.entries({apiKey:'API_KEY',authDomain:'AUTH_DOMA
 }
 fs.mkdirSync('admin/dist', {recursive:true});
 for (const file of ['index.html','style.css','app.js']) fs.copyFileSync(path.join('admin',file),path.join('admin/dist',file));
-fs.writeFileSync('admin/dist/config.js', `window.SKIPQ_FIREBASE_CONFIG = ${JSON.stringify(config)};\n`);
+const adminApiUrl = process.env.EXPO_PUBLIC_PUSH_API_URL || 'https://skipq-ey2t.onrender.com';
+fs.writeFileSync('admin/dist/config.js', `window.SKIPQ_FIREBASE_CONFIG = ${JSON.stringify({...config,adminApiUrl})};\n`);
 console.log('Admin website built in admin/dist (public Firebase config only).');

@@ -13,11 +13,12 @@ const blocked = row => row.banStatus === 'perm_ban' || (row.banStatus === 'temp_
 const badge = (text, color='') => `<span class="badge ${color}">${esc(text || 'Unknown')}</span>`;
 const money = value => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(Number(value || 0));
 const failure = error => error.code === 'permission-denied' ? 'Access denied. Check the published admin rules and your admin account.' : error.message || 'Could not load data. Try again.';
-const adminApi = `https://asia-south1-${firebase.options.projectId}.cloudfunctions.net/api`;
+const adminApi = window.SKIPQ_FIREBASE_CONFIG.adminApiUrl;
 
 async function offboardAccount({userId,reason,sellerAction,successorUid}) {
+  if (!adminApi) throw new Error('Admin API URL is not configured.');
   const token = await state.user.getIdToken();
-  const response = await fetch(`${adminApi}/admin/offboard-user`, {
+  const response = await fetch(`${adminApi.replace(/\/$/,'')}/admin/offboard-user`, {
     method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
     body:JSON.stringify({userId,reason,sellerAction,successorUid}), redirect:'error'
   });

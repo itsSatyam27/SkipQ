@@ -3,9 +3,9 @@ services:
     name: skipq-push
     runtime: node
     plan: free
-    rootDir: push-server
-    buildCommand: npm install
-    startCommand: npm start
+    rootDir: .
+    buildCommand: npm install --prefix push-server
+    startCommand: npm --prefix push-server start
     healthCheckPath: /health
     envVars:
       - key: NODE_VERSION

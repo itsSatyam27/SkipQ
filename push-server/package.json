@@ -4,6 +4,6 @@
   "version": "1.0.0",
   "type": "module",
   "engines": { "node": ">=22" },
-  "scripts": { "start": "node server.js", "test": "node --test policy.test.js" },
+  "scripts": { "start": "node server.js", "test": "node --test *.test.js" },
   "dependencies": { "firebase-admin": "^13.0.0" }
 }

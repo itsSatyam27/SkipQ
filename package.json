@@ -23,6 +23,7 @@
     "expo-speech": "~57.0.3",
     "expo-splash-screen": "~57.0.10",
     "expo-status-bar": "~57.0.1",
+    "expo-updates": "~57.0.26",
     "firebase": "^12.19.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -35,6 +36,7 @@
   },
   "scripts": {
     "build:admin": "node scripts/build-admin.cjs",
+    "build:website": "node scripts/build-website.cjs",
     "admin": "node scripts/build-admin.cjs && python -m http.server 8097 --directory admin/dist --bind 127.0.0.1",
     "start": "expo start",
     "start:clean": "expo start --clear",

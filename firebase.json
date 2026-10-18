@@ -19,7 +19,7 @@
   "hosting": [
     {
       "target": "web",
-      "public": "dist",
+      "public": "website",
       "ignore": [
         "firebase.json",
         "**/.*",

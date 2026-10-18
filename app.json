@@ -4,6 +4,12 @@
     "slug": "skipq-app",
     "owner": "skipqofficial",
     "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/c4156da2-9497-4ed1-9dbf-51ac4d66f0eb"
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",

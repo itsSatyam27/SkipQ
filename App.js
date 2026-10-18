@@ -1,5 +1,7 @@
+import SmoothTabBar from './src/components/SmoothTabBar';
 import { SellerThemeProvider, useSellerTheme } from './src/context/SellerTheme';
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useState } from 'react';
+import LaunchSplash from './src/components/LaunchSplash';
 import { Platform, StatusBar, Text, TouchableOpacity, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
@@ -49,8 +51,13 @@ function ExploreScreen({ navigation }) {
 }
 function CartScreen({ navigation }) {
   return <View style={{ flex: 1 }}>
-    <StudentCartScreen onNavigateToExplore={() => navigation.navigate('Explore')}
+    <StudentCartScreen onOpenHistory={() => navigation.navigate('PastOrders')} onNavigateToExplore={() => navigation.navigate('Explore')}
     onOpenPassModal={() => navigation.navigate('PickupPass')} onOrderPlaced={() => navigation.navigate('PickupPass')} /></View>;
+}
+function PastOrdersScreen({ navigation }) {
+  const { light } = useSellerTheme();
+  const insets = useSafeAreaInsets();
+  return <View style={{ flex: 1, paddingTop: insets.top, backgroundColor: light ? '#f6f7f9' : '#090b0d' }}><StudentCartScreen historyOnly onBack={() => navigation.goBack()} onReordered={() => navigation.goBack()} onNavigateToExplore={() => navigation.navigate('Home', { screen: 'Explore' })} /></View>;
 }
 function ProfileScreen({ navigation }) { return <View style={{ flex: 1 }}><StudentProfileScreen onNavigateToExplore={() => navigation.navigate('Explore')} /></View>; }
 function KitchenScreen({ navigation, route }) {
@@ -84,7 +91,7 @@ function HomeScreen({ navigation }) {
       isPillVisible={pillVisible} onToggleActivePill={() => setPillVisible(value => !value)} />
     <DynamicActiveBookingPill visible={pillVisible} activeOrder={order} onClose={() => setPillVisible(false)}
       onOpenPassModal={() => { setPillVisible(false); navigation.navigate('PickupPass'); }} />
-    <Tabs.Navigator key={role} screenOptions={({ route }) => ({ ...tabOptions, animation: reducedMotion ? 'none' : 'fade', transitionSpec: { animation: 'timing', config: { duration: 160 } }, tabBarAccessibilityLabel: route.name,
+    <Tabs.Navigator key={role} tabBar={props => <SmoothTabBar {...props} />} screenOptions={({ route }) => ({ ...tabOptions, lazy: false, animation: reducedMotion ? 'none' : 'fade', transitionSpec: { animation: 'timing', config: { duration: 220 } }, tabBarAccessibilityLabel: route.name,
       ...({ tabBarActiveTintColor: '#090b0d', tabBarInactiveTintColor: light ? '#596579' : '#a5a9b2', tabBarActiveBackgroundColor: '#ffb313', tabBarItemStyle: { borderRadius: 18, marginVertical: 2 }, tabBarLabelStyle: { fontSize: 11, lineHeight: 15, fontWeight: '600', marginBottom: 0 }, sceneStyle: { backgroundColor: light ? '#f6f7f9' : '#090b0d' } }),
       tabBarStyle: { ...tabOptions.tabBarStyle, ...({ backgroundColor: light ? '#fff' : '#17191d', borderColor: light ? '#dce0e7' : '#26292e', borderRadius: 24, paddingHorizontal: 7, paddingTop: 3, elevation: 0, shadowOpacity: 0 }), position: 'absolute', height: 70, paddingBottom: 4,
         left: Math.max(20, insets.left), right: Math.max(20, insets.right),
@@ -130,6 +137,7 @@ function ThemedAppNavigator() {
       <Stack.Navigator key={`${userProfile.uid || 'guest'}:${isOnboardingComplete ? role : 'setup'}`} screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#edf3f8' } }}>
         {isOnboardingComplete ? <>
           <Stack.Screen name="Home" component={HomeScreen} />
+          {role !== 'seller' && <Stack.Screen name="PastOrders" component={PastOrdersScreen} options={{ animation: 'slide_from_right' }} />}
           <Stack.Group screenOptions={{ presentation: 'transparentModal', animation: 'none' }}>
             <Stack.Screen name="PickupPass" component={PickupScreen} />
             {role === 'seller' && <>
@@ -146,5 +154,14 @@ function ThemedAppNavigator() {
   </View>;
 }
 export default function App() {
-  return <SafeAreaProvider><AppProvider><AppNavigator /></AppProvider></SafeAreaProvider>;
+  return <SafeAreaProvider><AppProvider><AppLaunch /></AppProvider></SafeAreaProvider>;
+}
+function AppLaunch() {
+  const { isOnboardingComplete } = useContext(AppContext);
+  const [launching, setLaunching] = useState(true);
+  const finish = useCallback(() => setLaunching(false), []);
+  return <View style={{ flex: 1, backgroundColor: '#0B0C0E' }}>
+    <View style={{ flex: 1 }} accessibilityElementsHidden={launching} importantForAccessibility={launching ? 'no-hide-descendants' : 'auto'}><AppNavigator /></View>
+    {launching && <LaunchSplash ready={isOnboardingComplete !== null} onFinished={finish} />}
+  </View>;
 }

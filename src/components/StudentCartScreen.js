@@ -10,11 +10,9 @@ import {
   ScrollView,
   TextInput,
   Alert,
-  Platform,
   ActivityIndicator,
   Modal,
   Switch,
-  Linking
 } from 'react-native';
 import { AppContext } from '../context/AppContext';
 import LocationControl from './LocationControl';
@@ -29,7 +27,7 @@ const BREAK_SLOTS = [
   { id: '03:45 PM - Evening Break', label: ' 03:45 PM', sub: 'Evening Tea' },
 ];
 
-export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal, onOrderPlaced }) {
+export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal, onOrderPlaced, historyOnly = false, onOpenHistory, onBack, onReordered }) {
   const styles = useSellerStyles(baseStyles);
   const { light } = useSellerTheme();
   const {
@@ -61,8 +59,14 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
   const [isGroupOrder, setIsGroupOrder] = useState(false);
   const [groupCollectorName, setGroupCollectorName] = useState('');
   const [facultyRoomNote, setFacultyRoomNote] = useState(userProfile?.facultyRoomNote || '');
+  const [isStaffRoomDelivery, setIsStaffRoomDelivery] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [reorderSuccessNotice, setReorderSuccessNotice] = useState(null);
+  const isFaculty = userProfile?.userType === 'faculty';
+
+  useEffect(() => {
+    setFacultyRoomNote(userProfile?.facultyRoomNote || '');
+  }, [userProfile?.uid, userProfile?.facultyRoomNote]);
 
   // Active Pass Countdown
   const activeOrderObj = (orders || []).find(o => o.id === activeOrderId);
@@ -106,17 +110,19 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
   // Cart calculation
   const cartItems = cart?.items || [];
   const cartTotalItems = cartItems.reduce((sum, it) => sum + it.qty, 0);
-  const totalAmount = cartItems.reduce((sum, it) => sum + it.price * it.qty, 0);
-  const deposit10Percent = 0;
+  const itemTotal = cartItems.reduce((sum, it) => sum + it.price * it.qty, 0);
+  const staffRoomDeliveryFee = isFaculty && isStaffRoomDelivery ? 5 : 0;
+  const totalAmount = itemTotal + staffRoomDeliveryFee;
   const isCash = paymentMethod === 'Cash';
-  const upfrontPayable = isCash ? deposit10Percent : totalAmount;
   const dueAtCounter = isCash ? totalAmount : 0;
+  const matchedShop = (canteens || []).find(c => c.id === cart?.shopId) || {};
 
   // Past orders (all orders except current active preparing one if any)
-  const pastOrders = (orders || []).filter(o => o.id !== activeOrderId || !hasActivePass);
+  const [historyFilter, setHistoryFilter] = useState('All');
+  const allPastOrders = (orders || []).filter(o => ['Completed', 'Cancelled', 'Abandoned'].includes(o.orderStatus)).sort((a, b) => (getOrderDate(b)?.getTime() || 0) - (getOrderDate(a)?.getTime() || 0));
+  const pastOrders = allPastOrders.filter(o => historyFilter === 'All' || o.orderStatus === historyFilter);
 
   // Campus Geofence Calculation (<500m perimeter)
-  const matchedShop = (canteens || []).find(c => c.id === cart?.shopId) || {};
   const shopLat = matchedShop.lat ?? 23.0917;
   const shopLng = matchedShop.lng ?? 72.5349;
   const hasUserLocation = isUsableLocation(userLocation);
@@ -143,7 +149,14 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
       Alert.alert('Empty Cart', 'Please add dishes to your cart first.');
       return;
     }
-
+    if (staffRoomDeliveryFee && !facultyRoomNote.trim()) {
+      Alert.alert('Add staff room details', 'Enter the staff room or department location for delivery.');
+      return;
+    }
+    if (!isFaculty && isGroupOrder && !groupCollectorName.trim()) {
+      Alert.alert('Add pickup person details', 'Enter the name of the friend or roommate who will collect this order.');
+      return;
+    }
     if (!locationTesting) {
       let location = userLocation;
       if (!isUsableLocation(location)) {
@@ -164,7 +177,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
     if (paymentMethod === 'Wallet' && walletBalance < totalAmount) {
       Alert.alert(
         'Insufficient Wallet Balance',
-        `Your SkipQ Wallet has ₹${walletBalance.toFixed(0)}, but your order total is ₹${totalAmount}.\n\nPlease top up your wallet or choose UPI / Cash at Stall.`,
+        `Your SkipQ Wallet has ₹${walletBalance.toFixed(0)}, but your order total is ₹${totalAmount}.\n\nWallet payment is unavailable. Choose cash at pickup or delivery.`,
         [{ text: 'OK' }]
       );
       return;
@@ -172,36 +185,18 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
 
     setIsSubmitting(true);
     try {
-      const isFaculty = userProfile?.userType === 'faculty';
-      const matchedShop = (canteens || []).find(c => c.id === cart.shopId) || {};
       const orderData = {
         shopId: cart.shopId,
-        shopName: cart.shopName,
-        sellerId: matchedShop.ownerId || '',
-        buyerName: userProfile?.name || (isFaculty ? 'University Faculty' : 'Campus Student'),
-        buyerRollNo: userProfile?.rollNo || '',
-        buyerPhone: userProfile?.phone || '',
         items: cartItems,
         specialInstructions: instructions.trim(),
-        totalAmount,
-        upfrontPaid: upfrontPayable,
-        dueAtCounter,
-        heldDepositAmount: isCash ? deposit10Percent : 0,
         paymentMethod,
-        paymentStatus: isCash ? 'TOKEN_PAID_CASH_DUE' : 'PENDING_MERCHANT_CONFIRMATION',
-        orderPlacedAt: new Date().toISOString(),
-        cancellationGraceSecs: 120, // 2-minute cancellation & refund window
         pickupSlot,
-        isFacultyExpress: isFaculty,
-        facultyRoomNote: isFaculty ? facultyRoomNote.trim() : '',
-        groupCollectorName: isGroupOrder ? groupCollectorName.trim() : ''
+        facultyRoomNote: isFaculty && isStaffRoomDelivery ? facultyRoomNote.trim() : '',
+        staffRoomDelivery: isFaculty && isStaffRoomDelivery,
+        groupCollectorName: !isFaculty && isGroupOrder ? groupCollectorName.trim() : ''
       };
 
       const confirmed = await placeOrder(orderData);
-      if (confirmed.paymentMethod === 'UPI' && Platform.OS !== 'web') {
-        const uri = `upi://pay?pa=${encodeURIComponent(confirmed.merchantUpi)}&pn=${encodeURIComponent(confirmed.shopName)}&am=${confirmed.totalAmount}&cu=INR&tn=${encodeURIComponent(confirmed.tokenNumber)}`;
-        Linking.openURL(uri).catch(() => Alert.alert('Open your UPI app', `Pay ₹${confirmed.totalAmount} to ${confirmed.merchantUpi}. Ask the seller to confirm receipt.`));
-      }
       try {
         await playOrderPlacedSound();
       } catch (e) {}
@@ -210,9 +205,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
         onOrderPlaced();
       }
 
-      Alert.alert('Order confirmed', confirmed.paymentMethod === 'Cash'
-        ? `Pay ₹${confirmed.totalAmount} in cash at ${confirmed.shopName} when you collect your order.`
-        : `Pay ₹${confirmed.totalAmount} to ${confirmed.merchantUpi}. Payment remains pending until the canteen confirms receipt. Contact the canteen directly for any refund.`,
+      Alert.alert('Order placed', `Pay ₹${confirmed.totalAmount} in cash ${confirmed.staffRoomDelivery ? 'on delivery' : 'at pickup'}. UPI payments are coming soon.`,
         [{ text: 'View Pickup Pass' }]);
       if (scrollViewRef.current) {
         scrollViewRef.current.scrollTo({ y: 0, animated: true });
@@ -226,7 +219,8 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
 
   const handleReorder = (orderObj) => {
     if (!orderObj || !orderObj.items || orderObj.items.length === 0) return;
-    reorderItems(orderObj.id);
+    if (reorderItems(orderObj.id) === false) return;
+    if (historyOnly && onReordered) { onReordered(); return; }
     setReorderSuccessNotice(`Added ${orderObj.items.length} items from ${orderObj.shopName || orderObj.canteenName || 'canteen'} to Cart!`);
     setTimeout(() => {
       setReorderSuccessNotice(null);
@@ -244,7 +238,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
 
   const handleSubmitRating = () => { rateOrder(); setRatingTargetOrder(null); };
 
-  const paymentApps = [{ id: 'Cash', label: ' Cash at pickup' }, { id: 'UPI', label: ' UPI (seller confirms)' }];
+  const paymentApps = [{ id: 'Cash', label: `Cash at ${isStaffRoomDelivery ? 'delivery' : 'pickup'}` }, { id: 'UPI', label: 'UPI (Coming soon)', disabled: true }];
 
   const formatTimer = (sec) => {
     if (sec === null || sec <= 0) return '00:00';
@@ -268,23 +262,25 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {historyOnly && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to cart" onPress={onBack} style={{ flexDirection: 'row', gap: 7, alignItems: 'center', marginBottom: 18, alignSelf: 'flex-start', paddingVertical: 8 }}><InterfaceIcon name="chevron" size={17} color="#ffb313" /><Text style={{ color: light ? '#946200' : '#ffb313', fontWeight: '600' }}>Back to cart</Text></TouchableOpacity>}
         {/* Header Title */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>{cartTotalItems > 0 ? 'Review order' : 'Your orders'}</Text>
-            <Text style={styles.headerSub}>{cartTotalItems > 0 ? `CART - ${cartTotalItems} ${cartTotalItems === 1 ? 'ITEM' : 'ITEMS'}` : 'CART & ORDERS'}</Text>
+          <View style={styles.headerTitleWrap}>
+            <Text style={styles.headerTitle}>{historyOnly ? 'Past orders' : cartTotalItems > 0 ? 'Review order' : 'Your orders'}</Text>
+            <Text style={styles.headerSub}>{historyOnly ? 'YOUR CAMPUS ORDER HISTORY' : cartTotalItems > 0 ? `CART - ${cartTotalItems} ${cartTotalItems === 1 ? 'ITEM' : 'ITEMS'}` : 'CART & ORDERS'}</Text>
           </View>
-          {cartTotalItems > 0 && (
+          {!historyOnly && cartTotalItems > 0 && (
             <TouchableOpacity style={styles.clearCartBtn} onPress={clearCart}>
               <Text style={styles.clearCartText}>Clear</Text>
             </TouchableOpacity>
           )}
+          {!historyOnly && <TouchableOpacity accessibilityRole="button" accessibilityLabel="View past orders" onPress={onOpenHistory} style={[styles.historyButton, { borderColor: light ? '#dce0e7' : '#26292e', backgroundColor: light ? '#fff' : '#17191d' }]}><InterfaceIcon name="clock" size={22} color={light ? '#946200' : '#ffb313'} /></TouchableOpacity>}
         </View>
 
         {/* ============================================================ */}
         {/* SECTION 1: ITEMS TO BUY (Active Cart) */}
         {/* ============================================================ */}
-        <View style={[styles.sectionCard, cartTotalItems === 0 ? styles.emptySection : styles.checkoutSection]}>
+        {!historyOnly && <View style={[styles.sectionCard, cartTotalItems === 0 ? styles.emptySection : styles.checkoutSection]}>
           {false && <View style={styles.sectionHeaderRow}>
             <View style={styles.sectionHeaderLeft}>
               <Text style={styles.sectionIcon}></Text>
@@ -353,27 +349,20 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
               )}
 
               {/* Faculty Express Card */}
-              {userProfile?.userType === 'faculty' && (
+              {isFaculty && (
                 <View style={styles.cartFacultyCard}>
                   <View style={styles.cartFacultyHeader}>
                     <Text style={styles.cartFacultyTitle}>⭐ FACULTY EXPRESS PRIORITY</Text>
                   </View>
                   <Text style={styles.cartFacultyDesc}>
-                    Your order is tagged for priority preparation at the staff counter.
+                    Your order is tagged for priority preparation. Choose counter pickup or staff room delivery below.
                   </Text>
-                  <TextInput
-                    style={styles.cartFacultyInput}
-                    placeholder="Staff Room / Dept Delivery (e.g. Block A, Room 204)"
-                    placeholderTextColor="#c084fc"
-                    value={facultyRoomNote}
-                    onChangeText={setFacultyRoomNote}
-                  />
                 </View>
               )}
 
               {/* Pre-Order Break Slot Timing */}
               <View style={styles.slotContainer}>
-                <Text style={styles.inputLabel}>PICKUP TIMING (BREAK SLOTS)</Text>
+                <Text style={styles.inputLabel}>{isFaculty ? (isStaffRoomDelivery ? 'PREFERRED DELIVERY TIME' : 'PREFERRED PICKUP TIME') : 'PICKUP TIMING (BREAK SLOTS)'}</Text>
                 <View style={styles.slotGrid}>
                   {BREAK_SLOTS.map(slot => (
                     <TouchableOpacity
@@ -390,30 +379,62 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                 </View>
               </View>
 
-              {/* Roommate / Group Order Option */}
-              <View style={styles.roommateCard}>
-                <View style={styles.roommateRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.roommateTitle}> Roommate / Group Pickup</Text>
-                    <Text style={styles.roommateSub}>Let a friend or roommate pick this up</Text>
+              {isFaculty ? (
+                <View style={styles.roommateCard}>
+                  <View style={styles.roommateRow}>
+                    <View style={{ flex: 1, paddingRight: 10 }}>
+                      <Text style={styles.roommateTitle}>{isStaffRoomDelivery ? 'Staff room delivery' : 'Counter pickup'}</Text>
+                      <Text style={styles.roommateSub}>{isStaffRoomDelivery ? 'Request delivery to your staff room for +₹5' : 'Collect your order at the canteen counter'}</Text>
+                    </View>
+                    <Switch
+                      accessibilityLabel="Request staff room delivery for five rupees"
+                      value={isStaffRoomDelivery}
+                      onValueChange={setIsStaffRoomDelivery}
+                      trackColor={{ false: '#334155', true: '#0ea5e9' }}
+                      thumbColor={isStaffRoomDelivery ? '#ffffff' : '#94a3b8'}
+                    />
                   </View>
-                  <Switch
-                    value={isGroupOrder}
-                    onValueChange={setIsGroupOrder}
-                    trackColor={{ false: '#334155', true: '#0ea5e9' }}
-                    thumbColor={isGroupOrder ? '#ffffff' : '#94a3b8'}
-                  />
+                  {isStaffRoomDelivery && (
+                    <>
+                      <TextInput
+                        accessibilityLabel="Staff room delivery location"
+                        style={styles.collectorInput}
+                        placeholder="Staff room / department (e.g. Block A, Room 204)"
+                        placeholderTextColor="#64748b"
+                        value={facultyRoomNote}
+                        onChangeText={setFacultyRoomNote}
+                        maxLength={160}
+                      />
+                      <Text style={styles.deliveryRequestHint}>The canteen will see your requested destination. Delivery timing is coordinated by the canteen.</Text>
+                    </>
+                  )}
                 </View>
-                {isGroupOrder && (
-                  <TextInput
-                    style={styles.collectorInput}
-                    placeholder="Friend's Name & Hostel Room (e.g. Yash - Room 304)"
-                    placeholderTextColor="#64748b"
-                    value={groupCollectorName}
-                    onChangeText={setGroupCollectorName}
-                  />
-                )}
-              </View>
+              ) : (
+                <View style={styles.roommateCard}>
+                  <View style={styles.roommateRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.roommateTitle}>Roommate / Group Pickup</Text>
+                      <Text style={styles.roommateSub}>Let a friend or roommate pick this up</Text>
+                    </View>
+                    <Switch
+                      value={isGroupOrder}
+                      onValueChange={setIsGroupOrder}
+                      trackColor={{ false: '#334155', true: '#0ea5e9' }}
+                      thumbColor={isGroupOrder ? '#ffffff' : '#94a3b8'}
+                    />
+                  </View>
+                  {isGroupOrder && (
+                    <TextInput
+                      style={styles.collectorInput}
+                      placeholder="Friend's Name & Hostel Room (e.g. Yash - Room 304)"
+                      placeholderTextColor="#64748b"
+                      value={groupCollectorName}
+                      onChangeText={setGroupCollectorName}
+                      maxLength={80}
+                    />
+                  )}
+                </View>
+              )}
 
               {/* Cooking Instructions Input */}
               <View style={styles.instructionsContainer}>
@@ -437,10 +458,13 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                     return (
                       <TouchableOpacity
                         key={p.id}
-                        style={[styles.paymentPill, isSelected && styles.paymentPillSelected]}
-                        onPress={() => setPaymentMethod(p.id)}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected, disabled: p.disabled }}
+                        disabled={p.disabled}
+                        style={[styles.paymentPill, isSelected && styles.paymentPillSelected, p.disabled && styles.paymentPillDisabled]}
+                        onPress={() => !p.disabled && setPaymentMethod(p.id)}
                       >
-                        <Text style={[styles.paymentPillText, isSelected && styles.paymentPillTextSelected]}>
+                        <Text style={[styles.paymentPillText, isSelected && styles.paymentPillTextSelected, p.disabled && styles.paymentPillTextDisabled]}>
                           {p.label}
                         </Text>
                       </TouchableOpacity>
@@ -450,55 +474,33 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
 
                 {isCash ? (
                   <View style={styles.cashNoticeBox}>
-                    <Text style={styles.cashNoticeTitle}>
-                       Cash at pickup
-                    </Text>
+                    <Text style={styles.cashNoticeTitle}>Pay by cash {isStaffRoomDelivery ? 'on delivery' : 'at pickup'}</Text>
                     <Text style={styles.cashNoticeSub}>
-                      Pay the full ₹{dueAtCounter} at the canteen counter. No advance deposit or wallet payment.
+                      Pay the full ₹{totalAmount} in cash {isStaffRoomDelivery ? 'when your order is delivered to the staff room' : 'when you collect your order'}. UPI payments are coming soon.
                     </Text>
                   </View>
-                ) : paymentMethod === 'Wallet' ? (
-                  <View style={styles.onlineNoticeBox}>
-                    <Text style={styles.onlineNoticeTitle}>
-                       SkipQ Security Wallet Payment
-                    </Text>
-                    <Text style={styles.onlineNoticeSub}>
-                      Available Balance: ₹{walletBalance.toFixed(0)}. Instant zero-friction pass generation with no UPI app switching.
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={styles.onlineNoticeBox}>
-                    <Text style={styles.onlineNoticeTitle}>
-                       UPI payment — seller confirmation required
-                    </Text>
-                    <Text style={styles.onlineNoticeSub}>
-                      Pay ₹{totalAmount} directly to the canteen. A payment app opening does not confirm payment. Refunds are handled by the canteen.
-                    </Text>
-                  </View>
-                )}
+                ) : <View style={styles.onlineNoticeBox}><Text style={styles.onlineNoticeTitle}>UPI (Coming soon)</Text><Text style={styles.onlineNoticeSub}>For now, place your order with cash at pickup or delivery.</Text></View>}
               </View>
 
               {/* Bill Breakdown */}
               <View style={styles.billBox}>
                 <View style={styles.billRow}>
                   <Text style={styles.billLabel}>Item Total</Text>
-                  <Text style={styles.billValue}>₹{totalAmount}</Text>
+                  <Text style={styles.billValue}>₹{itemTotal}</Text>
                 </View>
+                {staffRoomDeliveryFee > 0 && <View style={styles.billRow}>
+                  <Text style={styles.billLabel}>Staff room delivery</Text>
+                  <Text style={styles.billValue}>+₹{staffRoomDeliveryFee}</Text>
+                </View>}
                 <View style={styles.billRow}>
                   <Text style={styles.billLabel}>Campus Queue Skip Priority</Text>
                   <Text style={[styles.billValue, { color: '#10b981' }]}>FREE</Text>
                 </View>
                 {isCash ? (
-                  <>
-                    <View style={[styles.billRow, { borderTopWidth: 1, borderTopColor: '#e2d9cc', paddingTop: 8, marginTop: 4 }]}>
-                      <Text style={[styles.billLabel, { color: '#ffb313', fontWeight: '800' }]}>Advance payment</Text>
-                      <Text style={[styles.billValue, { color: '#ffb313', fontWeight: '800' }]}>₹{deposit10Percent}</Text>
-                    </View>
-                    <View style={styles.billRow}>
-                      <Text style={[styles.billLabel, { color: '#b45309', fontWeight: '800' }]}> Pay at Counter (Cash)</Text>
-                      <Text style={[styles.billValue, { color: '#b45309', fontWeight: '800' }]}>₹{dueAtCounter}</Text>
-                    </View>
-                  </>
+                  <View style={[styles.billRow, styles.billRowTotal]}>
+                    <Text style={styles.billTotalLabel}>Pay in cash {isStaffRoomDelivery ? 'on delivery' : 'at pickup'}</Text>
+                    <Text style={styles.billTotalValue}>₹{dueAtCounter}</Text>
+                  </View>
                 ) : paymentMethod === 'Wallet' ? (
                   <View style={[styles.billRow, styles.billRowTotal]}>
                     <Text style={styles.billTotalLabel}>Deduct from Wallet</Text>
@@ -538,8 +540,8 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                   </>
                 ) : isCash ? (
                   <>
-                    <Text style={styles.placeOrderBtnText}>Place Order · Cash at Pickup</Text>
-                    <Text style={styles.placeOrderBtnSub}>Pay ₹{dueAtCounter} Cash at Stall • Instant Token</Text>
+                    <Text style={styles.placeOrderBtnText}>Place Order · ₹{dueAtCounter} cash {isStaffRoomDelivery ? 'on delivery' : 'at pickup'}</Text>
+                    <Text style={styles.placeOrderBtnSub}>UPI payments coming soon</Text>
                   </>
                 ) : paymentMethod === 'Wallet' ? (
                   <>
@@ -549,24 +551,24 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
                 ) : (
                   <>
                     <Text style={styles.placeOrderBtnText}>Place Order · Pay ₹{totalAmount} via UPI</Text>
-                    <Text style={styles.placeOrderBtnSub}>Payment pending until seller confirmation</Text>
+                    <Text style={styles.placeOrderBtnSub}>Seller verification pending after payment</Text>
                   </>
                 )}
               </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.compactEmptyCart}>
-              <View style={styles.emptyCartVector}><InterfaceIcon name="cart" size={23} color="#ffb313" /></View>
-              <View style={{ flex: 1 }}><Text style={styles.compactEmptyTitle}>Your cart is empty</Text><Text style={styles.compactEmptyCopy}>Add dishes and skip the queue.</Text></View>
+              <View style={styles.emptyCartVector}><InterfaceIcon name="cart" size={30} color="#ffb313" /></View>
+              <View style={{ alignItems: 'center' }}><Text style={styles.compactEmptyTitle}>Your cart is empty</Text><Text style={styles.compactEmptyCopy}>Find your next campus favourite.{'\n'}Add dishes and skip the queue.</Text></View>
               <TouchableOpacity accessibilityRole="button" onPress={onNavigateToExplore} style={styles.compactBrowse}><Text style={styles.compactBrowseText}>Browse</Text></TouchableOpacity>
             </View>
           )}
-        </View>
+        </View>}
 
         {/* ============================================================ */}
         {/* SECTION 2: ACTIVE PICKUP PASS (if active order in kitchen)   */}
         {/* ============================================================ */}
-        {hasActivePass && (
+        {!historyOnly && hasActivePass && (
           <View style={styles.activePassCard}>
             <View style={styles.activePassTop}>
               <View style={styles.activeStatusPill}>
@@ -611,7 +613,8 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
         {/* ============================================================ */}
         {/* SECTION 3: PAST ORDERS HISTORY                               */}
         {/* ============================================================ */}
-        <View style={styles.historySection}>
+        {historyOnly && <View style={styles.historySection}>
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>{['All', 'Completed', 'Cancelled'].map(filter => <TouchableOpacity key={filter} accessibilityRole="button" accessibilityState={{ selected: historyFilter === filter }} onPress={() => setHistoryFilter(filter)} style={{ paddingHorizontal: 13, paddingVertical: 10, borderRadius: 18, backgroundColor: historyFilter === filter ? '#ffb313' : light ? '#fff' : '#17191d' }}><Text style={{ color: historyFilter === filter ? '#090b0d' : light ? '#596579' : '#a5a9b2', fontSize: 12, fontWeight: '600' }}>{filter}</Text></TouchableOpacity>)}</View>
           <View style={styles.sectionHeaderRow}>
             <View style={styles.sectionHeaderLeft}>
               <Text style={styles.sectionIcon}></Text>
@@ -625,7 +628,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
           {pastOrders.length === 0 ? (
             <View style={styles.emptyHistoryBox}>
               <Text style={styles.emptyHistoryIcon}></Text>
-              <Text style={styles.emptyHistoryTitle}>No past orders yet</Text>
+              <Text style={styles.emptyHistoryTitle}>{historyFilter === 'All' ? 'No past orders yet' : `No ${historyFilter.toLowerCase()} orders`}</Text>
               <Text style={styles.emptyHistorySub}>
                 Your completed orders, receipts, and fast 1-tap re-orders will be listed right here.
               </Text>
@@ -721,7 +724,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
               })}
             </View>
           )}
-        </View>
+        </View>}
 
         {/* Bottom padding for dock */}
         <View style={{ height: 100 }} />
@@ -772,8 +775,8 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
 const baseStyles = StyleSheet.create({
   emptySection: { padding: 14, borderStyle: 'dashed', backgroundColor: 'transparent' },
   compactEmptyCart: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  emptyCartVector: { width: 42, height: 42, borderRadius: 13, backgroundColor: '#17191d', alignItems: 'center', justifyContent: 'center' },
-  compactEmptyTitle: { color: '#f5f4f0', fontSize: 14, fontWeight: '700' },
+  emptyCartVector: { width: 64, height: 64, borderRadius: 22, backgroundColor: '#17191d', alignItems: 'center', justifyContent: 'center' },
+  compactEmptyTitle: { color: '#f5f4f0', fontSize: 20, fontWeight: '700', textAlign: 'center' },
   compactEmptyCopy: { color: '#a5a9b2', fontSize: 12, lineHeight: 18, marginTop: 4 },
   compactBrowse: { backgroundColor: '#ffb313', borderRadius: 13, minHeight: 42, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
   compactBrowseText: { color: '#090b0d', fontSize: 12, fontWeight: '700' },
@@ -818,9 +821,11 @@ const baseStyles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 10,
     marginBottom: 16,
   },
+  headerTitleWrap: { flex: 1, minWidth: 0 },
+  historyButton: { width: 44, height: 44, flexShrink: 0, borderRadius: 15, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   headerTitle: {
     color: '#f5f4f0',
     fontSize: 22,
@@ -1734,6 +1739,7 @@ const baseStyles = StyleSheet.create({
     fontSize: 10,
     marginTop: 1,
   },
+  deliveryRequestHint: { color: '#a5a9b2', fontSize: 10, lineHeight: 15, marginTop: 7 },
   collectorInput: {
     backgroundColor: '#121417',
     color: '#f5f4f0',
@@ -1765,15 +1771,17 @@ const baseStyles = StyleSheet.create({
   paymentPillSelected: { backgroundColor: '#211a07', borderColor: '#ffb313' },
   paymentPillText: { color: '#b6bac2', fontSize: 11, fontWeight: '600' },
   paymentPillTextSelected: { color: '#ffb313' },
+  paymentPillDisabled: { backgroundColor: '#101113', borderColor: '#22252a', opacity: 0.6 },
+  paymentPillTextDisabled: { color: '#737985' },
   billBox: { padding: 14, backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e', borderRadius: 14, marginTop: 18, marginBottom: 14 },
   placeOrderBtn: { backgroundColor: '#ffb313', padding: 15, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginTop: 14, minHeight: 54 },
   placeOrderBtnText: { color: '#090b0d', fontSize: 14, fontWeight: '700' },
   placeOrderBtnSub: { color: '#42320c', fontSize: 10, marginTop: 5 },
 
   emptySection: { backgroundColor: '#121417', borderWidth: 1, borderColor: '#26292e', borderStyle: 'dashed', borderRadius: 20, padding: 15, marginBottom: 18, shadowOpacity: 0, shadowRadius: 0, elevation: 0, overflow: 'hidden' },
-  compactEmptyCart: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: 'transparent' },
-  compactEmptyTitle: { color: '#f5f4f0', fontSize: 14, fontWeight: '700' },
-  compactEmptyCopy: { color: '#a5a9b2', fontSize: 12, lineHeight: 18, marginTop: 5 },
-  emptyCartVector: { width: 42, height: 42, borderRadius: 13, backgroundColor: '#17191d', alignItems: 'center', justifyContent: 'center' },
+  compactEmptyCart: { minHeight: 240, justifyContent: 'center', alignItems: 'center', gap: 18, paddingVertical: 22, backgroundColor: 'transparent' },
+  compactEmptyTitle: { color: '#f5f4f0', fontSize: 20, fontWeight: '700', textAlign: 'center' },
+  compactEmptyCopy: { color: '#a5a9b2', fontSize: 12, lineHeight: 20, marginTop: 8, textAlign: 'center' },
+  emptyCartVector: { width: 64, height: 64, borderRadius: 22, backgroundColor: '#17191d', alignItems: 'center', justifyContent: 'center' },
 
 });

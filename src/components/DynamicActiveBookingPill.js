@@ -235,11 +235,26 @@ export default function DynamicActiveBookingPill({
                 .join(', ') || 'Your Order'}
             </Text>
 
-            {(activeOrder.isFacultyExpress || (activeOrder.pickupSlot && activeOrder.pickupSlot !== 'ASAP') || activeOrder.groupCollectorName) && (
+            {(activeOrder.isFacultyExpress || activeOrder.staffRoomDelivery || activeOrder.paymentMethod === 'UPI' || activeOrder.advanceAmount > 0 || (activeOrder.pickupSlot && activeOrder.pickupSlot !== 'ASAP') || activeOrder.groupCollectorName) && (
               <View style={styles.badgeTagsRow}>
                 {activeOrder.isFacultyExpress && (
                   <View style={styles.facultyPill}>
                     <Text style={styles.facultyPillText}>⭐ FACULTY EXPRESS</Text>
+                  </View>
+                )}
+                {activeOrder.staffRoomDelivery && (
+                  <View style={styles.slotPill}>
+                    <Text style={styles.slotPillText}>Staff room delivery · ₹{activeOrder.deliveryFee || 5}</Text>
+                  </View>
+                )}
+                {activeOrder.paymentMethod === 'UPI' && (
+                  <View style={styles.slotPill}>
+                    <Text style={styles.slotPillText}>{activeOrder.paymentStatus === 'CONFIRMED_BY_MERCHANT' ? 'Payment verified by seller' : 'Seller verification pending'}</Text>
+                  </View>
+                )}
+                {activeOrder.paymentMethod === 'Cash' && activeOrder.advanceAmount > 0 && (
+                  <View style={styles.slotPill}>
+                    <Text style={styles.slotPillText}>{activeOrder.advancePaymentStatus === 'CONFIRMED_BY_MERCHANT' ? `₹${activeOrder.advanceAmount} advance verified` : 'Seller verification pending · UPI advance'}</Text>
                   </View>
                 )}
                 {activeOrder.pickupSlot && activeOrder.pickupSlot !== 'ASAP' && (
@@ -515,4 +530,3 @@ const baseStyles = StyleSheet.create({
     fontWeight: '800',
   },
 });
-

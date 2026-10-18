@@ -18,6 +18,24 @@
       },
       "environment": "production",
       "autoIncrement": true
+    },
+    "production-apk": {
+      "extends": "production",
+      "distribution": "internal",
+      "developmentClient": false,
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyBlP3xHZ9Ai6S14eznn_JpbOgGI3IaXAYA",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:860780652130:web:2cbdc11e9ab2397b52133b",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "skipyourqueue.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "860780652130",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "skipyourqueue",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "skipyourqueue.firebasestorage.app",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "860780652130-rlldjrmac6od36vs7ij8itkv96lf721q.apps.googleusercontent.com",
+        "EXPO_PUBLIC_PUSH_API_URL": "https://skipq-ey2t.onrender.com"
+      }
     }
   }
 }

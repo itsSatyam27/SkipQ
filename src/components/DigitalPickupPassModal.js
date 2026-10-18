@@ -8,7 +8,7 @@ import { StyleSheet, View, Text, Modal, TouchableOpacity, Alert, ScrollView, Ima
 import { AppContext } from '../context/AppContext';
 import QRCode from 'react-native-qrcode-svg';
 
-function PickupProgress({ percent, secondsLeft, ready }) {
+function PickupProgress({ percent, secondsLeft, ready, staffRoomDelivery }) {
   const styles = useSellerStyles(baseStyles);
   const reduced = useReducedMotion();
   const value = useRef(new Animated.Value(percent)).current;
@@ -18,10 +18,10 @@ function PickupProgress({ percent, secondsLeft, ready }) {
   }, [percent, reduced, value]);
   const time = secondsLeft == null ? '--:--' : `${Math.floor(secondsLeft / 60).toString().padStart(2, '0')}:${(secondsLeft % 60).toString().padStart(2, '0')}`;
   return <View style={styles.countdown}>
-    <View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.prepEyebrow}>{ready ? 'READY TO COLLECT' : 'KITCHEN PROGRESS'}</Text><Text style={styles.countTitle}>{ready ? 'Your food is ready' : secondsLeft === 0 ? 'Waiting for kitchen update' : 'Freshly preparing your order'}</Text></View><View style={[styles.timerBadge, ready && styles.readyStatus]}>{ready ? <InterfaceIcon name="check" size={24} color="#18824b" /> : <><Text style={styles.timer}>{time}</Text><Text style={styles.timerCaption}>estimated left</Text></>}</View></View>
-    <View accessibilityRole="progressbar" accessibilityLabel={ready ? 'Order ready for pickup' : 'Estimated preparation progress'} accessibilityValue={{ min: 0, max: 100, now: Math.round(percent) }} style={styles.track}><Animated.View style={[styles.fill, ready && { backgroundColor: '#47db85' }, { width: value.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'], extrapolate: 'clamp' }) }]} /></View>
+    <View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.prepEyebrow}>{ready ? staffRoomDelivery ? 'READY FOR HANDOVER' : 'READY TO COLLECT' : 'KITCHEN PROGRESS'}</Text><Text style={styles.countTitle}>{ready ? staffRoomDelivery ? 'Order ready for handover' : 'Your food is ready' : secondsLeft === 0 ? 'Waiting for kitchen update' : 'Freshly preparing your order'}</Text></View><View style={[styles.timerBadge, ready && styles.readyStatus]}>{ready ? <InterfaceIcon name="check" size={24} color="#18824b" /> : <><Text style={styles.timer}>{time}</Text><Text style={styles.timerCaption}>estimated left</Text></>}</View></View>
+    <View accessibilityRole="progressbar" accessibilityLabel={ready ? staffRoomDelivery ? 'Order ready for delivery handover' : 'Order ready for pickup' : 'Estimated preparation progress'} accessibilityValue={{ min: 0, max: 100, now: Math.round(percent) }} style={styles.track}><Animated.View style={[styles.fill, ready && { backgroundColor: '#47db85' }, { width: value.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'], extrapolate: 'clamp' }) }]} /></View>
     <View style={styles.prepSteps}>{['Placed', 'Preparing', 'Ready'].map((label,index) => <View key={label} style={styles.prepStep}><View style={[styles.stepDot, index < 2 && styles.stepDone, index === 2 && ready && styles.stepReady]} /><Text style={[styles.stepText, ((index === 1 && !ready) || (index === 2 && ready)) && styles.stepTextActive]}>{label}</Text></View>)}</View>
-    <Text style={styles.hint}>{ready ? 'Show your QR or PIN at the counter.' : 'Timing is an estimate. Collect only after the kitchen marks your order Ready.'}</Text>
+    <Text style={styles.hint}>{ready ? staffRoomDelivery ? 'Show your QR or PIN to the delivery staff at handover.' : 'Show your QR or PIN at the counter.' : 'Timing is an estimate. Wait for the canteen to mark your order Ready before handover.'}</Text>
   </View>;
 }
 
@@ -97,7 +97,7 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
     try {
       await Share.share({
         title: `SkipQ Pickup Pass - Token ${activeOrderObj.tokenNumber}`,
-        message: ` *SkipQ Pickup Pass*\n Canteen: ${activeOrderObj.shopName}\n Token: ${activeOrderObj.tokenNumber}\n PIN: ${activeOrderObj.pickupPin}\n⏰ Timing: ${activeOrderObj.pickupSlot || 'Immediate'}\n${activeOrderObj.groupCollectorName ? ` Collector: ${activeOrderObj.groupCollectorName}\n` : ''}Show this to counter staff for instant food collection!`
+        message: ` *SkipQ Pickup Pass*\n Canteen: ${activeOrderObj.shopName}\n Token: ${activeOrderObj.tokenNumber}\n PIN: ${activeOrderObj.pickupPin}\n⏰ Timing: ${activeOrderObj.pickupSlot || 'Immediate'}\n${activeOrderObj.groupCollectorName ? ` Collector: ${activeOrderObj.groupCollectorName}\n` : ''}${activeOrderObj.staffRoomDelivery ? ` Staff room delivery: ${activeOrderObj.facultyRoomNote}\n` : ''}Show this ${activeOrderObj.staffRoomDelivery ? 'to the delivery staff' : 'to counter staff'} for order handover!`
       });
     } catch (err) {
       console.log('Share pass note:', err);
@@ -106,7 +106,7 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
 
   const handleCancelOrder = () => {
     if (!canCancel) return;
-    Alert.alert('Cancel order?', 'UPI refunds must be arranged directly with the canteen. SkipQ does not transfer refunds.', [
+    Alert.alert('Cancel order?', 'If you have already paid any amount, contact the canteen to confirm it and arrange its return. SkipQ does not transfer refunds.', [
       { text: 'Keep order', style: 'cancel' },
       { text: 'Cancel order', style: 'destructive', onPress: async () => {
         try { const message = await cancelOrder(activeOrderObj.id); Alert.alert('Order cancelled', message); }
@@ -122,31 +122,42 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
 
   const closed = isCancelled || isCompleted || isAbandoned;
   const status = isCancelled ? 'Cancelled' : isCompleted ? 'Collected' : isAbandoned ? 'Unclaimed' : isReady ? 'Ready' : 'Cooking';
+  const paymentInstruction = isCancelled || isAbandoned
+    ? activeOrderObj.refundText || 'Contact the canteen about any refund or retained advance.'
+    : activeOrderObj.paymentMethod === 'Cash'
+      ? activeOrderObj.advanceAmount > 0
+        ? activeOrderObj.advancePaymentStatus === 'CONFIRMED_BY_MERCHANT'
+          ? `₹${activeOrderObj.advanceAmount} UPI advance verified. Pay the remaining ₹${activeOrderObj.dueAtCounter} cash ${activeOrderObj.staffRoomDelivery ? 'on staff room delivery' : 'at pickup'}.`
+          : `Seller verification pending: pay ₹${activeOrderObj.advanceAmount} advance to ${activeOrderObj.merchantUpi} by UPI. Remaining ₹${activeOrderObj.dueAtCounter} is due in cash ${activeOrderObj.staffRoomDelivery ? 'on delivery' : 'at pickup'}.`
+        : `Pay ₹${activeOrderObj.totalAmount} in cash ${activeOrderObj.staffRoomDelivery ? 'on delivery' : 'at pickup'}. UPI payments are coming soon.`
+      : activeOrderObj.paymentStatus === 'CONFIRMED_BY_MERCHANT'
+        ? 'Payment verified by seller'
+        : `Seller verification pending. Pay ₹${activeOrderObj.totalAmount} directly to the canteen and wait for seller confirmation.`;
   return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
     <View style={styles.overlay}><View style={[styles.sheet, { paddingTop: Math.max(14, insets.top), paddingBottom: Math.max(12, insets.bottom) }]}>
       <View style={styles.handle} />
       <View style={styles.headingRow}><Text style={styles.campusBadge}>SILVER OAK UNIVERSITY</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close pickup pass" onPress={onClose} style={styles.close}><InterfaceIcon name="close" size={19} color={light ? '#172333' : '#f5f4f0'} /></TouchableOpacity></View>
       <ScrollView ref={scrollRef} style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-        <Text style={styles.title}>Digital pickup pass</Text><Text style={styles.subtitle}>Show your QR or PIN at the counter.</Text>
+        <Text style={styles.title}>{activeOrderObj.staffRoomDelivery ? 'Staff room delivery pass' : 'Digital pickup pass'}</Text><Text style={styles.subtitle}>{activeOrderObj.staffRoomDelivery ? 'Show your QR or PIN to the delivery staff at handover.' : 'Show your QR or PIN at the counter.'}</Text>
         <View style={styles.ticket}>
-          <View style={styles.ticketHeading}><View style={{ flex: 1 }}><Text style={styles.eyebrow}>{activeOrderObj.isFacultyExpress ? 'FACULTY EXPRESS PASS' : 'CAMPUS PICKUP PASS'}</Text><Text style={styles.shop}>{activeOrderObj.shopName}</Text></View><Text style={[styles.status, isReady && styles.readyStatus]}>{status}</Text></View>
-          {!closed && <PickupProgress percent={prepProgressPercent} secondsLeft={secondsLeft} ready={isReady} />}
+          <View style={styles.ticketHeading}><View style={{ flex: 1 }}><Text style={styles.eyebrow}>{activeOrderObj.staffRoomDelivery ? 'FACULTY DELIVERY PASS' : activeOrderObj.isFacultyExpress ? 'FACULTY EXPRESS PASS' : 'CAMPUS PICKUP PASS'}</Text><Text style={styles.shop}>{activeOrderObj.shopName}</Text></View><Text style={[styles.status, isReady && styles.readyStatus]}>{status}</Text></View>
+          {!closed && <PickupProgress percent={prepProgressPercent} secondsLeft={secondsLeft} ready={isReady} staffRoomDelivery={activeOrderObj.staffRoomDelivery} />}
           {!closed && <>
-            {activeOrderObj.pickupPin ? <View style={styles.qr}><View style={styles.qrWhite}><QRCode value={`SKIPQ-PASS:${activeOrderObj.id}:${activeOrderObj.pickupPin}`} size={164} quietZone={8} color="#090b0d" backgroundColor="#ffffff" /></View><Text style={styles.scanHint}>Scan QR at the counter for pickup</Text></View> : <Text style={styles.hint}>Your pickup PIN is loading. Reopen the pass if it does not appear.</Text>}
-            {!!activeOrderObj.pickupPin && <><Text style={styles.centerLabel}>PICKUP PIN - VERIFIES HANDOVER</Text><View style={styles.pinRow}>{String(activeOrderObj.pickupPin).split('').map((digit, index) => <Text key={index} style={styles.pinDigit}>{digit}</Text>)}</View></>}
+            {activeOrderObj.pickupPin ? <View style={styles.qr}><View style={styles.qrWhite}><QRCode value={`SKIPQ-PASS:${activeOrderObj.id}:${activeOrderObj.pickupPin}`} size={164} quietZone={8} color="#090b0d" backgroundColor="#ffffff" /></View><Text style={styles.scanHint}>{activeOrderObj.staffRoomDelivery ? 'Show QR to delivery staff for handover' : 'Scan QR at the counter for pickup'}</Text></View> : <Text style={styles.hint}>Your pickup PIN is loading. Reopen the pass if it does not appear.</Text>}
+            {!!activeOrderObj.pickupPin && <><Text style={styles.centerLabel}>{activeOrderObj.staffRoomDelivery ? 'HANDOVER PIN - VERIFIES DELIVERY' : 'PICKUP PIN - VERIFIES HANDOVER'}</Text><View style={styles.pinRow}>{String(activeOrderObj.pickupPin).split('').map((digit, index) => <Text key={index} style={styles.pinDigit}>{digit}</Text>)}</View></>}
           </>}
-          <Text style={styles.centerLabel}>TOKEN NUMBER - DISPLAY AT PICKUP</Text><Text selectable style={styles.token}>{activeOrderObj.tokenNumber}</Text>
+          <Text style={styles.centerLabel}>{activeOrderObj.staffRoomDelivery ? 'ORDER TOKEN' : 'TOKEN NUMBER - DISPLAY AT PICKUP'}</Text><Text selectable style={styles.token}>{activeOrderObj.tokenNumber}</Text>
           <View style={styles.divider} />
           <View style={styles.row}><View style={{ flex: 1 }}><Text style={styles.label}>COLLECTOR</Text><Text style={styles.name}>{activeOrderObj.groupCollectorName || activeOrderObj.buyerName || 'Campus customer'}</Text></View><View style={{ alignItems: 'flex-end' }}><Text style={styles.label}>AMOUNT</Text><Text style={styles.amount}>{'\u20B9'}{activeOrderObj.totalAmount}</Text></View></View>
-          <Text style={styles.payment}>{isCancelled ? activeOrderObj.refundText || 'Contact the canteen about any refund.' : activeOrderObj.paymentMethod === 'Cash' ? `Pay \u20B9${activeOrderObj.dueAtCounter ?? activeOrderObj.totalAmount} cash at stall` : activeOrderObj.paymentStatus === 'CONFIRMED_BY_MERCHANT' ? 'UPI confirmed by canteen' : 'UPI awaiting canteen confirmation'}</Text>
-          <View style={styles.items}><Text style={styles.label}>ORDER BREAKDOWN</Text>{(activeOrderObj.items || []).map((item,index) => <View style={styles.itemRow} key={index}><Text style={styles.itemName}>{item.name}</Text><Text style={styles.itemQuantity}>x{item.qty}</Text><Text style={styles.itemPrice}>{'\u20B9'}{item.qty * item.price}</Text></View>)}</View>
+          <Text style={styles.payment}>{paymentInstruction}</Text>
+          <View style={styles.items}><Text style={styles.label}>ORDER BREAKDOWN</Text>{(activeOrderObj.items || []).map((item,index) => <View style={styles.itemRow} key={index}><Text style={styles.itemName}>{item.name}</Text><Text style={styles.itemQuantity}>x{item.qty}</Text><Text style={styles.itemPrice}>{'\u20B9'}{item.qty * item.price}</Text></View>)}{!!activeOrderObj.deliveryFee && <View style={styles.itemRow}><Text style={styles.itemName}>Staff room delivery</Text><Text style={styles.itemQuantity} /><Text style={styles.itemPrice}>{'\u20B9'}{activeOrderObj.deliveryFee}</Text></View>}</View>
           {!!activeOrderObj.specialInstructions && <Text style={styles.hint}>Kitchen note: {activeOrderObj.specialInstructions}</Text>}
-          {!!activeOrderObj.facultyRoomNote && <Text style={styles.hint}>Staff room: {activeOrderObj.facultyRoomNote}</Text>}
-          {!!activeOrderObj.pickupSlot && activeOrderObj.pickupSlot !== 'ASAP' && <Text style={styles.hint}>Pickup: {activeOrderObj.pickupSlot}</Text>}
-          <Text style={styles.footnote}>Share the QR or quote the 4-digit PIN to the counter operator.</Text>
+          {activeOrderObj.staffRoomDelivery && <Text style={styles.hint}>Deliver to staff room: {activeOrderObj.facultyRoomNote}</Text>}
+          {!!activeOrderObj.pickupSlot && activeOrderObj.pickupSlot !== 'ASAP' && <Text style={styles.hint}>{activeOrderObj.staffRoomDelivery ? 'Preferred delivery time' : 'Pickup'}: {activeOrderObj.pickupSlot}</Text>}
+          <Text style={styles.footnote}>{activeOrderObj.staffRoomDelivery ? 'Share the QR or quote the 4-digit PIN to the delivery staff at handover.' : 'Share the QR or quote the 4-digit PIN to the counter operator.'}</Text>
         </View>
-        {!closed && <TouchableOpacity accessibilityRole="button" onPress={handleSharePass} style={styles.primary}><Text style={styles.primaryText}>Share pass to roommate / friend</Text></TouchableOpacity>}
-        {canCancel && <><View style={styles.notice}><InterfaceIcon name="info" size={16} color="#ffb313" /><Text style={styles.noticeText}>You can cancel this active order. UPI refunds are handled by the canteen.</Text></View><TouchableOpacity accessibilityRole="button" onPress={handleCancelOrder} style={styles.cancel}><Text style={styles.cancelText}>Cancel order</Text></TouchableOpacity></>}
+        {!closed && <TouchableOpacity accessibilityRole="button" accessibilityLabel={activeOrderObj.staffRoomDelivery ? 'Share delivery pass' : activeOrderObj.isFacultyExpress ? 'Share pass with colleague' : 'Share pass to roommate or friend'} onPress={handleSharePass} style={styles.primary}><Text style={styles.primaryText}>{activeOrderObj.staffRoomDelivery ? 'Share delivery pass' : activeOrderObj.isFacultyExpress ? 'Share pass with colleague' : 'Share pass to roommate / friend'}</Text></TouchableOpacity>}
+        {canCancel && <><View style={styles.notice}><InterfaceIcon name="info" size={16} color="#ffb313" /><Text style={styles.noticeText}>You can cancel this active order. Contact the canteen to arrange the return of any money already paid; SkipQ does not process refunds.</Text></View><TouchableOpacity accessibilityRole="button" onPress={handleCancelOrder} style={styles.cancel}><Text style={styles.cancelText}>Cancel order</Text></TouchableOpacity></>}
         <TouchableOpacity accessibilityRole="button" onPress={onClose} style={styles.back}><Text style={styles.backText}>Back to Campus Radar</Text></TouchableOpacity>
       </ScrollView>
     </View></View>

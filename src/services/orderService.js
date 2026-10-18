@@ -29,7 +29,7 @@ export async function placeOrderInFirestore(body) {
   const key = `@skipq_pending_order_${uid}`;
   const payload = { ...(body.testOrder === true ? { testOrder: true } : {}), shopId: body.shopId, items: body.items.map(item => ({ id: item.id, qty: item.qty })),
     paymentMethod: body.paymentMethod, specialInstructions: body.specialInstructions || '', pickupSlot: body.pickupSlot || 'ASAP',
-    facultyRoomNote: body.facultyRoomNote || '', groupCollectorName: body.groupCollectorName || '' };
+    facultyRoomNote: body.facultyRoomNote || '', staffRoomDelivery: body.staffRoomDelivery === true, groupCollectorName: body.groupCollectorName || '' };
   const fingerprint = JSON.stringify(payload);
   let pending = JSON.parse(await AsyncStorage.getItem(key) || 'null');
   if (!pending || pending.fingerprint !== fingerprint) {

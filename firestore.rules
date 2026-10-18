@@ -6,6 +6,7 @@ service cloud.firestore {
     function ready() {
       let profile = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
       return verified() && profile.profileComplete == true && profile.email == request.auth.token.email.lower()
+        && profile.get('universityStatus', 'ACTIVE') != 'LEFT'
         && !(profile.banStatus == 'perm_ban' || (profile.banStatus == 'temp_ban' && profile.banUntil > request.time));
     }
     function locationTestAccess() {
@@ -47,19 +48,24 @@ service cloud.firestore {
     function newOrder(id, order) {
       let shop = get(/databases/$(database)/documents/canteens/$(order.shopId)).data;
       let profile = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-      return ready() && order.keys().hasOnly(['id', 'testOrder', 'requestFingerprint', 'shopId', 'shopName', 'sellerId', 'buyerId', 'buyerName', 'buyerPhone', 'buyerRollNo', 'items', 'totalAmount', 'paymentMethod', 'paymentStatus', 'merchantUpi', 'heldDepositAmount', 'upfrontPaid', 'dueAtCounter', 'tokenNumber', 'pickupAttempts', 'pickupLockedUntil', 'orderStatus', 'estimatedPrepMins', 'specialInstructions', 'pickupSlot', 'facultyRoomNote', 'groupCollectorName', 'isFacultyExpress', 'location', 'timestamp', 'createdAt', 'updatedAt'])
+      return ready() && order.keys().hasOnly(['id', 'testOrder', 'requestFingerprint', 'shopId', 'shopName', 'sellerId', 'buyerId', 'buyerName', 'buyerPhone', 'buyerRollNo', 'items', 'totalAmount', 'deliveryFee', 'staffRoomDelivery', 'paymentMethod', 'paymentStatus', 'merchantUpi', 'advanceAmount', 'advancePaymentStatus', 'advanceRefundStatus', 'advanceConfirmedAt', 'heldDepositAmount', 'upfrontPaid', 'dueAtCounter', 'tokenNumber', 'pickupAttempts', 'pickupLockedUntil', 'orderStatus', 'estimatedPrepMins', 'specialInstructions', 'pickupSlot', 'facultyRoomNote', 'groupCollectorName', 'isFacultyExpress', 'location', 'timestamp', 'createdAt', 'updatedAt'])
         && order.id == id && order.buyerId == request.auth.uid && order.sellerId == shop.ownerId && approved(shop.ownerId)
         && shop.status == 'Open' && order.shopName == shop.name && order.buyerName == profile.name && order.buyerPhone == profile.phone
         && order.isFacultyExpress == (profile.userType == 'faculty') && order.merchantUpi == shop.get('upiId', '')
-        && order.paymentMethod in ['Cash', 'UPI'] && (order.paymentMethod != 'UPI' || shop.upiId.matches('^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+$'))
-        && order.paymentStatus == (order.paymentMethod == 'Cash' ? 'PENDING_CASH' : 'PENDING_MERCHANT_CONFIRMATION')
+        && order.staffRoomDelivery is bool && order.deliveryFee == (order.staffRoomDelivery ? 5 : 0)
+        && (!order.staffRoomDelivery || (profile.userType == 'faculty' && order.facultyRoomNote is string && order.facultyRoomNote.size() > 0 && order.facultyRoomNote.size() <= 160))
+        && order.paymentMethod == 'Cash'
+        && order.paymentStatus == 'PENDING_CASH'
+        && order.advanceAmount == 0
+        && order.advancePaymentStatus == 'NOT_REQUIRED'
+        && order.advanceRefundStatus == 'NOT_APPLICABLE'
         && order.orderStatus == 'Preparing' && order.pickupAttempts == 0 && order.pickupLockedUntil == null
         && order.createdAt == request.time && order.updatedAt == request.time
         && order.items is list && order.items.size() >= 1 && order.items.size() <= 5
         && line(order.items, 0, shop.menu) && line(order.items, 1, shop.menu) && line(order.items, 2, shop.menu)
         && line(order.items, 3, shop.menu) && line(order.items, 4, shop.menu)
-        && order.totalAmount == total(order.items) && order.heldDepositAmount == 0 && order.upfrontPaid == 0
-        && order.dueAtCounter == (order.paymentMethod == 'Cash' ? order.totalAmount : 0)
+        && order.totalAmount == total(order.items) + order.deliveryFee && order.heldDepositAmount == 0 && order.upfrontPaid == 0
+        && order.dueAtCounter == order.totalAmount
         && (order.get('testOrder', false)
           ? (locationTestAccess() && order.location == null)
           : (order.location.accuracy >= 0 && order.location.accuracy <= 100
@@ -67,9 +73,23 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)/pickupSecrets/$(id)).data.pin.matches('^[0-9]{4}$');
     }
     function validRefund(order, next) {
-      let paid = order.paymentMethod == 'UPI' && order.paymentStatus == 'CONFIRMED_BY_MERCHANT';
+      let paid = (order.paymentMethod == 'UPI' && order.paymentStatus == 'CONFIRMED_BY_MERCHANT')
+        || (order.paymentMethod == 'Cash' && order.get('advancePaymentStatus', '') == 'CONFIRMED_BY_MERCHANT');
+      let amount = order.paymentMethod == 'UPI' ? order.totalAmount : order.get('advanceAmount', 0);
       return next.refundStatus == (paid ? 'MERCHANT_REFUND_REQUIRED' : 'NOT_REQUIRED')
-        && next.refundAmount == (paid ? order.totalAmount : 0);
+        && next.refundAmount == (paid ? amount : 0)
+        && next.advanceRefundStatus == (order.paymentMethod == 'Cash' ? (paid ? 'MERCHANT_REFUND_REQUIRED' : 'NOT_REQUIRED') : 'NOT_APPLICABLE');
+    }
+    function validNoShow(order, next) {
+      let paidUpi = order.paymentMethod == 'UPI' && order.paymentStatus == 'CONFIRMED_BY_MERCHANT';
+      let retainedAdvance = order.paymentMethod == 'Cash' && order.get('advancePaymentStatus', '') == 'CONFIRMED_BY_MERCHANT';
+      return next.refundStatus == (paidUpi ? 'MERCHANT_REFUND_REQUIRED' : 'NOT_REQUIRED')
+        && next.refundAmount == (paidUpi ? order.totalAmount : 0)
+        && next.advanceRefundStatus == (retainedAdvance ? 'RETAINED_AFTER_NO_SHOW' : 'NOT_APPLICABLE');
+    }
+    function advanceVerified(order) {
+      return order.paymentMethod != 'Cash' || order.get('advanceAmount', 0) == 0
+        || order.get('advancePaymentStatus', '') == 'CONFIRMED_BY_MERCHANT';
     }
     function pinAttempt(id, old, next) {
       let check = getAfter(/databases/$(database)/documents/pickupVerifications/$(id)).data;
@@ -89,21 +109,26 @@ service cloud.firestore {
         && check.pin == secret.pin && check.checkedAt == old.updatedAt
         && check.checkedAt > request.time - duration.value(5, 'm')
         && next.completedAt == request.time
-        && (old.paymentMethod == 'Cash' ? next.paymentStatus == 'CASH_COLLECTED' : old.paymentStatus == 'CONFIRMED_BY_MERCHANT' && next.paymentStatus == old.paymentStatus);
+        && (old.paymentMethod == 'Cash' ? advanceVerified(old) && next.paymentStatus == 'CASH_COLLECTED' : old.paymentStatus == 'CONFIRMED_BY_MERCHANT' && next.paymentStatus == old.paymentStatus);
     }
     function changeOrder(id, old, next) {
       let isSeller = assigned(old);
       return ready() && next.updatedAt == request.time && (
-        (isSeller && old.orderStatus == 'Preparing' && next.orderStatus == 'Ready for Pickup' && next.readyAt == request.time
+        (isSeller && old.orderStatus == 'Preparing' && advanceVerified(old) && next.orderStatus == 'Ready for Pickup' && next.readyAt == request.time
           && next.diff(old).affectedKeys().hasOnly(['orderStatus', 'readyAt', 'updatedAt']))
         || (isSeller && active(old) && old.paymentMethod == 'UPI' && next.paymentStatus == 'CONFIRMED_BY_MERCHANT'
           && next.paymentConfirmedAt == request.time && next.diff(old).affectedKeys().hasOnly(['paymentStatus', 'paymentConfirmedAt', 'updatedAt']))
+        || (isSeller && active(old) && old.paymentMethod == 'Cash' && old.get('advanceAmount', 0) > 0
+          && old.get('advancePaymentStatus', '') == 'PENDING_MERCHANT_CONFIRMATION'
+          && next.advancePaymentStatus == 'CONFIRMED_BY_MERCHANT' && next.advanceRefundStatus == 'NOT_REFUNDED'
+          && next.advanceConfirmedAt == request.time && next.heldDepositAmount == old.advanceAmount
+          && next.upfrontPaid == old.advanceAmount && next.diff(old).affectedKeys().hasOnly(['advancePaymentStatus', 'advanceRefundStatus', 'advanceConfirmedAt', 'heldDepositAmount', 'upfrontPaid', 'updatedAt']))
         || (active(old) && (old.buyerId == request.auth.uid || isSeller) && next.orderStatus == 'Cancelled'
           && next.cancelledAt == request.time && next.cancelledBy == (old.buyerId == request.auth.uid ? 'buyer' : 'seller') && validRefund(old, next)
-          && next.diff(old).affectedKeys().hasOnly(['orderStatus', 'cancelledAt', 'cancelledBy', 'refundStatus', 'refundAmount', 'refundText', 'updatedAt']))
-        || (isSeller && old.orderStatus == 'Ready for Pickup' && old.readyAt <= request.time - duration.value(45, 'm')
-          && next.orderStatus == 'Abandoned' && validRefund(old, next)
-          && next.diff(old).affectedKeys().hasOnly(['orderStatus', 'refundStatus', 'refundAmount', 'refundText', 'updatedAt']))
+          && next.diff(old).affectedKeys().hasOnly(['orderStatus', 'cancelledAt', 'cancelledBy', 'refundStatus', 'refundAmount', 'refundText', 'advanceRefundStatus', 'updatedAt']))
+        || (isSeller && old.orderStatus == 'Ready for Pickup' && old.readyAt <= request.time - duration.value(15, 'm')
+          && next.orderStatus == 'Abandoned' && validNoShow(old, next)
+          && next.diff(old).affectedKeys().hasOnly(['orderStatus', 'refundStatus', 'refundAmount', 'refundText', 'advanceRefundStatus', 'updatedAt']))
         || (isSeller && (pinAttempt(id, old, next) || pickup(id, old, next))));
     }
     function validProfile(data) {

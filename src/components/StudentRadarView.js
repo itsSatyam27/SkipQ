@@ -1,3 +1,4 @@
+import DishPreview from './DishPreview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { prepMinutes, prepLabel, itemCountLabel } from '../utils/orderDisplay.cjs';
 import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
@@ -9,6 +10,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  Pressable,
   FlatList,
   ScrollView,
   Image,
@@ -40,6 +42,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
     userProfile,
     setRole
   } = useContext(AppContext);
+  const isFaculty = userProfile?.userType === 'faculty';
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -47,6 +50,9 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
   const [vegOnly, setVegOnly] = useState(false);
   const [fastPrepOnly, setFastPrepOnly] = useState(false);
   const [expandedDish, setExpandedDish] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const previewShop = canteens.find(shop => shop.id === preview?.shopId);
+  const previewItem = previewShop?.menu?.find(item => item.id === preview?.itemId);
 
   const campusCanteens = useMemo(() => canteens.filter(c => c.universityId === university), [canteens, university]);
   const hasUserLocation = isUsableLocation(userLocation);
@@ -173,18 +179,16 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
   };
 
   const activeOrderObj = orders.find(o => o.id === activeOrderId);
-
-  return (
-    <View style={styles.screenContainer}>
-      {/* Top Search & Filter Section */}
-      <View style={styles.topSection}>
+  const exploreHeader = (
+<View style={styles.topSection}>
         {/* Minimal Greeting & Live Status */}
         <View style={styles.greetingRow}>
-          <View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.dayGreeting}>{new Date().getHours() < 12 ? 'Good morning,' : new Date().getHours() < 17 ? 'Good afternoon,' : 'Good evening,'}</Text>
             <Text style={styles.greetingTitle}>
               {userProfile?.name ? `Hey ${userProfile.name.split(' ')[0]} ` : 'Hey Foodie '}
             </Text>
-            <Text style={styles.greetingSub}>Order ahead & pick up with zero queue</Text>
+            <Text style={styles.greetingSub}>{isFaculty ? 'Faculty priority orders and staff-room options.' : 'Quick bites, prices and pickup times.'}</Text>
           </View>
 
           <LocationControl compact />
@@ -221,6 +225,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
               style={[styles.catChip, selectedCategory === cat && styles.catChipActive]}
               onPress={() => setSelectedCategory(cat)}
             >
+              <InterfaceIcon name={({ All: 'cloche', Snacks: 'snack', Beverages: 'drink', Meals: 'meal', Rolls: 'roll', Sandwiches: 'sandwich', Desserts: 'dessert' })[cat]} size={23} color={selectedCategory === cat ? '#090b0d' : light ? '#344155' : '#d4d6dc'} />
               <Text style={[styles.catChipText, selectedCategory === cat && styles.catChipTextActive]}>
                 {cat}
               </Text>
@@ -266,10 +271,15 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
           </TouchableOpacity>
         </View>
       </View>
+  );
 
+  return (
+    <View style={styles.screenContainer}>
+      {/* Top Search & Filter Section */}
       {/* Main Content Area */}
       {activeTab === 'dishes' ? (
         <FlatList
+          ListHeaderComponent={exploreHeader}
           data={radarItems}
           keyExtractor={item => item.name}
           contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: cartDockBottom + 100 }]}
@@ -333,7 +343,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
             const isExpanded = expandedDish === group.name;
 
             return (
-              <View style={styles.dishCard}>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Preview ${group.name}`} onPress={() => setPreview({ shopId: primaryShop.shopId, itemId: primaryShop.itemId })} style={styles.dishCard}>
                 {/* Main Card Row */}
                 <View style={styles.dishMainRow}>
                   {/* Dish Image with Veg Dot Badge */}
@@ -356,6 +366,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                     <Text style={styles.dishStallMeta} numberOfLines={1}>
                       {primaryShop.shopName} •  {primaryShop.prepTime}
                     </Text>
+                    {isFaculty && <View style={styles.roleInfoPill}><Text style={styles.roleInfoPillText}>Faculty priority</Text></View>}
 
                     {Boolean(group.description) && (
                       <Text style={styles.dishDesc} numberOfLines={1}>
@@ -378,9 +389,8 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                     )}
                   </View>
 
-                  <Text style={styles.dishPrice}>₹{primaryShop.price}</Text>
                   {/* Right Action: Add button or Stepper */}
-                  <View style={styles.dishActionCol}>
+                  <View style={styles.dishActionCol}><Text style={styles.dishPrice}>{'\u20B9'}{primaryShop.price}</Text>
                     {!primaryShop.isAvailable ? (
                       <View style={styles.soldOutBadge}>
                         <Text style={styles.soldOutText}>{primaryShop.shopObj.status !== 'Open' ? 'Paused' : 'Sold Out'}</Text>
@@ -404,6 +414,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                     ) : (
                       <TouchableOpacity
                         style={styles.addBtn}
+                        accessibilityRole="button" accessibilityLabel={`Add ${group.name} to cart`}
                         onPress={() =>
                           handleAddToCart(
                             primaryShop.shopObj,
@@ -413,7 +424,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                           )
                         }
                       >
-                        <Text style={styles.addBtnText}>+ Add</Text>
+                        <Text style={styles.addBtnText}>+</Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -458,13 +469,14 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                     })}
                   </View>
                 )}
-              </View>
+              </Pressable>
             );
           }}
         />
       ) : (
         /* Stalls View */
         <FlatList
+          ListHeaderComponent={exploreHeader}
           data={campusCanteens}
           keyExtractor={item => item.id}
           contentContainerStyle={[styles.contentList, cartTotalItems > 0 && { paddingBottom: cartDockBottom + 100 }]}
@@ -515,6 +527,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                     <Text style={styles.stallMetaChip}> {shop.currentQueue || 0} in queue</Text>
                     <Text style={styles.stallMetaChip}> {distMeters != null ? formatDistance(distMeters) : 'Location pending'}</Text>
                   </View>
+                  {!!shop.openingHours && <Text style={styles.stallHours}>Working hours · {shop.openingHours}</Text>}
 
                   <TouchableOpacity
                     style={styles.viewStallMenuBtn}
@@ -534,6 +547,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
         />
       )}
 
+      <DishPreview visible={Boolean(preview)} shop={previewShop} item={previewItem} quantity={preview ? getItemCartQty(preview.shopId, preview.itemId) : 0} onClose={() => setPreview(null)} onAdd={handleAddToCart} />
       {/* Floating Cart Checkout Bar */}
       {cartTotalItems > 0 && (
         <View style={[styles.floatingCartDock, { bottom: cartDockBottom }]}>
@@ -559,6 +573,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
 }
 
 const baseStyles = StyleSheet.create({
+  dayGreeting: { color: '#a5a9b2', fontSize: 12, marginBottom: 4 },
   nameDietBadge: { width: 13, height: 13, borderRadius: 3, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   screenContainer: {
     flex: 1,
@@ -568,7 +583,7 @@ const baseStyles = StyleSheet.create({
     width: '100%',
     maxWidth: 760,
     alignSelf: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 0,
     paddingTop: 8,
     paddingBottom: 4,
     backgroundColor: '#090b0d',
@@ -577,13 +592,15 @@ const baseStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    gap: 10,
+    flexWrap: 'wrap',
+    marginBottom: 16,
   },
   greetingTitle: {
     color: '#f5f4f0',
-    fontSize: 22,
-    fontWeight: '900',
-    letterSpacing: -0.4,
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.7,
   },
   greetingSub: {
     color: '#a5a9b2',
@@ -668,9 +685,15 @@ const baseStyles = StyleSheet.create({
     paddingBottom: 8,
   },
   catChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
+    width: 82,
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 88,
+    paddingHorizontal: 4,
+    paddingVertical: 10,
+    borderRadius: 22,
     backgroundColor: '#121417',
     borderWidth: 1,
     borderColor: '#26292e',
@@ -777,7 +800,7 @@ const baseStyles = StyleSheet.create({
     width: '100%',
     maxWidth: 760,
     alignSelf: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 90,
   },
@@ -866,6 +889,8 @@ const baseStyles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 2,
   },
+  roleInfoPill: { alignSelf: 'flex-start', backgroundColor: '#292418', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3, marginTop: 5 },
+  roleInfoPillText: { color: '#ffb313', fontSize: 9, fontWeight: '800' },
   dishDesc: {
     color: '#a5a9b2',
     fontSize: 11,
@@ -881,14 +906,18 @@ const baseStyles = StyleSheet.create({
     fontWeight: '800',
   },
   dishActionCol: {
+    gap: 10,
+    minWidth: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
   addBtn: {
     backgroundColor: '#ffb313',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
     shadowColor: '#0c52a3',
     shadowOpacity: 0.3,
     shadowRadius: 6,
@@ -1066,6 +1095,7 @@ const baseStyles = StyleSheet.create({
     borderRadius: 8,
     fontWeight: '700',
   },
+  stallHours: { color: '#a5a9b2', fontSize: 11, lineHeight: 16, marginTop: -5, marginBottom: 12 },
   viewStallMenuBtn: {
     backgroundColor: '#17191d',
     paddingVertical: 10,

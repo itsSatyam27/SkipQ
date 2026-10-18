@@ -1,6 +1,62 @@
-#!include:.gitignore
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
-# Never upload machine-specific generated Android metadata.
-/android/build/
-/android/.gradle/
-/android/local.properties
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local environment files -- public Expo variables are still embedded in a build,
+# so never put service credentials in them.
+.env
+.env.*
+!.env.example
+
+# typescript
+*.tsbuildinfo
+
+# Local verification tools, screenshots, and emulator output
+.codex/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# generated native folders
+/ios
+/android
+
+# Native Firebase app config is supplied locally or as an EAS file variable.
+/google-services.json
+/GoogleService-Info.plist
+/admin/dist/
+
+
+# Include native Firebase client configuration; all private/local files stay excluded.
+!/google-services.json
+
+# Local Android build artifacts
+/releases/

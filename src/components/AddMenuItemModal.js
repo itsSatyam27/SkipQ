@@ -7,8 +7,10 @@ import InterfaceIcon from './InterfaceIcon';
 import { DISH_CATEGORIES, validateDishDraft } from '../services/dishDraft.cjs';
 
 const initialDraft = item => ({ name: item?.name || '', category: item?.category || 'Snacks', price: item?.price != null ? String(item.price) : '', minutes: String(item?.prepTime || '5').match(/\d+/)?.[0] || '5', isVeg: item?.isVeg !== false, description: item?.description || '', image: item?.image || '' });
+const PREP_TIME_OPTIONS = [{ value: '0', label: 'Ready to serve' }, { value: '5', label: '5 min' }, { value: '10', label: '10 min' }, { value: '15', label: '15 min' }];
 export default function AddMenuItemModal({ visible, editItem = null, shopId, onClose }) {
   const styles = useSellerStyles(baseStyles);
+  const { light } = useSellerTheme();
   const { addMenuItem, updateMenuItem, sellerShopId } = useContext(AppContext);
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState(() => initialDraft(editItem));
@@ -16,9 +18,10 @@ export default function AddMenuItemModal({ visible, editItem = null, shopId, onC
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [pickingImage, setPickingImage] = useState(false);
+  const [prepOptionsOpen, setPrepOptionsOpen] = useState(false);
   const pending = useRef(false);
-  const priceRef = useRef(null), minutesRef = useRef(null);
-  useEffect(() => { if (visible) { const next = initialDraft(editItem); setDraft(next); setBaseline(JSON.stringify(next)); setError(''); } }, [visible, editItem]);
+  const priceRef = useRef(null);
+  useEffect(() => { if (visible) { const next = initialDraft(editItem); setDraft(next); setBaseline(JSON.stringify(next)); setError(''); setPrepOptionsOpen(false); } }, [visible, editItem]);
   const change = (key, value) => { setDraft(previous => ({ ...previous, [key]: value })); setError(''); };
   const pickImage = async (source = 'gallery') => {
     if (saving || pickingImage) return;
@@ -76,16 +79,29 @@ export default function AddMenuItemModal({ visible, editItem = null, shopId, onC
             <Text style={styles.label}>Dish name *</Text>
             <TextInput accessibilityLabel="Dish name" style={styles.input} placeholder="e.g. Cheese Butter Maggi, Paneer Roll" placeholderTextColor="#9aa8ba" value={draft.name} onChangeText={value => change('name', value)} maxLength={100} returnKeyType="next" onSubmitEditing={() => priceRef.current?.focus()} editable={!saving} />
             <View style={styles.row}>
-              <View style={styles.column}><Text style={styles.label}>Price (INR) *</Text><TextInput ref={priceRef} accessibilityLabel="Dish price" style={styles.input} placeholder="50" placeholderTextColor="#9aa8ba" value={draft.price} onChangeText={value => change('price', value)} keyboardType="decimal-pad" maxLength={10} returnKeyType="next" onSubmitEditing={() => minutesRef.current?.focus()} editable={!saving} /></View>
-              <View style={styles.column}><Text style={styles.label}>Prep time (min) *</Text><TextInput ref={minutesRef} accessibilityLabel="Preparation time in minutes" style={styles.input} placeholder="5" placeholderTextColor="#9aa8ba" value={draft.minutes} onChangeText={value => change('minutes', value)} keyboardType="number-pad" maxLength={3} returnKeyType="done" onSubmitEditing={Keyboard.dismiss} editable={!saving} /></View>
+              <View style={styles.column}><Text style={styles.label}>Price (INR) *</Text><TextInput ref={priceRef} accessibilityLabel="Dish price" style={styles.input} placeholder="50" placeholderTextColor="#9aa8ba" value={draft.price} onChangeText={value => change('price', value)} keyboardType="decimal-pad" maxLength={10} returnKeyType="done" onSubmitEditing={Keyboard.dismiss} editable={!saving} /></View>
+              <View style={styles.column}>
+                <Text style={styles.label}>Prep time *</Text>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Choose preparation time" accessibilityState={{ expanded: prepOptionsOpen }} disabled={saving} onPress={() => { Keyboard.dismiss(); setPrepOptionsOpen(open => !open); }} style={[styles.input, styles.prepSelector]}>
+                  <Text numberOfLines={1} style={styles.prepValue}>{PREP_TIME_OPTIONS.find(option => option.value === draft.minutes)?.label || `${draft.minutes} min`}</Text>
+                  <View style={[styles.prepChevron, prepOptionsOpen && styles.prepChevronOpen]}><InterfaceIcon name="chevron" size={16} color={light ? '#596579' : '#a5a9b2'} /></View>
+                </TouchableOpacity>
+                {prepOptionsOpen && <View style={styles.prepOptions}>{PREP_TIME_OPTIONS.map(option => {
+                  const selected = draft.minutes === option.value;
+                  return <TouchableOpacity key={option.value} accessibilityRole="button" accessibilityLabel={option.label} accessibilityState={{ selected }} disabled={saving} onPress={() => { change('minutes', option.value); setPrepOptionsOpen(false); }} style={[styles.prepOption, selected && styles.prepOptionSelected]}><Text style={[styles.prepOptionText, selected && styles.prepOptionTextSelected]}>{option.label}</Text>{selected && <InterfaceIcon name="check" size={15} color="#ffb313" />}</TouchableOpacity>;
+                })}</View>}
+              </View>
             </View>
-            <Text style={styles.hint}>Time needed to prepare one order. Use 0 for ready-to-serve items.</Text>
+            <Text style={styles.hint}>Choose an estimated wait time. Select “Ready to serve” for items already prepared.</Text>
           </View>
           <View style={styles.card}>
             <Text style={styles.label}>Dietary type</Text>
-            <View style={styles.row}>{[{ value: true, label: 'Vegetarian', color: '#219478' }, { value: false, label: 'Non-veg / Egg', color: '#c85a5a' }].map(option => <TouchableOpacity key={option.label} accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ checked: draft.isVeg === option.value }} disabled={saving} onPress={() => change('isVeg', option.value)} style={[styles.diet, draft.isVeg === option.value && { borderColor: option.color, backgroundColor: option.value ? '#15231c' : '#21171a' }]}><View style={[styles.dietMark, { borderColor: option.color }]}><View style={[styles.dietDot, { backgroundColor: option.color }]} /></View><Text style={styles.dietText}>{option.label}</Text>{draft.isVeg === option.value && <InterfaceIcon name="check" size={15} color={option.color} />}</TouchableOpacity>)}</View>
+            <View style={styles.row}>{[{ value: true, label: 'Vegetarian', color: '#219478' }, { value: false, label: 'Non-veg / Egg', color: '#c85a5a' }].map(option => {
+              const selected = draft.isVeg === option.value;
+              return <TouchableOpacity key={option.label} accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ checked: selected }} disabled={saving} onPress={() => change('isVeg', option.value)} style={[styles.diet, selected && { borderColor: option.color, backgroundColor: light ? (option.value ? '#e6f6ec' : '#ffebef') : (option.value ? '#15231c' : '#21171a') }]}><View style={[styles.dietMark, { borderColor: option.color }]}><View style={[styles.dietDot, { backgroundColor: option.color }]} /></View><Text style={[styles.dietText, selected && { color: option.color, fontWeight: '700' }]}>{option.label}</Text>{selected && <InterfaceIcon name="check" size={17} color={option.color} />}</TouchableOpacity>;
+            })}</View>
             <Text style={[styles.label, { marginTop: 22 }]}>Category</Text>
-            <View style={styles.categories}>{DISH_CATEGORIES.map(category => <TouchableOpacity key={category} accessibilityRole="radio" accessibilityLabel={category} accessibilityState={{ checked: draft.category === category }} disabled={saving} onPress={() => change('category', category)} style={[styles.chip, draft.category === category && styles.chipSelected]}><Text style={[styles.chipText, draft.category === category && styles.chipTextSelected]}>{category}</Text></TouchableOpacity>)}</View>
+            <View style={styles.categories}>{DISH_CATEGORIES.map(category => <TouchableOpacity key={category} accessibilityRole="radio" accessibilityLabel={category} accessibilityState={{ checked: draft.category === category }} disabled={saving} onPress={() => change('category', category)} style={[styles.chip, draft.category === category && styles.chipSelected]}><Text style={[styles.chipText, draft.category === category && styles.chipTextSelected]}>{category}</Text>{draft.category === category && <InterfaceIcon name="check" size={13} color="#9b6500" />}</TouchableOpacity>)}</View>
           </View>
           <View style={styles.card}><Text style={styles.label}>Description / ingredients</Text><TextInput accessibilityLabel="Dish description" style={[styles.input, styles.description]} placeholder="Tell customers what is in this dish." placeholderTextColor="#9aa8ba" value={draft.description} onChangeText={value => change('description', value)} multiline maxLength={500} editable={!saving} /><Text style={styles.hint}>Optional. Mention key ingredients or allergens customers should know about.</Text></View>
         </ScrollView>
@@ -107,9 +123,11 @@ const baseStyles = StyleSheet.create({
   eyebrow: { color: '#8496aa', fontSize: 9, fontWeight: '700', letterSpacing: 1.5 }, title: { color: '#f5f4f0', fontSize: 25, fontWeight: '800', letterSpacing: -0.6, marginTop: 4 }, subtitle: { color: '#8596a9', fontSize: 11, lineHeight: 17, marginTop: 5 },
   close: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#202329', alignItems: 'center', justifyContent: 'center' },
   scroll: { flex: 1 }, content: { paddingHorizontal: 16, paddingBottom: 8 }, card: { backgroundColor: '#121417', padding: 17, borderRadius: 18, borderWidth: 1, borderColor: '#26292e', marginBottom: 13 },
-  label: { color: '#b6bac2', fontSize: 11, fontWeight: '600', marginBottom: 9 }, input: { minHeight: 46, paddingHorizontal: 12, paddingVertical: 11, backgroundColor: '#191c20', color: '#f5f4f0', borderWidth: 1, borderColor: '#26292e', borderRadius: 11, fontSize: 14 },
-  row: { flexDirection: 'row', gap: 10 }, column: { flex: 1, marginTop: 18 }, hint: { color: '#8b9aae', fontSize: 10, lineHeight: 16, marginTop: 9 },
-  diet: { flex: 1, minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderWidth: 1, borderColor: '#26292e', borderRadius: 11, padding: 8 }, dietText: { color: '#e5e6e8', fontSize: 10, fontWeight: '600' }, dietMark: { width: 13, height: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 3 }, dietDot: { width: 6, height: 6, borderRadius: 3 },
-  categories: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, chip: { paddingHorizontal: 11, paddingVertical: 9, borderRadius: 16, backgroundColor: '#191c20', borderWidth: 1, borderColor: '#26292e' }, chipSelected: { backgroundColor: '#292418', borderColor: '#ffb313' }, chipText: { color: '#8191a5', fontSize: 10 }, chipTextSelected: { color: '#ffb313', fontWeight: '700' },
+  label: { color: '#b6bac2', fontSize: 12, fontWeight: '700', marginBottom: 12 }, input: { minHeight: 46, paddingHorizontal: 12, paddingVertical: 11, backgroundColor: '#191c20', color: '#f5f4f0', borderWidth: 1, borderColor: '#26292e', borderRadius: 11, fontSize: 14 },
+  row: { flexDirection: 'row', gap: 10 }, column: { flex: 1, minWidth: 0, marginTop: 18 }, hint: { color: '#8b9aae', fontSize: 10, lineHeight: 16, marginTop: 9 },
+  prepSelector: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 }, prepValue: { flex: 1, color: '#f5f4f0', fontSize: 13 }, prepChevron: { transform: [{ rotate: '90deg' }] }, prepChevronOpen: { transform: [{ rotate: '-90deg' }] },
+  prepOptions: { position: 'absolute', zIndex: 2, top: 78, left: 0, right: 0, backgroundColor: '#191c20', borderWidth: 1, borderColor: '#41464f', borderRadius: 12, overflow: 'hidden' }, prepOption: { minHeight: 42, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, prepOptionSelected: { backgroundColor: '#292418' }, prepOptionText: { color: '#e5e6e8', fontSize: 12 }, prepOptionTextSelected: { color: '#ffb313', fontWeight: '700' },
+  diet: { flex: 1, minHeight: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1, borderColor: '#26292e', borderRadius: 14, paddingHorizontal: 10 }, dietText: { color: '#e5e6e8', fontSize: 12, fontWeight: '600' }, dietMark: { width: 17, height: 17, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', borderRadius: 4 }, dietDot: { width: 9, height: 9, borderRadius: 5 },
+  categories: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 }, chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 15, paddingVertical: 11, borderRadius: 22, backgroundColor: '#191c20', borderWidth: 1, borderColor: '#26292e' }, chipSelected: { backgroundColor: '#292418', borderColor: '#ffb313' }, chipText: { color: '#8191a5', fontSize: 12, fontWeight: '500' }, chipTextSelected: { color: '#ffb313', fontWeight: '700' },
   description: { minHeight: 90, textAlignVertical: 'top' }, footer: { paddingHorizontal: 18, paddingVertical: 12, backgroundColor: '#121417', borderTopWidth: 1, borderTopColor: '#26292e' }, footerHint: { color: '#8a9bb0', fontSize: 10, textAlign: 'center', marginBottom: 11 }, error: { color: '#b64040', fontSize: 12, lineHeight: 18, marginBottom: 11 }, cancel: { minHeight: 47, borderWidth: 1, borderColor: '#26292e', paddingHorizontal: 20, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }, cancelText: { color: '#7589a1', fontSize: 12, fontWeight: '600' }, save: { flex: 1, minHeight: 47, backgroundColor: '#ffb313', borderRadius: 12, alignItems: 'center', justifyContent: 'center' }, saveText: { color: '#090b0d', fontSize: 13, fontWeight: '700' }
 });

@@ -34,6 +34,11 @@ test('blocked account cannot finish or claim a mobile login', async () => {
   assert.equal((await finish(f, session)).data.code, 'ACCOUNT_BLOCKED');
   assert.equal((await claim(f, session)).data.code, 'ACCOUNT_BLOCKED');
 });
+test('left-university accounts cannot complete a mobile login handoff', async () => {
+  const f = fixture(); const session = await start(f); f.store.get('users/buyer').universityStatus = 'LEFT';
+  assert.equal((await finish(f, session)).data.code, 'ACCOUNT_BLOCKED');
+  assert.equal((await claim(f, session)).data.code, 'ACCOUNT_BLOCKED');
+});
 test('mobile login cannot be completed by an unauthenticated caller', async () => {
   const f = fixture(); const session = await start(f);
   assert.equal((await finish(f, session, null)).code, 401);

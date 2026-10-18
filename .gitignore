@@ -54,3 +54,6 @@ ui-debug.log
 /GoogleService-Info.plist
 /admin/dist/
 
+
+# Local Android build artifacts
+/releases/

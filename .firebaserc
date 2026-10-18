@@ -1,0 +1,17 @@
+{
+  "projects": {
+    "default": "skipyourqueue"
+  },
+  "targets": {
+    "skipyourqueue": {
+      "hosting": {
+        "web": [
+          "skipyourqueue"
+        ],
+        "admin": [
+          "skipyourqueue-admin"
+        ]
+      }
+    }
+  }
+}

@@ -24,6 +24,17 @@ import InterfaceIcon from './InterfaceIcon';
 import { announceTokenReady } from '../utils/audio';
 import { selectOwnedCanteen } from '../services/sellerCanteen.cjs';
 
+const NO_SHOW_GRACE_PERIOD_MS = 15 * 60 * 1000;
+// Firestore enforces the 15-minute limit using server time, so allow for client clock skew.
+const NO_SHOW_CLIENT_CLOCK_BUFFER_MS = 60 * 1000;
+const timestampMillis = value => {
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value?.seconds === 'number') return value.seconds * 1000;
+  if (value instanceof Date) return value.getTime();
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 export default function SellerPosView({
   onOpenAddItemModal,
   onOpenEditItemModal,
@@ -72,10 +83,23 @@ export default function SellerPosView({
   const [isScanningActive, setIsScanningActive] = useState(true);
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [selectedOrderActionSheet, setSelectedOrderActionSheet] = useState(null);
+  const [clockNow, setClockNow] = useState(Date.now());
 
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const screenHeight = Math.max(windowHeight, Dimensions.get('screen').height);
   const screenWidth = Math.max(windowWidth, Dimensions.get('screen').width);
+  const selectedReadyAt = timestampMillis(selectedOrderActionSheet?.readyAt);
+  const selectedNoShowReady = selectedOrderActionSheet?.orderStatus === 'Ready for Pickup'
+    && selectedReadyAt > 0
+    && clockNow - selectedReadyAt >= NO_SHOW_GRACE_PERIOD_MS + NO_SHOW_CLIENT_CLOCK_BUFFER_MS;
+  const noShowWaitMinutes = selectedReadyAt
+    ? Math.ceil(Math.max(0, NO_SHOW_GRACE_PERIOD_MS + NO_SHOW_CLIENT_CLOCK_BUFFER_MS - (clockNow - selectedReadyAt)) / 60000)
+    : null;
+
+  useEffect(() => {
+    const timer = setInterval(() => setClockNow(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Auto-request camera permissions if QR scanner modal is opened
   useEffect(() => {
@@ -195,7 +219,7 @@ export default function SellerPosView({
   const handleSellerCancel = orderId => {
     Alert.alert(
       'Cancel Student Order',
-      'Cancel this order? Any confirmed UPI payment must be refunded directly by your canteen.',
+      'Cancel this order? If the customer has already paid cash, arrange its return directly.',
       [
         { text: 'Back', style: 'cancel' },
         {
@@ -213,7 +237,7 @@ export default function SellerPosView({
   const handleMarkAbandoned = (orderId, buyerName) => {
     Alert.alert(
       'Mark Order Unclaimed / No-Show',
-      `Did ${buyerName} fail to pick up this order? After 45 minutes ready for pickup, this records an unclaimed order for operator review. Any UPI refund is handled by your canteen.`,
+      `Did ${buyerName} fail to collect this order? Wait until it has been Ready for at least 15 minutes before confirming a no-show.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -221,7 +245,12 @@ export default function SellerPosView({
           style: 'destructive',
           onPress: async () => {
             try { await markOrderAbandoned(orderId); Alert.alert('Order marked unclaimed', 'The no-show is recorded for operator review.'); }
-            catch (error) { Alert.alert('Could not mark unclaimed', error.message); }
+            catch (error) {
+              const message = error?.code === 'permission-denied'
+                ? 'The server could not verify that this order has been ready long enough. Refresh the order and try again in a minute.'
+                : error.message;
+              Alert.alert('Could not mark unclaimed', message);
+            }
           }
         }
       ]
@@ -448,7 +477,10 @@ export default function SellerPosView({
               const isCash = order.paymentMethod === 'Cash';
               const dueAmount = order.dueAtCounter !== undefined
                 ? order.dueAtCounter
-                : Math.max(0, order.totalAmount - (order.upfrontPaid || Math.ceil(order.totalAmount * 0.1)));
+                : Math.max(0, order.totalAmount - (order.upfrontPaid || order.advanceAmount || 0));
+              const cashAdvancePending = isCash && order.advanceAmount > 0 && order.advancePaymentStatus !== 'CONFIRMED_BY_MERCHANT';
+              const upiPaymentPending = !isCash && order.paymentMethod === 'UPI' && order.paymentStatus !== 'CONFIRMED_BY_MERCHANT';
+              const needsPaymentVerification = cashAdvancePending || upiPaymentPending;
 
               return (
                 <View
@@ -479,12 +511,12 @@ export default function SellerPosView({
                   {/* Payment Status Pill */}
                   {isCash ? (
                     <View style={styles.cashPill}>
-                      <Text style={styles.cashPillText}>Collect ₹{dueAmount} cash</Text>
+                      <Text style={styles.cashPillText}>{cashAdvancePending ? `Verify ₹${order.advanceAmount} UPI advance` : `${order.advanceAmount ? `₹${order.advanceAmount} advance verified · ` : ''}Collect ₹${dueAmount} cash`}</Text>
                     </View>
                   ) : (
                     <View style={styles.onlinePill}>
                       <Text style={styles.onlinePillText}>
-                        {order.paymentStatus === 'CONFIRMED_BY_MERCHANT' ? 'UPI confirmed' : 'UPI confirmation pending'}
+                        {order.paymentStatus === 'CONFIRMED_BY_MERCHANT' ? 'Payment verified by seller' : 'Seller verification pending'}
                       </Text>
                     </View>
                   )}
@@ -497,6 +529,7 @@ export default function SellerPosView({
                     {order.isFacultyExpress ? ' • ⭐ Faculty Express' : ''}
                     {order.groupCollectorName ? ` •  ${order.groupCollectorName}` : ''}
                   </Text>
+                  {order.staffRoomDelivery && <View style={styles.notesBox}><Text style={styles.notesText}>Staff room delivery (+₹{order.deliveryFee || 5}): {order.facultyRoomNote}</Text></View>}
 
                   {/* Special Chef Instructions */}
                   {order.specialInstructions ? (
@@ -508,16 +541,18 @@ export default function SellerPosView({
                   {/* Action Buttons Row */}
                   {!isCompleted && !isCancelled && !isAbandoned ? (
                     <View style={styles.kdsActionsRow}>
-                      {order.paymentMethod === 'UPI' && order.paymentStatus !== 'CONFIRMED_BY_MERCHANT' && (
+                      {needsPaymentVerification && (
                         <TouchableOpacity style={styles.btnScanQr} onPress={() => Alert.alert(
-                          'Confirm UPI receipt?', `Check your merchant account for ₹${order.totalAmount} before confirming.`,
-                          [{ text: 'Back', style: 'cancel' }, { text: 'Payment received', onPress: () => confirmUpiPayment(order.id).catch(error => Alert.alert('Could not confirm payment', error.message)) }]
+                          'Verify UPI payment',
+                          `Check your merchant account for ₹${isCash ? order.advanceAmount : order.totalAmount} before confirming. Do not rely on the payment app opening or a screenshot.`,
+                          [{ text: 'Back', style: 'cancel' }, { text: 'I verified receipt', onPress: () => confirmUpiPayment(order.id).catch(error => Alert.alert('Could not confirm payment', error.message)) }]
                         )}>
-                          <Text style={styles.btnScanQrText}>Confirm UPI</Text>
+                          <Text style={styles.btnScanQrText}>{isCash ? `Verify ₹${order.advanceAmount} advance` : 'Verify UPI payment'}</Text>
                         </TouchableOpacity>
                       )}
                       <TouchableOpacity
-                        style={styles.btnVerifyPin}
+                        disabled={isPreparing && cashAdvancePending}
+                        style={[styles.btnVerifyPin, isPreparing && cashAdvancePending && { opacity: 0.5 }]}
                         onPress={() => {
                           if (isPreparing) {
                             markOrderReady(order.id).catch(error => Alert.alert('Could not mark ready', error.message));
@@ -531,7 +566,7 @@ export default function SellerPosView({
                         activeOpacity={0.85}
                       >
                         <Text style={styles.btnVerifyPinText}>
-                          {isPreparing ? 'Call & Ready' : 'Verify PIN'}
+                          {isPreparing ? cashAdvancePending ? 'Verify advance first' : (order.staffRoomDelivery ? 'Ready to deliver' : 'Call & Ready') : 'Verify PIN'}
                         </Text>
                       </TouchableOpacity>
 
@@ -779,7 +814,7 @@ export default function SellerPosView({
             {[
               { label: 'Location', value: currentShop.location || 'Not set' },
               { label: 'Hours', value: currentShop.openingHours, action: 'Set hours', section: 'Canteen' },
-              { label: 'Payments', value: currentShop.upiId || 'Cash only', action: currentShop.upiId ? 'Edit UPI' : 'Add UPI', section: 'Payments' },
+              { label: 'Payments', value: 'Cash only · UPI coming soon' },
               { label: 'Phone', value: currentShop.phone || userProfile.phone || 'Not provided' },
             ].map((row, index) => <View key={row.label} style={[styles.detailRow, index > 0 && styles.detailDivider]}>
               <Text style={styles.detailLabel}>{row.label}</Text>
@@ -815,7 +850,7 @@ export default function SellerPosView({
 
             <View style={styles.verifyPinBox}>
               <Text style={styles.verifyInstruction}>
-                {orderToVerify?.paymentMethod === 'Cash' ? 'Collect the full cash amount, then ask for the customer pickup PIN:' : 'Confirm UPI receipt, then ask for the customer pickup PIN:'}
+                {orderToVerify?.paymentMethod === 'Cash' ? `Collect ₹${orderToVerify.dueAtCounter ?? orderToVerify.totalAmount} cash, then ask for the customer pickup PIN:` : 'Verify the full UPI payment in your merchant account, then ask for the customer pickup PIN:'}
               </Text>
               <TextInput
                 style={styles.pinInputField}
@@ -883,11 +918,14 @@ export default function SellerPosView({
               }}
               activeOpacity={0.85}
             >
-              <Text style={styles.actionSheetBtnCancelText}>Cancel Order (arrange any UPI refund)</Text>
+              <Text style={styles.actionSheetBtnCancelText}>Cancel Order</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.actionSheetBtnNoShow}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !selectedNoShowReady }}
+              disabled={!selectedNoShowReady}
+              style={[styles.actionSheetBtnNoShow, !selectedNoShowReady && styles.actionSheetBtnDisabled]}
               onPress={() => {
                 const oId = selectedOrderActionSheet?.id;
                 const bName = selectedOrderActionSheet?.buyerName;
@@ -896,7 +934,11 @@ export default function SellerPosView({
               }}
               activeOpacity={0.85}
             >
-              <Text style={styles.actionSheetBtnNoShowText}> Mark No-Show Strike</Text>
+              <Text style={[styles.actionSheetBtnNoShowText, !selectedNoShowReady && styles.actionSheetBtnTextDisabled]}>
+                {selectedNoShowReady ? 'Mark No-Show' : selectedOrderActionSheet?.orderStatus === 'Ready for Pickup'
+                  ? `No-show available in ${noShowWaitMinutes ?? 15} min`
+                  : 'Mark ready before no-show'}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1326,11 +1368,15 @@ const baseStyles = StyleSheet.create({
   },
   kdsActionsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 10,
   },
   btnVerifyPin: {
     flex: 1,
+    flexBasis: '45%',
+    minWidth: '45%',
+    minHeight: 52,
     backgroundColor: '#ffb313',
     borderRadius: 16,
     paddingVertical: 14,
@@ -1349,6 +1395,9 @@ const baseStyles = StyleSheet.create({
   },
   btnScanQr: {
     flex: 1,
+    flexBasis: '45%',
+    minWidth: '45%',
+    minHeight: 52,
     backgroundColor: '#121417',
     borderWidth: 1.5,
     borderColor: '#00a3c4',
@@ -1363,8 +1412,10 @@ const baseStyles = StyleSheet.create({
     fontWeight: '800',
   },
   btnMoreActions: {
-    width: 48,
-    height: 48,
+    flex: 1,
+    flexBasis: '45%',
+    minWidth: '45%',
+    height: 52,
     borderRadius: 16,
     backgroundColor: '#202329',
     alignItems: 'center',
@@ -1429,6 +1480,8 @@ const baseStyles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 14,
   },
+  actionSheetBtnDisabled: { opacity: 0.55 },
+  actionSheetBtnTextDisabled: { color: '#8191a5' },
   actionSheetBtnClose: {
     backgroundColor: '#202329',
     borderRadius: 14,

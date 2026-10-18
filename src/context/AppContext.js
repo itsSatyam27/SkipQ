@@ -276,13 +276,14 @@ export function AppProvider({ children }) {
   const reorderItems = id => {
     const order = orders.find(item => item.id === id);
     const shop = canteens.find(item => item.id === order?.shopId);
-    if (!shop) { Alert.alert('Canteen unavailable', 'Choose another canteen.'); return; }
+    if (!shop || shop.status !== 'Open') { Alert.alert('Canteen unavailable', 'This canteen is not accepting orders. Choose another canteen.'); return false; }
     const items = (order.items || []).map(item => { const dish = shop.menu?.find(dish => dish.id === item.id && dish.isAvailable); return dish ? { ...dish, qty: Math.min(20, item.qty) } : null; }).filter(Boolean);
-    if (!items.length) { Alert.alert('Dishes unavailable', 'Choose dishes from the current menu.'); return; }
+    if (!items.length) { Alert.alert('Dishes unavailable', 'Choose dishes from the current menu.'); return false; }
     setCartState({ shopId: shop.id, shopName: shop.name, items, specialInstructions: '' });
+    return true;
   };
   const rateOrder = async () => { Alert.alert('Ratings unavailable', 'Canteen ratings are not available in this release.'); };
-  const topUpWallet = async () => { throw new Error('Wallet payments and top-ups are unavailable. Choose cash or UPI.'); };
+  const topUpWallet = async () => { throw new Error('Wallet payments and top-ups are unavailable. Pay in cash at pickup; UPI is coming soon.'); };
   const logoutUser = async () => {
     await unregisterPushDevice();
     resetLocation();

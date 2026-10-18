@@ -23,8 +23,8 @@ export default function LocationControl({ compact = false }) {
     <Circle cx={12} cy={12} r={6} fill="none" stroke={onCampus ? '#087d73' : '#0759ad'} strokeWidth={1.8} />
     <Path d="M12 2v4m0 12v4M2 12h4m12 0h4" stroke={onCampus ? '#087d73' : '#0759ad'} strokeWidth={1.8} strokeLinecap="round" />
   </Svg>;
-  if (locationTesting) return <View style={compact ? styles.chip : styles.panel}>
-    <Text style={styles.title}>Location test mode</Text>
+  if (locationTesting) return <View style={compact ? [styles.chip, { backgroundColor: light ? '#fff5d9' : '#292418' }] : styles.panel}>
+    <Text style={compact ? [styles.chipText, { color: light ? '#946200' : '#ffb313' }] : styles.title}>{compact ? 'Test location' : 'Location test mode'}</Text>
     {!compact && <Text style={styles.copy}>Temporary testing access is active for this account. Campus GPS checks are skipped and orders are marked as test orders.</Text>}
   </View>;
   if (compact) return <TouchableOpacity accessibilityRole="button" accessibilityLabel="Refresh GPS location" disabled={busy} onPress={refresh}

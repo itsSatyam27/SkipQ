@@ -1,4 +1,4 @@
-import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
+﻿import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
 import InterfaceIcon from './InterfaceIcon';
 import React, { useState, useContext, useEffect, useRef } from 'react';
 import {
@@ -26,7 +26,7 @@ function SetupProgress({ current, total, label }) {
       {Array.from({ length: total }, (_, index) => <View key={index} style={[styles.progressBarSegment,
         index + 1 < current && styles.progressBarCompleted, index + 1 === current && styles.progressBarActive]} />)}
     </View>
-    <Text style={styles.progressLabel}>STEP {current} OF {total} · {label}</Text>
+    <Text style={styles.progressLabel}>STEP {current} OF {total} {'\u00B7'} {label}</Text>
   </View>;
 }
 
@@ -323,7 +323,7 @@ export default function OnboardingFlow() {
           {/* Top Header Bar Matching App Brand */}
           <View style={styles.topHeaderBar}>
             <View style={styles.topHeaderLeft}>
-              <View style={styles.setupLogo}><Text style={styles.setupLogoLetter}>S</Text></View>
+              <Image source={require('../../assets/icon.png')} accessibilityLabel="SkipQ logo" style={styles.setupLogo} resizeMode="contain" />
               <View>
                 <Text style={styles.headerBrandTitle}>SkipQ</Text>
               </View>
@@ -367,7 +367,7 @@ export default function OnboardingFlow() {
                 <Text style={styles.loginFooterCopy}>For students, faculty and sellers. Add your profile details after signing in.</Text>
               </View>
             </View>
-              <TouchableOpacity style={styles.backBtnFullWidth} onPress={() => { googleController.current?.abort(); setStep(0); }}><Text style={styles.backBtnFullWidthText}>← Back to Welcome</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.backBtnFullWidth} onPress={() => { googleController.current?.abort(); setStep(0); }}><Text style={styles.backBtnFullWidthText}>{'\u2190'} Back to Welcome</Text></TouchableOpacity>
             </View>
           )}
 
@@ -413,7 +413,7 @@ export default function OnboardingFlow() {
                   />
                 </View>
 
-                    <Text style={styles.profileLabel}>GOOGLE EMAIL · LINKED</Text>
+                    <Text style={styles.profileLabel}>GOOGLE EMAIL (LINKED)</Text>
                 <TextInput style={styles.profileInput} value={email} editable={false} accessibilityLabel="Linked Google email" />
                 <Text style={styles.profileLabel}>PHONE NUMBER *</Text>
                 <View style={styles.profilePhoneBox}>
@@ -429,7 +429,7 @@ export default function OnboardingFlow() {
                 {/* Dynamic Student Fields */}
                 {userType === 'student' && (
                   <View style={styles.profileRoleDetails}>
-                <Text style={styles.profileLabel}>ENROLLMENT NUMBER · OPTIONAL</Text>
+                <Text style={styles.profileLabel}>ENROLLMENT NUMBER {'\u00B7'} OPTIONAL</Text>
                     <TextInput
                       style={styles.profileInput}
                       placeholder="Your enrollment number"
@@ -474,7 +474,7 @@ export default function OnboardingFlow() {
                     onPress={() => setStep(2)}
                     activeOpacity={0.8}
                   >
-                    <Text style={styles.secondaryBtnText}>← Back</Text>
+                    <Text style={styles.secondaryBtnText}>{'\u2190'} Back</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -489,7 +489,7 @@ export default function OnboardingFlow() {
                       end={{ x: 1, y: 0 }}
                       style={styles.primaryGradientBtn}
                     >
-                      {isSavingProfile ? <ActivityIndicator color="white" /> : <Text style={styles.btnText}>Continue →</Text>}
+                      {isSavingProfile ? <ActivityIndicator color="white" /> : <Text style={styles.btnText}>Continue {'\u2192'}</Text>}
                     </LinearGradient>
                   </TouchableOpacity>
                 </View>
@@ -605,7 +605,7 @@ export default function OnboardingFlow() {
                   onPress={() => setStep(3)}
                 >
                   <Text style={styles.backBtnFullWidthText}>
-                    ← Back to Profile Details
+                    {'\u2190'} Back to Profile Details
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -638,9 +638,9 @@ export default function OnboardingFlow() {
                 <TextInput accessibilityLabel="Canteen name" style={styles.sellerInput} placeholder="Your canteen or stall name" placeholderTextColor="#94a3b8" value={stallName} onChangeText={setStallName} maxLength={100} />
                 <Text style={styles.sellerLabel}>LOCATION ON CAMPUS</Text>
                 <TextInput accessibilityLabel="Location on campus" style={styles.sellerInput} placeholder="e.g. Block A, ground floor" placeholderTextColor="#94a3b8" value={stallLocation} onChangeText={setStallLocation} maxLength={150} />
-                <Text style={styles.sellerLabel}>UPI ID ? OPTIONAL</Text>
+                <Text style={styles.sellerLabel}>UPI PAYMENT · COMING SOON (OPTIONAL)</Text>
                 <TextInput accessibilityLabel="Merchant UPI ID" style={styles.sellerInput} placeholder="canteen@upi" placeholderTextColor="#94a3b8" value={merchantUpi} onChangeText={setMerchantUpi} autoCapitalize="none" autoCorrect={false} />
-                <Text style={styles.sellerHint}>Customers pay you directly. Leave this empty to accept cash only.</Text>
+                <Text style={styles.sellerHint}>UPI is not available yet. You can accept orders and collect payment in cash without setting this up.</Text>
                 <View style={styles.sellerNotice}>
                   <Text style={styles.sellerNoticeTitle}>What happens next?</Text>
                   <Text style={styles.sellerNoticeCopy}>Open your seller workspace after submitting. Orders and menu publishing unlock once the platform owner approves your canteen.</Text>

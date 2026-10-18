@@ -69,6 +69,12 @@ test('activity is self-owned, timestamp constrained, and cannot alter authorizat
   await assertFails(updateDoc(doc(db('stranger'),'users/buyer'),{lastActiveAt:serverTimestamp()}));
   await assertFails(updateDoc(doc(db('buyer'),'users/buyer'),{lastActiveAt:Timestamp.fromMillis(Date.now()+86400000)}));
 });
+test('left-university profiles retain their own profile but cannot use protected app data',async()=>{
+  await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),'users/buyer'),{universityStatus:'LEFT'}));
+  await assertSucceeds(getDoc(doc(db('buyer'),'users/buyer')));
+  await assertFails(updateDoc(doc(db('buyer'),'users/buyer'),{lastActiveAt:serverTimestamp()}));
+  await assertFails(getDoc(doc(db('buyer'),'orders/order')));
+});
 function provision(client) {
   return ensureRegisteredCanteen({db:client,uid:'seller',campus:{id:'sou',lat:23,lng:72},
     api:{doc,collection,query,where,getDocs,runTransaction,serverTimestamp}});
@@ -182,7 +188,7 @@ test('concurrent Google registrations yield only one phone owner; banned claims 
   await assertFails(getDocs(collection(db('buyer'), 'phoneClaims')));
   await assertFails(setDoc(doc(db('buyer'), 'phoneClaims/8888888888'), { claimed: true, createdAt: serverTimestamp() }));
 });
-const orderBody = (requestId = 'request') => ({ requestId, shopId: 'shop', items: [{ id: 'dish', qty: 2 }], paymentMethod: 'Cash', location: { lat: 23, lng: 72, accuracy: 10 } });
+const orderBody = (requestId = 'request') => ({ requestId, shopId: 'shop', items: [{ id: 'dish', qty: 2 }], paymentMethod: 'Cash', staffRoomDelivery: false, facultyRoomNote: '', location: { lat: 23, lng: 72, accuracy: 10 } });
 test('temporary location access is scoped, expires, cannot be self-granted, and does not bypass bans or seller approval',async()=>{
   const buyer=createSparkOrders(db('buyer'),'buyer');
   const body={...orderBody('test-location'),location:null,testOrder:true};
@@ -216,6 +222,20 @@ test('Spark orders use menu prices, retry safely and keep the PIN private from s
   await assert.rejects(buyer.create({ ...orderBody('wallet'), paymentMethod: 'Wallet' }));
   await assertFails(buyer.create({ ...orderBody('far'), location: { lat: 20, lng: 70, accuracy: 10 } }));
 });
+test('faculty staff-room delivery is authorized and adds exactly five rupees', async () => {
+  const buyer = createSparkOrders(db('buyer'), 'buyer');
+  await assertFails(buyer.create({ ...orderBody('staff-room-student'), staffRoomDelivery: true, facultyRoomNote: 'E Block - 501' }));
+  await env.withSecurityRulesDisabled(c => updateDoc(doc(c.firestore(), 'users/buyer'), { userType: 'faculty' }));
+  await assertFails(buyer.create({ ...orderBody('staff-room-missing'), staffRoomDelivery: true }));
+  const order = await assertSucceeds(buyer.create({ ...orderBody('staff-room-faculty'), staffRoomDelivery: true, facultyRoomNote: 'E Block - 501' }));
+  assert.equal(order.totalAmount, 55);
+  assert.equal(order.deliveryFee, 5);
+  const forged = { ...(await getDoc(doc(db('buyer'), 'orders', order.id))).data(), id: 'forged-fee', totalAmount: 60, deliveryFee: 10, dueAtCounter: 60, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+  const batch = writeBatch(db('buyer'));
+  batch.set(doc(db('buyer'), 'orders/forged-fee'), forged);
+  batch.set(doc(db('buyer'), 'users/buyer/pickupSecrets/forged-fee'), { pin: '1234', createdAt: serverTimestamp() });
+  await assertFails(batch.commit());
+});
 test('Spark pickup cannot bypass the private PIN or readiness; five wrong PINs lock further attempts', async () => {
   const order = await createSparkOrders(db('buyer'), 'buyer').create(orderBody());
   const seller = createSparkOrders(db('seller', { seller: true }), 'seller');
@@ -227,22 +247,38 @@ test('Spark pickup cannot bypass the private PIN or readiness; five wrong PINs l
   await assert.rejects(seller.change('/verify-pickup', { orderId: order.id, pin: order.pickupPin }));
   await assertFails(updateDoc(doc(db('seller', { seller: true }), 'pickupVerifications', order.id), { pin: order.pickupPin }));
 });
-test('Spark valid PIN completes cash pickup; UPI requires merchant confirmation and paid cancellation records refund', async () => {
+test('Spark new orders are cash-only; legacy UPI orders still require seller confirmation', async () => {
   const buyer = createSparkOrders(db('buyer'), 'buyer');
   const seller = createSparkOrders(db('seller', { seller: true }), 'seller');
   const cash = await buyer.create(orderBody('cash'));
+  require('node:assert/strict').equal(cash.advanceAmount, 0);
+  require('node:assert/strict').equal(cash.dueAtCounter, 50);
+  require('node:assert/strict').equal(cash.advancePaymentStatus, 'NOT_REQUIRED');
+  await assert.rejects(buyer.create({ ...orderBody('upi-disabled'), paymentMethod: 'UPI' }), /coming soon/);
   await seller.change('/status', { orderId: cash.id, status: 'Ready for Pickup' });
   await assertSucceeds(seller.change('/verify-pickup', { orderId: cash.id, pin: cash.pickupPin }));
-  const upi = await buyer.create({ ...orderBody('upi'), paymentMethod: 'UPI' });
+
+  const upi = await buyer.create(orderBody('legacy-upi'));
+  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'orders', upi.id), {
+    paymentMethod: 'UPI', paymentStatus: 'PENDING_MERCHANT_CONFIRMATION', dueAtCounter: 0
+  }));
   await seller.change('/status', { orderId: upi.id, status: 'Ready for Pickup' });
   await assert.rejects(seller.change('/verify-pickup', { orderId: upi.id, pin: upi.pickupPin }));
   await seller.change('/confirm-payment', { orderId: upi.id });
   await assertSucceeds(seller.change('/verify-pickup', { orderId: upi.id, pin: upi.pickupPin }));
-  const cancelled = await buyer.create({ ...orderBody('cancel-upi'), paymentMethod: 'UPI' });
+
+  const cancelled = await buyer.create(orderBody('legacy-cancel-upi'));
+  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'orders', cancelled.id), {
+    paymentMethod: 'UPI', paymentStatus: 'PENDING_MERCHANT_CONFIRMATION', dueAtCounter: 0
+  }));
   await seller.change('/confirm-payment', { orderId: cancelled.id });
   const result = await buyer.change('/cancel', { orderId: cancelled.id });
   require('node:assert/strict').equal(result.order.refundStatus, 'MERCHANT_REFUND_REQUIRED');
   await assert.rejects(seller.change('/status', { orderId: cancelled.id, status: 'Ready for Pickup' }));
+  const cashCancelled = await buyer.create(orderBody('cancel-cash'));
+  const cashRefund = await buyer.change('/cancel', { orderId: cashCancelled.id });
+  require('node:assert/strict').equal(cashRefund.order.refundAmount, 0);
+  require('node:assert/strict').equal(cashRefund.order.advanceRefundStatus, 'NOT_REQUIRED');
 });
 test('Spark maximum-size checkout remains within rule evaluation limits', async () => {
   const menu = Array.from({ length: 10 }, (_, index) => ({ id: `dish${index}`, name: `Dish ${index}`, price: 25 + index, isAvailable: true }));
@@ -264,14 +300,17 @@ test('Spark banned buyers and unapproved canteens cannot place orders', async ()
   });
   await assertFails(createSparkOrders(db('buyer'), 'buyer').create(orderBody('unapproved')));
 });
-test('Spark no-show requires 45 minutes and records an unclaimed order without changing bans', async () => {
+test('Spark no-show requires 15 minutes and records an unclaimed order without changing bans', async () => {
   const buyer = createSparkOrders(db('buyer'), 'buyer');
-  const seller = createSparkOrders(db('seller'), 'seller');
+  const seller = createSparkOrders(db('seller', { seller: true }), 'seller');
   const order = await buyer.create(orderBody('unclaimed'));
   await seller.change('/status', { orderId: order.id, status: 'Ready for Pickup' });
   await assert.rejects(seller.change('/abandon', { orderId: order.id }));
-  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'orders', order.id), { readyAt: Timestamp.fromMillis(Date.now() - 2800000) }));
+  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'orders', order.id), { readyAt: Timestamp.fromMillis(Date.now() - 14 * 60 * 1000) }));
+  await assert.rejects(seller.change('/abandon', { orderId: order.id }));
+  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'orders', order.id), { readyAt: Timestamp.fromMillis(Date.now() - 16 * 60 * 1000) }));
   await assertSucceeds(seller.change('/abandon', { orderId: order.id }));
   await assertSucceeds(seller.change('/abandon', { orderId: order.id }));
+  assert.equal((await getDoc(doc(db('buyer'), 'orders', order.id))).data().advanceRefundStatus, 'NOT_APPLICABLE');
   assert.equal((await getDoc(doc(db('buyer'), 'users/buyer'))).data().banStatus, 'active');
 });

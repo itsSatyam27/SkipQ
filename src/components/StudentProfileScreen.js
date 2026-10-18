@@ -1,616 +1,106 @@
-import NotificationSettings from './NotificationSettings';
-import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
-import InterfaceIcon from './InterfaceIcon';
-import React, { useContext, useEffect, useState } from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+﻿import React, { useContext, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { AppContext } from '../context/AppContext';
-import WalletTopUpModal from './WalletTopUpModal';
+import { useSellerStyles } from '../context/SellerTheme';
+import { DEFAULT_UNIVERSITIES } from '../data/mockData';
+import InterfaceIcon from './InterfaceIcon';
+import NotificationSettings from './NotificationSettings';
+import LocationPermissionSettings from './LocationPermissionSettings';
 
-const Field = ({ label, last, ...props }) => {
-  const styles = useSellerStyles(baseStyles);
-  return (
-  <View style={[styles.field, last && styles.fieldLast]}>
-    <Text style={styles.fieldLabel}>{label}</Text>
-    <TextInput style={styles.fieldInput} placeholderTextColor="#94a3b8" {...props} />
-  </View>
-);
-};
-
-export default function StudentProfileScreen() {
-  const styles = useSellerStyles(baseStyles);
-  const { light } = useSellerTheme();
-  const { userProfile, updateUserProfile, walletBalance, logoutUser, restartOnboarding, setRole, sellerShopId } = useContext(AppContext);
-  const [name, setName] = useState(userProfile?.name || '');
-  const [rollNo, setRollNo] = useState(userProfile?.rollNo || '');
-  const [phone, setPhone] = useState(userProfile?.phone || '');
-  const [userType, setUserType] = useState(userProfile?.userType || 'student');
-  const [facultyRoomNote, setFacultyRoomNote] = useState(userProfile?.facultyRoomNote || '');
-  const [topUpAmount, setTopUpAmount] = useState('200');
-  const [topUpModalVisible, setTopUpModalVisible] = useState(false);
-  const [selectedTopUpAmount, setSelectedTopUpAmount] = useState(200);
-
-  useEffect(() => {
-    if (!userProfile) return;
-    setName(userProfile.name || '');
-    setRollNo(userProfile.rollNo || '');
-    setPhone(userProfile.phone || '');
-    setUserType(userProfile.userType || 'student');
-    setFacultyRoomNote(userProfile.facultyRoomNote || '');
-  }, [userProfile]);
-
-  const save = async () => {
-    if (!name.trim()) return Alert.alert('Add your name', 'Your name helps the counter identify your order.');
-    try {
-      await updateUserProfile({ name: name.trim(), rollNo: rollNo.trim(), facultyRoomNote: facultyRoomNote.trim() });
-      Alert.alert('Saved', 'Your profile is up to date.');
-    } catch (error) { Alert.alert('Could not save', error.message); }
-  };
-
-  const handleOpenTopUp = value => {
-    const amount = Number(value);
-    if (!Number.isFinite(amount) || amount <= 0) return Alert.alert('Enter an amount', 'Please enter a valid wallet top-up amount.');
-    setSelectedTopUpAmount(amount);
-    setTopUpModalVisible(true);
-  };
-
-  const changeSetup = () =>
-    Alert.alert('Change campus or role?', 'You will return to setup, but your saved data stays safe.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Continue', onPress: restartOnboarding }
-    ]);
-
-  const logout = () =>
-    Alert.alert('Log out?', 'You will return to the welcome screen.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Log out', style: 'destructive', onPress: logoutUser }
-    ]);
-
-  const sendFeedback = () => {
-    const subject = encodeURIComponent('SkipQ feedback');
-    const body = encodeURIComponent('Hi SkipQ team,\n\nMy feedback:\n\n\nDevice / app version (optional):');
-    Linking.openURL(`mailto:skipqueue.official@gmail.com?subject=${subject}&body=${body}`).catch(() =>
-      Alert.alert('Email unavailable', 'Please email skipqueue.official@gmail.com directly.')
-    );
-  };
-
-  const firstName = name.trim().split(' ')[0] || 'Student';
-
-  return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Top greeting */}
-        <View style={styles.topLine}>
-          <View>
-            <Text style={styles.eyebrow}>YOUR ACCOUNT</Text>
-            <Text style={styles.title}>Hello, {firstName}</Text>
-          </View>
-          <View style={styles.status}>
-            <View style={styles.statusDot} />
-            <Text style={styles.statusText}>ACTIVE</Text>
-          </View>
-        </View>
-
-        {/* Identity Card */}
-        <View style={styles.identityCard}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{name.trim() ? name.trim()[0].toUpperCase() : 'S'}</Text>
-          </View>
-          <View style={styles.identityCopy}>
-            <Text style={styles.name}>{name || 'Campus student'}</Text>
-            <Text style={styles.campus}>Silver Oak University • SOU</Text>
-            <Text style={styles.memberId}>{rollNo ? `ID: ${rollNo}` : 'Add your enrollment number'}</Text>
-          </View>
-          <TouchableOpacity style={styles.saveMini} onPress={save}>
-            <Text style={styles.saveMiniText}>SAVE</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.detailsCard}>
-          <Text style={styles.cardTitle}>Pay at your canteen</Text>
-          <Text style={styles.cardCaption}>Choose cash at pickup or UPI confirmed by the seller. Wallet payments and top-ups are unavailable.</Text>
-        </View>
-        <View style={styles.detailsCard}><Text style={styles.cardTitle}>Account type</Text><Text style={styles.cardCaption}>{userType === 'seller' ? 'Seller' : userType === 'faculty' ? 'Faculty' : 'Student'} · Registered to your Google account</Text></View>
-
-        {userType === 'faculty' && (
-          <View style={styles.noteCard}>
-            <Text style={styles.noteTitle}>⭐ Faculty Express is active</Text>
-            <Text style={styles.noteText}>Your order is prioritized at the counter. Add a default room for staff collection.</Text>
-            <TextInput
-              style={styles.noteInput}
-              value={facultyRoomNote}
-              onChangeText={setFacultyRoomNote}
-              placeholder="Department / staff room (e.g. Block B, Room 204)"
-              placeholderTextColor="#94a3b8"
-            />
-          </View>
-        )}
-
-        {/* Personal Details Card */}
-        <View style={styles.detailsCard}>
-          <Text style={styles.cardTitle}>Personal details</Text>
-          <Text style={styles.cardCaption}>Only the counter details that matter.</Text>
-          <Field label="NAME" value={name} onChangeText={setName} placeholder="Your full name" />
-          <Field label="ENROLLMENT NUMBER" value={rollNo} onChangeText={setRollNo} placeholder="e.g. 210101120042" />
-          <Field label="PHONE" value={phone} onChangeText={setPhone} placeholder="+91 98765 43210" keyboardType="phone-pad" editable={false} />
-          <Field label="GOOGLE EMAIL" value={userProfile?.email || ''} editable={false} last />
-          <TouchableOpacity style={styles.saveButton} onPress={save}>
-            <Text style={styles.saveButtonText}>SAVE CHANGES</Text>
-          </TouchableOpacity>
-        </View>
-
-        <NotificationSettings />
-        {/* Actions Card */}
-        <View style={styles.actionsCard}>
-          {(userProfile?.stallName || userProfile?.userType === 'seller' || sellerShopId) && (
-            <>
-              <TouchableOpacity style={styles.actionRow} onPress={() => setRole('seller')}>
-                <View>
-                  <Text style={[styles.actionTitle, { color: '#ffb313' }]}> Merchant Kitchen POS</Text>
-                  <Text style={styles.actionSub}>Switch to KDS for {userProfile?.stallName || 'your stall'}</Text>
-                </View>
-                <Text style={[styles.actionArrow, { color: '#ffb313' }]}>›</Text>
-              </TouchableOpacity>
-              <View style={styles.divider} />
-            </>
-          )}
-          <TouchableOpacity style={styles.actionRow} onPress={sendFeedback}>
-            <View>
-              <Text style={styles.actionTitle}>Feedback & Support</Text>
-              <Text style={styles.actionSub}>Contact the SkipQ team</Text>
-            </View>
-            <Text style={styles.actionArrow}>›</Text>
-          </TouchableOpacity>
-          <View style={styles.divider} />
-          <TouchableOpacity style={styles.actionRow} onPress={changeSetup}>
-            <View>
-              <Text style={styles.actionTitle}>Campus and role</Text>
-              <Text style={styles.actionSub}>Change your setup</Text>
-            </View>
-            <Text style={styles.actionArrow}>›</Text>
-          </TouchableOpacity>
-          <View style={styles.divider} />
-          <TouchableOpacity style={styles.actionRow} onPress={logout}>
-            <View>
-              <Text style={styles.logoutTitle}>Log out</Text>
-              <Text style={styles.actionSub}>Sign out of this device</Text>
-            </View>
-            <Text style={styles.logoutArrow}>›</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.bottomSpace} />
-
-        {/* Wallet Payment Method Top-Up Modal */}
-        <WalletTopUpModal
-          visible={topUpModalVisible}
-          initialAmount={selectedTopUpAmount}
-          onClose={() => setTopUpModalVisible(false)}
-        />
-      </ScrollView>
-    </View>
-  );
+const values = p => ({ name: p?.name || '', rollNo: p?.rollNo || '', facultyRoomNote: p?.facultyRoomNote || '' });
+function Field({ label, locked = false, ...props }) {
+  const s = useSellerStyles(baseStyles);
+  return <View style={s.field}><View style={s.labelRow}><Text style={s.label}>{label}</Text>{locked && <InterfaceIcon name="lock" size={12} color="#a5a9b2" />}</View><TextInput {...props} accessibilityLabel={label} editable={!locked && !props.disabled} style={[s.input, locked && s.locked]} placeholderTextColor="#79818f" /></View>;
 }
-
+export default function StudentProfileScreen() {
+  const s = useSellerStyles(baseStyles);
+  const { userProfile, updateUserProfile, logoutUser, restartOnboarding, university } = useContext(AppContext);
+  const [tab, setTab] = useState('Profile');
+  const [draft, setDraft] = useState(() => values(userProfile));
+  const [baseline, setBaseline] = useState(() => JSON.stringify(values(userProfile)));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [showHowTo, setShowHowTo] = useState(false);
+  const dirty = JSON.stringify(draft) !== baseline;
+  const dirtyRef = useRef(dirty); dirtyRef.current = dirty;
+  const uidRef = useRef(userProfile?.uid);
+  const scroll = useRef(null);
+  useEffect(() => {
+    if (uidRef.current !== userProfile?.uid || !dirtyRef.current) {
+      const next = values(userProfile);
+      setDraft(next); setBaseline(JSON.stringify(next)); setError('');
+      uidRef.current = userProfile?.uid;
+    }
+  }, [userProfile?.uid, userProfile?.name, userProfile?.rollNo, userProfile?.facultyRoomNote]);
+  const change = (key, value) => { setDraft(old => ({ ...old, [key]: value })); setError(''); };
+  const discard = () => { setDraft(JSON.parse(baseline)); setError(''); };
+  const save = async () => {
+    if (saving || !dirty) return;
+    if (!draft.name.trim()) { setError('Add your name so the counter can identify your order.'); return; }
+    const next = Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, value.trim()]));
+    setSaving(true); setError('');
+    try { await updateUserProfile(next); setDraft(next); setBaseline(JSON.stringify(next)); }
+    catch (e) { setError(e.message || 'Could not save. Please retry.'); }
+    finally { setSaving(false); }
+  };
+  const confirmAction = (title, message, action, destructive = false) => Alert.alert(title, dirty ? `${message} Unsaved profile changes will be discarded.` : message, [{ text: 'Cancel', style: 'cancel' }, { text: destructive ? 'Log out' : 'Continue', style: destructive ? 'destructive' : 'default', onPress: action }]);
+  const feedback = () => Linking.openURL('mailto:skipqueue.official@gmail.com?subject=SkipQ%20feedback').catch(() => Alert.alert('Contact SkipQ', 'Email skipqueue.official@gmail.com for help.'));
+  const faculty = userProfile?.userType === 'faculty';
+  const campus = DEFAULT_UNIVERSITIES.find(c => c.id === (userProfile?.universityId || university));
+  const action = (icon, title, copy, onPress, danger = false) => <TouchableOpacity accessibilityRole="button" disabled={saving} onPress={onPress} style={s.action}><View style={s.icon}><InterfaceIcon name={icon} color={danger ? '#ef4444' : '#ffb313'} size={19} /></View><View style={s.actionCopy}><Text style={[s.actionTitle, danger && s.danger]}>{title}</Text><Text style={s.copy}>{copy}</Text></View><InterfaceIcon name="chevron" size={17} color="#a5a9b2" /></TouchableOpacity>;
+  return <View style={s.container}><ScrollView ref={scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
+    <Text style={s.eyebrow}>{faculty ? 'FACULTY ACCOUNT' : 'STUDENT ACCOUNT'}</Text><Text style={s.title}>Account & settings</Text><Text style={s.subtitle}>Your campus details, permissions and support.</Text>
+    <View style={s.tabs}>{['Profile', 'Permissions', 'Help'].map(item => <TouchableOpacity key={item} accessibilityRole="tab" accessibilityState={{ selected: tab === item }} onPress={() => { setTab(item); scroll.current?.scrollTo({ y: 0, animated: false }); }} style={[s.tab, tab === item && s.tabActive]}><Text style={[s.tabText, tab === item && s.tabTextActive]}>{item}</Text></TouchableOpacity>)}</View>
+    <View style={s.identity}><View style={s.avatar}><Text style={s.initial}>{(userProfile?.name || 'S').slice(0, 1).toUpperCase()}</Text></View><View style={s.actionCopy}><Text style={s.identityName}>{userProfile?.name || 'Your account'}</Text><Text style={s.copy}>{campus?.name || 'Your campus'}</Text><Text style={s.role}>{faculty ? 'Faculty' : 'Student'} · Google linked</Text></View></View>
+    {tab === 'Profile' && <>
+      <View style={s.card}><Text style={s.cardTitle}>Personal details</Text><Text style={s.subtitle}>Help your canteen identify you at pickup.</Text>
+        <Field label="Full name" value={draft.name} onChangeText={v => change('name', v)} disabled={saving} maxLength={80} autoCapitalize="words" placeholder="Your full name" />
+        {!faculty && <Field label="Enrollment number · optional" value={draft.rollNo} onChangeText={v => change('rollNo', v)} disabled={saving} maxLength={50} placeholder="Your enrollment number" />}
+        {faculty && <Field label="Department / room · optional" value={draft.facultyRoomNote} onChangeText={v => change('facultyRoomNote', v)} disabled={saving} maxLength={160} placeholder="e.g. Block B, Room 204" />}
+        <Field label="Phone number" value={userProfile?.phone || ''} locked keyboardType="phone-pad" />
+        <Field label="Google email" value={userProfile?.email || ''} locked autoCapitalize="none" />
+        <View style={s.notice}><InterfaceIcon name="lock" size={14} color="#a5a9b2" /><Text style={[s.copy, { flex: 1 }]}>Your linked email, phone and account type are fixed after signup.</Text></View>
+      </View>
+      <View style={s.card}><View style={s.cardHeading}><InterfaceIcon name="cash" color="#ffb313" size={21} /><Text style={s.cardTitle}>Pay at your canteen</Text></View><Text style={s.subtitle}>Pay the full order amount in cash at pickup or delivery. UPI payments are coming soon.</Text></View>
+    </>}
+    {tab === 'Permissions' && <><NotificationSettings /><LocationPermissionSettings /></>}
+    {tab === 'Help' && <View style={s.card}>
+      {action('info', 'How to use SkipQ', 'A quick guide to ordering and pickup', () => setShowHowTo(true))}
+      {action('support', 'Feedback & Support', 'Contact the SkipQ team', feedback)}
+      {action('location', 'Campus and role', 'Review your campus setup', () => confirmAction('Review campus setup?', 'You will return to setup. Your saved orders stay safe.', restartOnboarding))}
+      {action('logout', 'Log out', 'Sign out of this device', () => confirmAction('Log out?', 'You will return to the welcome screen.', logoutUser, true), true)}
+    </View>}
+    {(dirty || saving || error) && <View style={s.saveBar}><Text accessibilityLiveRegion="polite" style={[s.copy, error && s.danger]}>{error || 'Unsaved profile changes'}</Text><View style={s.saveActions}><TouchableOpacity accessibilityRole="button" disabled={saving} onPress={discard} style={s.discard}><Text style={s.discardText}>Discard</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Save profile changes" disabled={saving} onPress={save} style={s.save}>{saving ? <ActivityIndicator color="#090b0d" /> : <><InterfaceIcon name="check" size={18} color="#090b0d" /><Text style={s.saveText}>Save changes</Text></>}</TouchableOpacity></View></View>}
+  </ScrollView>
+    <Modal visible={showHowTo} transparent animationType="fade" onRequestClose={() => setShowHowTo(false)}>
+      <View style={s.guideOverlay}>
+        <View style={s.guideCard}>
+          <View style={s.guideHeader}><View style={s.guideIcon}><InterfaceIcon name="info" size={20} color="#ffb313" /></View><View style={{ flex: 1 }}><Text style={s.guideTitle}>How to use SkipQ</Text><Text style={s.copy}>{faculty ? 'Faculty ordering guide' : 'Student ordering guide'}</Text></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close guide" onPress={() => setShowHowTo(false)} style={s.guideClose}><Text style={s.guideCloseText}>×</Text></TouchableOpacity></View>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.guideContent}>
+            <GuideStep number="1" title="Choose your food">Open Explore, pick a canteen, add dishes, then review your cart.</GuideStep>
+            <GuideStep number="2" title="Choose pickup or delivery">{faculty ? 'Choose pickup or staff-room delivery. Delivery adds ₹5; enter a clear room or department location.' : 'Choose a pickup time. For group pickup, add the collector’s name so the canteen knows who is collecting.'}</GuideStep>
+            <GuideStep number="3" title="Pay the canteen">Pay the full order amount in cash at pickup{faculty ? ' or staff-room delivery' : ''}. UPI payments are coming soon.</GuideStep>
+            <GuideStep number="4" title="Collect your order">Show your pickup pass and give the seller your PIN or QR when the order is ready.</GuideStep>
+            <View style={s.guideNotice}><Text style={s.guideNoticeText}>The seller will mark your order Ready when it is prepared. Please collect it promptly. If the canteen cancels, contact them about any cash you may already have paid.</Text></View>
+          </ScrollView>
+          <TouchableOpacity accessibilityRole="button" onPress={() => setShowHowTo(false)} style={s.guideDone}><Text style={s.guideDoneText}>Got it</Text></TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  </View>;
+}
+function GuideStep({ number, title, children }) {
+  const s = useSellerStyles(baseStyles);
+  return <View style={s.guideStep}><View style={s.guideNumber}><Text style={s.guideNumberText}>{number}</Text></View><View style={{ flex: 1 }}><Text style={s.guideStepTitle}>{title}</Text><Text style={s.guideStepCopy}>{children}</Text></View></View>;
+}
 const baseStyles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#090b0d',
-  },
-  content: {
-    width: '100%',
-    maxWidth: 760,
-    alignSelf: 'center',
-    padding: 20,
-    paddingTop: 16,
-    paddingBottom: 160,
-  },
-  topLine: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 18,
-  },
-  eyebrow: {
-    color: '#a5a9b2',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-  },
-  title: {
-    color: '#f5f4f0',
-    fontSize: 28,
-    fontWeight: '900',
-    letterSpacing: -0.6,
-    marginTop: 2,
-  },
-  status: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#ccfbf1',
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#0f766e',
-  },
-  statusText: {
-    color: '#0f766e',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.6,
-  },
-  identityCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#121417',
-    borderWidth: 1,
-    borderColor: '#26292e',
-    borderRadius: 22,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 18,
-    backgroundColor: '#ffb313',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
-  },
-  avatarText: {
-    color: '#090b0d',
-    fontSize: 22,
-    fontWeight: '900',
-  },
-  identityCopy: {
-    flex: 1,
-  },
-  name: {
-    color: '#f5f4f0',
-    fontSize: 17,
-    fontWeight: '900',
-  },
-  campus: {
-    color: '#a5a9b2',
-    fontSize: 12,
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  memberId: {
-    color: '#ffb313',
-    fontSize: 11,
-    fontWeight: '800',
-    marginTop: 5,
-  },
-  saveMini: {
-    backgroundColor: '#17191d',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  saveMiniText: {
-    color: '#ffb313',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-
-  walletCard: {
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 20,
-    shadowColor: '#0070d2',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
-    elevation: 8,
-  },
-  walletHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  walletLabel: {
-    color: 'rgba(255, 255, 255, 0.9)',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 1.2,
-  },
-  walletAmount: {
-    color: '#090b0d',
-    fontSize: 36,
-    fontWeight: '900',
-    letterSpacing: -1,
-    marginTop: 2,
-  },
-  walletMark: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  walletMarkText: {
-    color: '#090b0d',
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  walletMessage: {
-    color: 'rgba(255, 255, 255, 0.85)',
-    fontSize: 12,
-    marginTop: 4,
-    fontWeight: '600',
-  },
-  quickAmounts: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 16,
-  },
-  amountButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-    backgroundColor: 'rgba(255, 255, 255, 0.16)',
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  amountText: {
-    color: '#090b0d',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  customAmountRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 10,
-  },
-  amountInput: {
-    flex: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.28)',
-    color: '#090b0d',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 44,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  addButton: {
-    backgroundColor: '#121417',
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 18,
-  },
-  addButtonText: {
-    color: '#ffb313',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.6,
-  },
-
-  sectionHeader: {
-    marginBottom: 8,
-  },
-  sectionKicker: {
-    color: '#f5f4f0',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  sectionHint: {
-    color: '#a5a9b2',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  segment: {
-    flexDirection: 'row',
-    padding: 4,
-    backgroundColor: '#121417',
-    borderRadius: 18,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#26292e',
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 1,
-  },
-  segmentOption: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-  },
-  segmentSelected: {
-    backgroundColor: '#ffb313',
-    shadowColor: '#0c52a3',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    elevation: 2,
-  },
-  segmentTitle: {
-    color: '#a5a9b2',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  segmentTitleSelected: {
-    color: '#090b0d',
-  },
-  segmentSub: {
-    color: '#94a3b8',
-    fontSize: 10,
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  segmentSubSelected: {
-    color: '#ccfbf1',
-  },
-  noteCard: {
-    backgroundColor: '#202329',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#bae6fd',
-  },
-  noteTitle: {
-    color: '#ffb313',
-    fontSize: 13,
-    fontWeight: '900',
-  },
-  noteText: {
-    color: '#b6bac2',
-    fontSize: 12,
-    lineHeight: 16,
-    marginTop: 3,
-  },
-  noteInput: {
-    backgroundColor: '#121417',
-    color: '#f5f4f0',
-    borderWidth: 1,
-    borderColor: '#bae6fd',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    height: 42,
-    marginTop: 10,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  detailsCard: {
-    backgroundColor: '#121417',
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#26292e',
-    marginBottom: 16,
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  cardTitle: {
-    color: '#f5f4f0',
-    fontSize: 17,
-    fontWeight: '900',
-  },
-  cardCaption: {
-    color: '#a5a9b2',
-    fontSize: 12,
-    marginTop: 2,
-    marginBottom: 14,
-  },
-  field: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-    paddingVertical: 10,
-  },
-  fieldLast: {
-    borderBottomWidth: 0,
-  },
-  fieldLabel: {
-    color: '#a5a9b2',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  fieldInput: {
-    color: '#f5f4f0',
-    fontSize: 14,
-    fontWeight: '700',
-    padding: 0,
-    minHeight: 24,
-  },
-  saveButton: {
-    backgroundColor: '#ffb313',
-    borderRadius: 14,
-    alignItems: 'center',
-    paddingVertical: 14,
-    marginTop: 16,
-    shadowColor: '#0c52a3',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  saveButtonText: {
-    color: '#090b0d',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-  },
-
-  actionsCard: {
-    backgroundColor: '#121417',
-    borderWidth: 1,
-    borderColor: '#26292e',
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-  },
-  actionTitle: {
-    color: '#f5f4f0',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  logoutTitle: {
-    color: '#ef4444',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  actionSub: {
-    color: '#a5a9b2',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  actionArrow: {
-    color: '#94a3b8',
-    fontSize: 22,
-    fontWeight: '300',
-  },
-  logoutArrow: {
-    color: '#ef4444',
-    fontSize: 22,
-    fontWeight: '300',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#17191d',
-    marginLeft: 18,
-  },
-  bottomSpace: {
-    height: 20,
-  },
+  container: { flex: 1, backgroundColor: '#090b0d' }, content: { width: '100%', maxWidth: 760, alignSelf: 'center', padding: 20, paddingTop: 16, paddingBottom: 145 },
+  eyebrow: { color: '#ffb313', fontSize: 10, letterSpacing: 1.8, fontWeight: '700', marginBottom: 9 }, title: { color: '#f5f4f0', fontSize: 27, fontWeight: '800', letterSpacing: -0.8 }, subtitle: { color: '#a5a9b2', fontSize: 12, lineHeight: 19, marginTop: 6 },
+  tabs: { flexDirection: 'row', backgroundColor: '#121417', borderRadius: 16, padding: 4, marginTop: 23, marginBottom: 22, borderWidth: 1, borderColor: '#26292e' }, tab: { flex: 1, minHeight: 43, justifyContent: 'center', alignItems: 'center', borderRadius: 12 }, tabActive: { backgroundColor: '#ffb313' }, tabText: { color: '#a5a9b2', fontSize: 12, fontWeight: '700' }, tabTextActive: { color: '#090b0d' },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: 13, marginBottom: 23 }, avatar: { width: 52, height: 52, borderRadius: 17, backgroundColor: '#ffb313', alignItems: 'center', justifyContent: 'center' }, initial: { color: '#090b0d', fontSize: 24, fontWeight: '800' }, identityName: { color: '#f5f4f0', fontSize: 17, fontWeight: '700' }, role: { color: '#ffb313', fontSize: 10, marginTop: 5 },
+  card: { borderWidth: 1, borderColor: '#26292e', backgroundColor: '#121417', borderRadius: 20, padding: 18, marginBottom: 16 }, cardTitle: { color: '#f5f4f0', fontSize: 16, fontWeight: '700' }, cardHeading: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  field: { marginTop: 18 }, labelRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 }, label: { color: '#a5a9b2', fontSize: 11, fontWeight: '600' }, input: { color: '#f5f4f0', backgroundColor: '#090b0d', borderColor: '#26292e', borderWidth: 1, borderRadius: 12, minHeight: 47, paddingHorizontal: 13, paddingVertical: 12, fontSize: 13 }, locked: { color: '#a5a9b2', backgroundColor: '#17191d' },
+  notice: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 16 }, copy: { color: '#a5a9b2', fontSize: 11, lineHeight: 17, marginTop: 2 }, action: { flexDirection: 'row', gap: 11, alignItems: 'center', paddingVertical: 15 }, icon: { width: 37, height: 37, borderRadius: 11, backgroundColor: '#17191d', alignItems: 'center', justifyContent: 'center' }, actionCopy: { flex: 1, minWidth: 0 }, actionTitle: { color: '#f5f4f0', fontSize: 13, fontWeight: '600' }, danger: { color: '#ef4444' },
+  guideOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 18, backgroundColor: 'rgba(0,0,0,0.7)' }, guideCard: { width: '100%', maxWidth: 500, maxHeight: '90%', borderRadius: 22, borderWidth: 1, borderColor: '#34373d', backgroundColor: '#121417', padding: 18 }, guideHeader: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: '#26292e' }, guideIcon: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#211a07' }, guideTitle: { color: '#f5f4f0', fontSize: 17, fontWeight: '800' }, guideClose: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: '#202329' }, guideCloseText: { color: '#f5f4f0', fontSize: 25, lineHeight: 28 }, guideContent: { paddingVertical: 5 }, guideStep: { flexDirection: 'row', gap: 12, paddingVertical: 13 }, guideNumber: { width: 27, height: 27, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: '#292418' }, guideNumberText: { color: '#ffb313', fontSize: 12, fontWeight: '800' }, guideStepTitle: { color: '#f5f4f0', fontSize: 13, fontWeight: '700' }, guideStepCopy: { color: '#a5a9b2', fontSize: 11, lineHeight: 17, marginTop: 4 }, guideNotice: { backgroundColor: '#211a07', borderWidth: 1, borderColor: '#3a2c07', borderRadius: 13, padding: 12, marginTop: 4 }, guideNoticeText: { color: '#f5cf76', fontSize: 11, lineHeight: 17 }, guideDone: { minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#ffb313', marginTop: 13 }, guideDoneText: { color: '#090b0d', fontSize: 13, fontWeight: '800' },
+  saveBar: { backgroundColor: '#121417', borderColor: '#26292e', borderWidth: 1, borderRadius: 18, padding: 16, marginTop: 4 }, saveActions: { flexDirection: 'row', gap: 10, marginTop: 12 }, discard: { paddingHorizontal: 16, minHeight: 46, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#26292e', borderRadius: 12 }, discardText: { color: '#a5a9b2', fontSize: 12, fontWeight: '600' }, save: { flex: 1, flexDirection: 'row', gap: 8, minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#ffb313' }, saveText: { color: '#090b0d', fontSize: 13, fontWeight: '700' },
 });

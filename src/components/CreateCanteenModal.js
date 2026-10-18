@@ -134,7 +134,7 @@ export default function CreateCanteenModal({ visible, onClose }) {
             />
 
             {/* UPI ID */}
-            <Text style={styles.label}>Merchant UPI ID (For Direct Payments)</Text>
+            <Text style={styles.label}>Merchant UPI ID (Optional · UPI coming soon)</Text>
             <TextInput
               style={styles.input}
               placeholder="e.g. canteen.pay@okaxis"

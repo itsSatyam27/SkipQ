@@ -10,9 +10,10 @@ function normalizePhone(value) {
   return digits;
 }
 const phoneKey = phone => crypto.createHash('sha256').update(`+91${normalizePhone(phone)}`).digest('hex');
-const complete = profile => Boolean(profile?.profileComplete && profile.name && profile.email && profile.phone && ['student', 'faculty', 'seller'].includes(profile.userType));
+const complete = profile => Boolean(profile?.universityStatus !== 'LEFT' && profile?.profileComplete && profile.name && profile.email && profile.phone && ['student', 'faculty', 'seller'].includes(profile.userType));
 function blocked(profile, now) {
-  return profile?.banStatus === 'perm_ban' || (profile?.banStatus === 'temp_ban' && (profile.banUntil?.toMillis?.() || 0) > now);
+  return profile?.universityStatus === 'LEFT' || profile?.banStatus === 'perm_ban'
+    || (profile?.banStatus === 'temp_ban' && (profile.banUntil?.toMillis?.() || 0) > now);
 }
 function createAccounts({ db, Timestamp, now = Date.now }) {
   const stamp = () => Timestamp.fromMillis(now());
@@ -46,6 +47,7 @@ function createAccounts({ db, Timestamp, now = Date.now }) {
   }
   async function requireComplete(user) {
     const profile = await db.runTransaction(async tx => (await tx.get(db.collection('users').doc(user.uid))).data());
+    if (profile?.universityStatus === 'LEFT') accountError(403, 'LEFT_UNIVERSITY', 'This account is inactive because it has left the university.');
     if (!complete(profile)) accountError(409, 'PROFILE_REQUIRED', 'Complete your profile and link a phone number before using this feature.');
     if (normalizeEmail(profile.email) !== normalizeEmail(user.email)) accountError(403, 'EMAIL_MISMATCH', 'Sign in with the email linked to this account.');
     if (blocked(profile, now())) accountError(403, 'ACCOUNT_BLOCKED', 'This account is blocked from the platform.');

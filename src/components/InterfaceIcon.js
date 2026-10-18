@@ -1,6 +1,13 @@
 import React from 'react';
 import Svg, { Path } from 'react-native-svg';
 const paths = {
+  cloche: 'M3 18h18M5 16a7 7 0 0 1 14 0M10 6h4m-2-3v3',
+  snack: 'm5 9 2 12h10l2-12ZM8 9 7 4m5 5V2m4 7 2-5M4 9h16',
+  drink: 'm6 8 2 14h8l2-14ZM4 8h16M13 8l2-6h4',
+  meal: 'M3 3v6a3 3 0 0 0 6 0V3M6 3v19M18 3v19m0-19c-5 5-5 11 0 11',
+  roll: 'm5 8 10-5a4 4 0 0 1 5 6L10 20a4 4 0 0 1-6-5ZM5 8l5 12m1-15 5 9',
+  sandwich: 'M3 9 12 3l9 6v11H3ZM3 12h18M3 16h18',
+  dessert: 'M4 12h16l-2 9H6ZM6 12a6 6 0 0 1 12 0M12 6V3m0 0 3-1',
   cart: 'M3 3h2l2.4 12h11.9L22 7H6M9 20h.01M18 20h.01',
   sun: 'M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8ZM12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5',
   moon: 'M20.5 14A9 9 0 0 1 10 3.5 9 9 0 1 0 20.5 14Z',

@@ -20,7 +20,7 @@
       "targetSdkVersion": 36,
       "compileSdkVersion": 36,
       "adaptiveIcon": {
-        "backgroundColor": "#0c52a3",
+        "backgroundColor": "#FFB020",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -51,12 +51,12 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#edf3f8",
+          "backgroundColor": "#0B0C0E",
           "image": "./assets/splash-icon.png",
-          "imageWidth": 180,
+          "imageWidth": 148,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#edf3f8",
+            "backgroundColor": "#0B0C0E",
             "image": "./assets/splash-icon.png"
           }
         }

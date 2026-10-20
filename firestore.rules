@@ -29,22 +29,55 @@ service cloud.firestore {
       && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'seller'; }
     function assigned(order) { return seller() && order.sellerId == request.auth.uid; }
     function active(order) { return order.orderStatus in ['Preparing', 'Ready for Pickup']; }
-    function line(items, index, menu) {
-      return items.size() <= index || validLine(items[index], menu);
+    function validLines(items, menu) {
+      let size = items.size();
+      return validLine(items[0], menu)
+        && (size < 2 || validLine(items[1], menu))
+        && (size < 3 || validLine(items[2], menu))
+        && (size < 4 || validLine(items[3], menu))
+        && (size < 5 || validLine(items[4], menu));
     }
     function validLine(item, menu) {
-      let dish = item.sourceDish;
       let index = item.menuIndex;
+      let dish = menu[index];
       let price = item.price;
       let qty = item.qty;
       return index is int && index >= 0 && index < menu.size()
-        && dish == menu[index] && item.diff(dish).affectedKeys().hasOnly(['qty', 'sourceDish', 'menuIndex'])
+        && item.get('sourceDish', dish) == dish && item.diff(dish).affectedKeys().hasOnly(['qty', 'sourceDish', 'menuIndex'])
         && dish.isAvailable == true && price is number && price > 0 && price <= 100000
         && qty is int && qty >= 1 && qty <= 20;
     }
-    function cents(items, i) { return items.size() > i ? math.round(items[i].price * 100) * items[i].qty : 0; }
-    function total(items) { return (cents(items, 0) + cents(items, 1) + cents(items, 2) + cents(items, 3) + cents(items, 4)
-      ) / 100.0; }
+    function total(items) {
+      let size = items.size();
+      return (math.round(items[0].price * 100) * items[0].qty
+        + (size > 1 ? math.round(items[1].price * 100) * items[1].qty : 0)
+        + (size > 2 ? math.round(items[2].price * 100) * items[2].qty : 0)
+        + (size > 3 ? math.round(items[3].price * 100) * items[3].qty : 0)
+        + (size > 4 ? math.round(items[4].price * 100) * items[4].qty : 0)) / 100.0;
+    }
+    function strikePolicy(old, next) {
+      return next.unclaimedOrderCount == old.get('unclaimedOrderCount', 0) + 1 && next.updatedAt == request.time
+        && next.banReason == 'Unclaimed order: ' + next.lastStrikeOrderId
+        && ((next.unclaimedOrderCount == 1 && old.banStatus != 'perm_ban' && next.banStatus == 'temp_ban'
+          && (old.banStatus != 'temp_ban' || next.banUntil >= old.banUntil)
+          && ((next.banUntil >= request.time + duration.value(259190, 's') && next.banUntil <= request.time + duration.value(259210, 's'))
+            || (old.banStatus == 'temp_ban' && next.banUntil == old.banUntil && next.banUntil >= request.time + duration.value(3, 'd'))))
+        || ((next.unclaimedOrderCount >= 2 || old.banStatus == 'perm_ban') && next.banStatus == 'perm_ban' && next.banUntil == null));
+    }
+    function strikeUpdate(buyerId, old, next) {
+      let order = get(/databases/$(database)/documents/orders/$(next.lastStrikeOrderId)).data;
+      let after = getAfter(/databases/$(database)/documents/orders/$(next.lastStrikeOrderId)).data;
+      return assigned(order) && order.buyerId == buyerId
+        && order.orderStatus == 'Ready for Pickup' && order.readyAt <= request.time - duration.value(15, 'm')
+        && after.orderStatus == 'Abandoned' && after.updatedAt == request.time
+        && next.diff(old).affectedKeys().hasOnly(['unclaimedOrderCount', 'lastStrikeOrderId', 'banStatus', 'banUntil', 'banReason', 'updatedAt'])
+        && strikePolicy(old, next);
+    }
+    function strikeRecorded(orderId, buyerId) {
+      let old = get(/databases/$(database)/documents/users/$(buyerId)).data;
+      let next = getAfter(/databases/$(database)/documents/users/$(buyerId)).data;
+      return next.lastStrikeOrderId == orderId && strikePolicy(old, next);
+    }
     function newOrder(id, order) {
       let shop = get(/databases/$(database)/documents/canteens/$(order.shopId)).data;
       let profile = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
@@ -62,8 +95,7 @@ service cloud.firestore {
         && order.orderStatus == 'Preparing' && order.pickupAttempts == 0 && order.pickupLockedUntil == null
         && order.createdAt == request.time && order.updatedAt == request.time
         && order.items is list && order.items.size() >= 1 && order.items.size() <= 5
-        && line(order.items, 0, shop.menu) && line(order.items, 1, shop.menu) && line(order.items, 2, shop.menu)
-        && line(order.items, 3, shop.menu) && line(order.items, 4, shop.menu)
+        && validLines(order.items, shop.menu)
         && order.totalAmount == total(order.items) + order.deliveryFee && order.heldDepositAmount == 0 && order.upfrontPaid == 0
         && order.dueAtCounter == order.totalAmount
         && (order.get('testOrder', false)
@@ -127,7 +159,7 @@ service cloud.firestore {
           && next.cancelledAt == request.time && next.cancelledBy == (old.buyerId == request.auth.uid ? 'buyer' : 'seller') && validRefund(old, next)
           && next.diff(old).affectedKeys().hasOnly(['orderStatus', 'cancelledAt', 'cancelledBy', 'refundStatus', 'refundAmount', 'refundText', 'advanceRefundStatus', 'updatedAt']))
         || (isSeller && old.orderStatus == 'Ready for Pickup' && old.readyAt <= request.time - duration.value(15, 'm')
-          && next.orderStatus == 'Abandoned' && validNoShow(old, next)
+          && next.orderStatus == 'Abandoned' && validNoShow(old, next) && strikeRecorded(id, old.buyerId)
           && next.diff(old).affectedKeys().hasOnly(['orderStatus', 'refundStatus', 'refundAmount', 'refundText', 'advanceRefundStatus', 'updatedAt']))
         || (isSeller && (pinAttempt(id, old, next) || pickup(id, old, next))));
     }
@@ -136,6 +168,9 @@ service cloud.firestore {
         && data.userType in ['student', 'faculty', 'seller'];
     }
     match /users/{id} {
+      allow update: if request.resource.data.get('lastStrikeOrderId', '') != ''
+        && request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastStrikeOrderId', 'unclaimedOrderCount'])
+        && strikeUpdate(id, resource.data, request.resource.data);
       allow read: if admin();
       allow update: if admin() && !exists(/databases/$(database)/documents/admins/$(id))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['banStatus', 'banUntil', 'banReason', 'updatedAt', 'adminActionId'])
@@ -203,10 +238,63 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['userId', 'status', 'stallName', 'location', 'upiId', 'universityId', 'submittedAt']);
       allow update, delete: if false;
     }
+    function validDishStars(value) { return value is int && value >= 1 && value <= 5; }
+    function validDishRatings(order) {
+      let items = order.items;
+      let n = items.size();
+      let ratings = order.dishRatings;
+      return n >= 1 && n <= 5 && ratings is map && ratings.size() == n
+        && ratings.keys().hasOnly([items[0].id, items[n > 1 ? 1 : 0].id, items[n > 2 ? 2 : 0].id,
+          items[n > 3 ? 3 : 0].id, items[n > 4 ? 4 : 0].id])
+        && validDishStars(ratings[items[0].id])
+        && (n < 2 || validDishStars(ratings[items[1].id]))
+        && (n < 3 || validDishStars(ratings[items[2].id]))
+        && (n < 4 || validDishStars(ratings[items[3].id]))
+        && (n < 5 || validDishStars(ratings[items[4].id]));
+    }
+    function linkedRating(orderId, old, next) {
+      let id = next.ratingReviewId;
+      let link = getAfter(/databases/$(database)/documents/ratingLinks/$(id)).data;
+      let review = getAfter(/databases/$(database)/documents/dishReviews/$(id)).data;
+      return id is string && id.size() == 20 && old.get('ratingReviewId', id) == id
+        && validDishRatings(next) && link.orderId == orderId && link.buyerId == request.auth.uid
+        && review.shopId == old.shopId && review.ratings == next.dishRatings && review.updatedAt == request.time;
+    }
+    // Public documents contain stars only; the identifying order link stays private.
+    match /ratingLinks/{id} {
+      allow get: if verified() && resource.data.buyerId == request.auth.uid;
+      allow create: if ready() && request.resource.data.keys().hasOnly(['orderId', 'buyerId'])
+        && request.resource.data.buyerId == request.auth.uid
+        && get(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.buyerId == request.auth.uid
+        && get(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.orderStatus == 'Completed'
+        && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.orderId)).data.ratingReviewId == id;
+      allow update, delete, list: if false;
+    }
+    match /dishReviews/{id} {
+      allow read: if true;
+      allow create, update: if ready() && validPublicRating(id);
+      allow delete: if false;
+    }
+    function validPublicRating(id) {
+      let link = getAfter(/databases/$(database)/documents/ratingLinks/$(id)).data;
+      let order = getAfter(/databases/$(database)/documents/orders/$(link.orderId)).data;
+      return link.buyerId == request.auth.uid && order.buyerId == request.auth.uid
+        && order.orderStatus == 'Completed' && order.ratingReviewId == id && validDishRatings(order)
+        && request.resource.data.keys().hasOnly(['shopId', 'ratings', 'updatedAt'])
+        && request.resource.data.shopId == order.shopId && request.resource.data.ratings == order.dishRatings
+        && order.ratedAt == request.time && request.resource.data.updatedAt == request.time;
+    }
     match /orders/{id} {
       allow read: if admin();
       allow read: if ready() && (resource.data.buyerId == request.auth.uid || (seller() && resource.data.sellerId == request.auth.uid));
       allow get: if ready() && !exists(/databases/$(database)/documents/orders/$(id));
+      allow update: if ready() && resource.data.buyerId == request.auth.uid && resource.data.orderStatus == 'Completed'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rating', 'review', 'ratedAt', 'updatedAt', 'dishRatings', 'ratingReviewId'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['dishRatings', 'ratingReviewId'])
+          || linkedRating(id, resource.data, request.resource.data))
+        && request.resource.data.rating is int && request.resource.data.rating >= 1 && request.resource.data.rating <= 5
+        && request.resource.data.review is string && request.resource.data.review.size() <= 500
+        && request.resource.data.ratedAt == request.time && request.resource.data.updatedAt == request.time;
       allow create: if newOrder(id, request.resource.data);
       allow update: if changeOrder(id, resource.data, request.resource.data);
       allow delete: if false;

@@ -3,6 +3,7 @@ import { runTransaction, writeBatch } from 'firebase/firestore';
 import { validateSellerSettings } from './sellerSettings.cjs';
 import { ensureRegisteredCanteen } from './registeredCanteen.cjs';
 import { isSellerApproved } from './sellerAccess';
+import { aggregateDishRatings } from '../utils/dishRatings.cjs';
 export async function seedCanteensIfEmpty() {}
 export async function saveSellerSettingsInFirestore(id, draft) {
   const user = await seller();
@@ -20,9 +21,21 @@ export async function provisionRegisteredCanteen(campus) {
 }
 export function subscribeToCanteens(universityId, onUpdate, onError = console.warn) {
   if (!isFirebaseConfigured || !db) return () => {};
-  return onSnapshot(query(collection(db, 'canteens'), where('universityId', '==', universityId)), snapshot => {
-    onUpdate(snapshot.docs.map(snap => ({ ...snap.data(), id: snap.id })));
+  let shops = [], disposed = false;
+  const listeners = new Map(), ratings = new Map();
+  const emit = () => { if (!disposed) onUpdate(shops.map(shop => ({ ...shop, dishRatings: ratings.get(shop.id) || {} }))); };
+  const stop = onSnapshot(query(collection(db, 'canteens'), where('universityId', '==', universityId)), snapshot => {
+    shops = snapshot.docs.map(snap => ({ ...snap.data(), id: snap.id }));
+    const ids = new Set(shops.map(shop => shop.id));
+    for (const [id, unsubscribe] of listeners) if (!ids.has(id)) { unsubscribe(); listeners.delete(id); ratings.delete(id); }
+    for (const shop of shops) if (!listeners.has(shop.id)) {
+      listeners.set(shop.id, onSnapshot(query(collection(db, 'dishReviews'), where('shopId', '==', shop.id)), result => {
+        ratings.set(shop.id, aggregateDishRatings(result.docs.map(snap => snap.data()))); emit();
+      }, error => { ratings.delete(shop.id); emit(); onError(error); }));
+    }
+    emit();
   }, onError);
+  return () => { disposed = true; stop(); listeners.forEach(unsubscribe => unsubscribe()); };
 }
 async function seller() {
   const user = auth?.currentUser;

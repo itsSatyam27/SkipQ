@@ -1,3 +1,4 @@
+import AppUpdateSettings from './AppUpdateSettings';
 import NotificationSettings from './NotificationSettings';
 import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
 import React, { useContext, useEffect, useRef, useState } from 'react';
@@ -218,6 +219,7 @@ export default function VendorProfileModal({ visible, onClose = () => {}, embedd
               <Field label="Phone number" value={userProfile.phone || ''} locked />
               <Field label="Account type" value="Seller" locked />
             </Section>
+            <AppUpdateSettings />
             <NotificationSettings />
             <Section title="Help and access">
               <TouchableOpacity accessibilityRole="button" onPress={() => setShowHowTo(true)} style={styles.action}><View style={styles.accessIcon}><InterfaceIcon name="info" size={18} color="#ffb313" /></View><View style={{ flex: 1 }}><Text style={styles.actionTitle}>How to use seller POS</Text><Text style={styles.hint}>Orders, payments, pickup and no-shows.</Text></View><Text style={styles.chevron}>›</Text></TouchableOpacity>

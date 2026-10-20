@@ -52,3 +52,5 @@ export const updateOrderStatusInDb = updateOrderStatusInFirestore;
 export const verifyOrderPinInDb = verifyOrderPinInFirestore;
 export const cancelOrderInDb = cancelOrderInFirestore;
 export const abandonOrderInDb = abandonOrderInFirestore;
+
+export const rateOrderInFirestore = (orderId, rating, review, dishRatings) => orderRequest('/rate', { orderId, rating, review, ...(dishRatings ? { dishRatings } : {}) });

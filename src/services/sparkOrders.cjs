@@ -1,6 +1,6 @@
 // Firestore rules are the authority for prices, payments, state changes and PINs.
 // Completion is denied unless the persisted verification matches the private PIN.
-const { doc, getDoc, runTransaction, serverTimestamp, Timestamp } = require('firebase/firestore');
+const { collection, doc, getDoc, runTransaction, serverTimestamp, Timestamp, increment } = require('firebase/firestore');
 const active = order => ['Preparing', 'Ready for Pickup'].includes(order.orderStatus);
 const text = (value, max = 300) => String(value || '').trim().slice(0, max);
 const millis = value => value?.toMillis?.() || 0;
@@ -68,7 +68,7 @@ function createSparkOrders(db, uid) {
         const menuIndex = shop.menu.findIndex(d => d.id === item.id);
         const dish = shop.menu[menuIndex];
         if (!dish?.isAvailable || !Number.isFinite(dish.price) || dish.price <= 0) throw new Error('A selected dish is unavailable.');
-        return { ...dish, qty: item.qty, sourceDish: dish, menuIndex };
+        return { ...dish, qty: item.qty, menuIndex };
       });
       const itemTotal = items.reduce((total, item) => total + Math.round(item.price * 100) * item.qty, 0) / 100;
       const deliveryFee = staffRoomDelivery ? 5 : 0;
@@ -82,7 +82,7 @@ function createSparkOrders(db, uid) {
         advanceRefundStatus: 'NOT_APPLICABLE',
         heldDepositAmount: 0, upfrontPaid: 0, dueAtCounter: totalAmount,
         tokenNumber: `SQ-${ref.id.slice(-8).toUpperCase()}`, pickupAttempts: 0, pickupLockedUntil: null,
-        orderStatus: 'Preparing', estimatedPrepMins: Math.max(5, ...items.map(i => Number(String(i.prepTime || '5 mins').match(/\d+/)?.[0]) || 5)),
+        orderStatus: 'Preparing', estimatedPrepMins: Math.max(...items.map(i => Number(String(i.prepTime ?? '5 mins').match(/\d+/)?.[0] ?? 5))),
         specialInstructions: text(body.specialInstructions), pickupSlot: text(body.pickupSlot, 80) || 'ASAP', facultyRoomNote,
         staffRoomDelivery, deliveryFee, groupCollectorName: text(body.groupCollectorName, 80), isFacultyExpress: profile.userType === 'faculty', location: body.location,
         ...(body.testOrder === true ? { testOrder: true } : {}),
@@ -96,6 +96,58 @@ function createSparkOrders(db, uid) {
   }
   async function change(path, body) {
     const ref = doc(db, 'orders', body.orderId);
+    if (path === '/abandon') {
+      // Rules authorize the atomic order/profile update, including server increment.
+      // If the first-strike policy is denied, retry the repeat-strike policy;
+      // neither candidate reads the customer's private profile.
+      for (const policy of ['first', 'repeat', 'preserve']) {
+        const permanent = policy === 'repeat';
+        try {
+          const order = await runTransaction(db, async tx => {
+            const current = (await tx.get(ref)).data();
+            if (!current) throw new Error('Order not found.');
+            if (current.orderStatus === 'Abandoned') return current;
+            if (current.sellerId !== uid || current.orderStatus !== 'Ready for Pickup' || !millis(current.readyAt)
+              || Date.now() - millis(current.readyAt) < NO_SHOW_GRACE_PERIOD_MS)
+              throw new Error('Only the assigned seller can mark a ready order unclaimed after 15 minutes.');
+            const update = { orderStatus: 'Abandoned', ...noShowSettlement(current), updatedAt: serverTimestamp() };
+            tx.update(ref, update);
+            tx.update(doc(db, 'users', current.buyerId), {
+              unclaimedOrderCount: increment(1), lastStrikeOrderId: body.orderId,
+              ...(policy === 'preserve' ? {} : { banStatus: permanent ? 'perm_ban' : 'temp_ban',
+                banUntil: permanent ? null : Timestamp.fromMillis(Date.now() + 3 * 86400000) }),
+              banReason: 'Unclaimed order: ' + body.orderId, updatedAt: serverTimestamp()
+            });
+            return { ...current, ...update };
+          });
+          return { success: true, order };
+        } catch (error) { if (policy === 'preserve' || error.code !== 'permission-denied') throw error; }
+      }
+    }
+    if (path === '/rate') {
+      if (!Number.isInteger(body.rating) || body.rating < 1 || body.rating > 5 || typeof body.review !== 'string' || body.review.length > 500)
+        throw new Error('Choose 1 to 5 stars and keep your review within 500 characters.');
+      const order = await runTransaction(db, async tx => {
+        const current = (await tx.get(ref)).data();
+        if (!current || current.buyerId !== uid || current.orderStatus !== 'Completed') throw new Error('Only your completed orders can be reviewed.');
+        const update = { rating: body.rating, review: body.review.trim(), ratedAt: serverTimestamp(), updatedAt: serverTimestamp() };
+        if (body.dishRatings !== undefined) {
+          const ratings = body.dishRatings;
+          const ids = current.items.map(item => item.id);
+          if (!ratings || typeof ratings !== 'object' || Array.isArray(ratings)
+            || Object.keys(ratings).length !== ids.length
+            || ids.some(id => !Object.hasOwn(ratings, id) || !Number.isInteger(ratings[id]) || ratings[id] < 1 || ratings[id] > 5))
+            throw new Error('Choose 1 to 5 stars for each ordered dish.');
+          const reviewId = current.ratingReviewId || doc(collection(db, 'dishReviews')).id;
+          update.dishRatings = ratings;
+          update.ratingReviewId = reviewId;
+          if (!current.ratingReviewId) tx.set(doc(db, 'ratingLinks', reviewId), { orderId: body.orderId, buyerId: uid });
+          tx.set(doc(db, 'dishReviews', reviewId), { shopId: current.shopId, ratings, updatedAt: serverTimestamp() });
+        }
+        tx.update(ref, update); return { ...current, ...update };
+      });
+      return { success: true, order: await withPin(order) };
+    }
     if (path === '/verify-pickup') {
       if (!/^\d{4}$/.test(String(body.pin || ''))) throw new Error('Enter the four-digit pickup PIN.');
       await runTransaction(db, async tx => {
@@ -140,10 +192,7 @@ function createSparkOrders(db, uid) {
         // This write succeeds ONLY when the pickup() rule compares the recorded PIN
         // to the buyer-only secret, and confirms readiness and UPI payment.
         else if (path === '/verify-pickup') update = { orderStatus: 'Completed', completedAt: serverTimestamp(), paymentStatus: order.paymentMethod === 'Cash' ? 'CASH_COLLECTED' : order.paymentStatus };
-        else if (path === '/abandon') {
-          if (Date.now() - millis(order.readyAt) < NO_SHOW_GRACE_PERIOD_MS) throw new Error('An order must be ready for 15 minutes before marking it unclaimed.');
-          update = { orderStatus: 'Abandoned', ...noShowSettlement(order) };
-        } else throw new Error('Unsupported order action.');
+        else throw new Error('Unsupported order action.');
         tx.update(ref, { ...update, updatedAt: serverTimestamp() });
         return { ...order, ...update };
       });

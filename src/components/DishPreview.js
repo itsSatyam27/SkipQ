@@ -5,6 +5,7 @@ import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
 import useReducedMotion from '../hooks/useReducedMotion';
 import { prepLabel } from '../utils/orderDisplay.cjs';
 import InterfaceIcon from './InterfaceIcon';
+import DishRating from './DishRating';
 
 export default function DishPreview({ shop, item, visible, onClose, onAdd, quantity = 0 }) {
   const s = useSellerStyles(styles);
@@ -23,6 +24,7 @@ export default function DishPreview({ shop, item, visible, onClose, onAdd, quant
             <View style={s.heroInfo}>
               <View style={s.titleRow}><View style={[s.diet,{borderColor:item?.isVeg === false?'#ef4444':'#10b981'}]}><View style={[s.dot,{backgroundColor:item?.isVeg === false?'#ef4444':'#10b981'}]}/></View><Text style={s.title}>{item?.name || 'Dish unavailable'}</Text></View>
               <Text style={s.meta}>{shop?.name || 'Canteen unavailable'} · {prepLabel(item?.prepTime)}</Text>
+              <DishRating value={shop?.dishRatings?.[item?.id]} />
             </View>
           </View>
           <Text style={s.description}>{item?.description?.trim() || 'The seller has not added a description for this dish yet.'}</Text>

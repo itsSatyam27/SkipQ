@@ -21,6 +21,34 @@ beforeEach(async () => {
 });
 const db = (uid, claims = {}) => env.authenticatedContext(uid, { email: `${uid}@example.com`, email_verified: true, firebase: { sign_in_provider: 'google.com' }, ...claims }).firestore();
 
+test('verified dish reviews are private-linked, editable once per order and reject forged ratings', async () => {
+  const client = db('buyer');
+  await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'orders/review-order'), {
+    id: 'review-order', buyerId: 'buyer', sellerId: 'seller', shopId: 'shop', orderStatus: 'Completed',
+    items: ['a','b','c','d','e'].map(id => ({id, name:id})), pickupPin:'1234'
+  }));
+  const service = createSparkOrders(client, 'buyer');
+  const body = {orderId:'review-order',rating:4,review:'Good',dishRatings:{a:5,b:4,c:3,d:4,e:4}};
+  await assertSucceeds(service.change('/rate', body));
+  const saved = (await getDoc(doc(client,'orders/review-order'))).data();
+  const publicDb = env.unauthenticatedContext().firestore();
+  let reviews = await assertSucceeds(getDocs(query(collection(publicDb,'dishReviews'),where('shopId','==','shop'))));
+  assert.equal(reviews.size,1);
+  assert.deepEqual(Object.keys(reviews.docs[0].data()).sort(),['ratings','shopId','updatedAt']);
+  assert.equal(reviews.docs[0].id,saved.ratingReviewId);
+  await assertFails(getDoc(doc(publicDb,'ratingLinks',saved.ratingReviewId)));
+  await assertFails(getDoc(doc(db('seller'),'ratingLinks',saved.ratingReviewId)));
+  await assertSucceeds(service.change('/rate',{...body,dishRatings:{...body.dishRatings,a:2}}));
+  reviews = await getDocs(collection(publicDb,'dishReviews'));
+  assert.equal(reviews.size,1); assert.equal(reviews.docs[0].data().ratings.a,2);
+  await assert.rejects(service.change('/rate',{...body,dishRatings:{fake:5}}));
+  await assert.rejects(service.change('/rate',{...body,dishRatings:{...body.dishRatings,a:6}}));
+  await assertFails(updateDoc(doc(client,'dishReviews',saved.ratingReviewId),{ratings:{a:5},updatedAt:serverTimestamp()}));
+  await assertFails(updateDoc(doc(client,'orders/review-order'),{dishRatings:{fake:5},rating:5,review:'',ratedAt:serverTimestamp(),updatedAt:serverTimestamp()}));
+  await assertFails(setDoc(doc(client,'dishReviews','forged'),{shopId:'shop',ratings:{a:5},updatedAt:serverTimestamp()}));
+  await assert.rejects(createSparkOrders(db('seller'),'seller').change('/rate',body));
+});
+
 async function grantAdmin() {
   await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(),'admins/owner'),{enabled:true}));
   return db('owner');
@@ -224,16 +252,16 @@ test('Spark orders use menu prices, retry safely and keep the PIN private from s
 });
 test('faculty staff-room delivery is authorized and adds exactly five rupees', async () => {
   const buyer = createSparkOrders(db('buyer'), 'buyer');
-  await assertFails(buyer.create({ ...orderBody('staff-room-student'), staffRoomDelivery: true, facultyRoomNote: 'E Block - 501' }));
+  await assert.rejects(buyer.create({ ...orderBody('staff-room-student'), staffRoomDelivery: true, facultyRoomNote: 'E Block - 501' }));
   await env.withSecurityRulesDisabled(c => updateDoc(doc(c.firestore(), 'users/buyer'), { userType: 'faculty' }));
-  await assertFails(buyer.create({ ...orderBody('staff-room-missing'), staffRoomDelivery: true }));
+  await assert.rejects(buyer.create({ ...orderBody('staff-room-missing'), staffRoomDelivery: true }));
   const order = await assertSucceeds(buyer.create({ ...orderBody('staff-room-faculty'), staffRoomDelivery: true, facultyRoomNote: 'E Block - 501' }));
   assert.equal(order.totalAmount, 55);
   assert.equal(order.deliveryFee, 5);
   const forged = { ...(await getDoc(doc(db('buyer'), 'orders', order.id))).data(), id: 'forged-fee', totalAmount: 60, deliveryFee: 10, dueAtCounter: 60, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-  const batch = writeBatch(db('buyer'));
-  batch.set(doc(db('buyer'), 'orders/forged-fee'), forged);
-  batch.set(doc(db('buyer'), 'users/buyer/pickupSecrets/forged-fee'), { pin: '1234', createdAt: serverTimestamp() });
+  const buyerClient = db('buyer'); const batch = writeBatch(buyerClient);
+  batch.set(doc(buyerClient, 'orders/forged-fee'), forged);
+  batch.set(doc(buyerClient, 'users/buyer/pickupSecrets/forged-fee'), { pin: '1234', createdAt: serverTimestamp() });
   await assertFails(batch.commit());
 });
 test('Spark pickup cannot bypass the private PIN or readiness; five wrong PINs lock further attempts', async () => {
@@ -286,6 +314,13 @@ test('Spark maximum-size checkout remains within rule evaluation limits', async 
   const body = { ...orderBody('max-cart'), items: menu.slice(5).map(dish => ({ id: dish.id, qty: 1 })) };
   const result = await assertSucceeds(createSparkOrders(db('buyer'), 'buyer').create(body));
   assert.equal(result.totalAmount, 160);
+  const client = db('buyer');
+  const legacyValue = (await getDoc(doc(client, 'orders', result.id))).data();
+  const legacyBatch = writeBatch(client);
+  legacyBatch.set(doc(client,'orders/legacy-max-cart'), {...legacyValue, id:'legacy-max-cart', items:legacyValue.items.map(item=>({...item,sourceDish:menu[item.menuIndex]})),createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+  legacyBatch.set(doc(client,'users/buyer/pickupSecrets/legacy-max-cart'),{pin:'1234',createdAt:serverTimestamp()});
+  await assertSucceeds(legacyBatch.commit());
+
   await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'locationTestAccess/buyer'),{enabled:true,expiresAt:Timestamp.fromMillis(Date.now()+3600000)}));
   const testOrder=await assertSucceeds(createSparkOrders(db('buyer'),'buyer').create({...body,requestId:'max-test-cart',testOrder:true,location:null}));
   assert.equal(testOrder.totalAmount,160); assert.equal(testOrder.testOrder,true);
@@ -300,17 +335,76 @@ test('Spark banned buyers and unapproved canteens cannot place orders', async ()
   });
   await assertFails(createSparkOrders(db('buyer'), 'buyer').create(orderBody('unapproved')));
 });
-test('Spark no-show requires 15 minutes and records an unclaimed order without changing bans', async () => {
+test('Spark no-show applies one atomic strike, retries once, and repeated no-shows permanently ban', async () => {
   const buyer = createSparkOrders(db('buyer'), 'buyer');
-  const seller = createSparkOrders(db('seller', { seller: true }), 'seller');
-  const order = await buyer.create(orderBody('unclaimed'));
-  await seller.change('/status', { orderId: order.id, status: 'Ready for Pickup' });
-  await assert.rejects(seller.change('/abandon', { orderId: order.id }));
-  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'orders', order.id), { readyAt: Timestamp.fromMillis(Date.now() - 14 * 60 * 1000) }));
-  await assert.rejects(seller.change('/abandon', { orderId: order.id }));
-  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'orders', order.id), { readyAt: Timestamp.fromMillis(Date.now() - 16 * 60 * 1000) }));
-  await assertSucceeds(seller.change('/abandon', { orderId: order.id }));
-  await assertSucceeds(seller.change('/abandon', { orderId: order.id }));
-  assert.equal((await getDoc(doc(db('buyer'), 'orders', order.id))).data().advanceRefundStatus, 'NOT_APPLICABLE');
-  assert.equal((await getDoc(doc(db('buyer'), 'users/buyer'))).data().banStatus, 'active');
+  const seller = createSparkOrders(db('seller'), 'seller');
+  const first = await buyer.create(orderBody('first-strike'));
+  const second = await buyer.create(orderBody('second-strike'));
+  await seller.change('/status', { orderId: first.id, status: 'Ready for Pickup' });
+  await seller.change('/status', { orderId: second.id, status: 'Ready for Pickup' });
+  await assert.rejects(seller.change('/abandon', { orderId: first.id }));
+  await env.withSecurityRulesDisabled(async c => {
+    for (const order of [first, second]) await updateDoc(doc(c.firestore(), 'orders', order.id), { readyAt: Timestamp.fromMillis(Date.now() - 16 * 60000) });
+  });
+  // A status-only abandonment cannot bypass the atomic strike update.
+  await assertFails(updateDoc(doc(db('seller'), 'orders', first.id), {orderStatus:'Abandoned', refundStatus:'NOT_REQUIRED', refundAmount:0, advanceRefundStatus:'NOT_APPLICABLE', updatedAt:serverTimestamp()}));
+  await seller.change('/abandon', {orderId:first.id});
+  await seller.change('/abandon', {orderId:first.id});
+  await env.withSecurityRulesDisabled(async c => {
+    const profile = (await getDoc(doc(c.firestore(),'users/buyer'))).data();
+    assert.equal(profile.unclaimedOrderCount,1); assert.equal(profile.banStatus,'temp_ban');
+    assert.ok(profile.banUntil.toMillis() > Date.now()+2.99*86400000);
+  });
+  await assertFails(buyer.create(orderBody('banned-after-strike')));
+  await seller.change('/abandon', {orderId:second.id});
+  await env.withSecurityRulesDisabled(async c => {
+    const profile = (await getDoc(doc(c.firestore(),'users/buyer'))).data();
+    assert.equal(profile.unclaimedOrderCount,2); assert.equal(profile.banStatus,'perm_ban'); assert.equal(profile.banUntil,null);
+  });
+});
+
+test('ratings persist only for completed orders owned by the buyer and cannot change payment', async () => {
+  const client = db('buyer'); const buyer = createSparkOrders(client,'buyer');
+  const seller = createSparkOrders(db('seller'),'seller');
+  const order = await buyer.create(orderBody('review'));
+  await assert.rejects(buyer.change('/rate',{orderId:order.id,rating:5,review:'Good'}));
+  await seller.change('/status',{orderId:order.id,status:'Ready for Pickup'});
+  await seller.change('/verify-pickup',{orderId:order.id,pin:order.pickupPin});
+  await buyer.change('/rate',{orderId:order.id,rating:4,review:'Fresh food'});
+  const saved=(await getDoc(doc(client,'orders',order.id))).data();assert.equal(saved.rating,4);assert.equal(saved.review,'Fresh food');
+  await assert.rejects(seller.change('/rate',{orderId:order.id,rating:1,review:'Forged'}));
+  await assert.rejects(buyer.change('/rate',{orderId:order.id,rating:6,review:''}));
+  await assertFails(updateDoc(doc(client,'orders',order.id),{rating:5,review:'X',totalAmount:1,ratedAt:serverTimestamp(),updatedAt:serverTimestamp()}));
+});
+
+test('ready-to-serve dishes keep a zero-minute estimate',async()=>{
+  await env.withSecurityRulesDisabled(c=>updateDoc(doc(c.firestore(),'canteens/shop'),{menu:[{id:'dish',name:'Cold coffee',price:25,isAvailable:true,prepTime:'0 mins'}]}));
+  const order=await createSparkOrders(db('buyer'),'buyer').create(orderBody('zero-prep'));
+  assert.equal(order.estimatedPrepMins,0);
+});
+
+test('checkout rejects forged prices, menu metadata, quantities and totals; legacy snapshots remain valid',async()=>{
+  const client=db('buyer');const created=await createSparkOrders(client,'buyer').create(orderBody('integrity-base'));
+  const source=(await getDoc(doc(client,'orders',created.id))).data();
+  async function write(id,changes){
+    const batch=writeBatch(client);const item={...source.items[0],sourceDish:{id:'dish',name:'Sandwich',price:25,isAvailable:true}};
+    const value={...source,id,items:[item],...changes,createdAt:serverTimestamp(),updatedAt:serverTimestamp()};
+    batch.set(doc(client,'orders',id),value);batch.set(doc(client,'users/buyer/pickupSecrets',id),{pin:'1234',createdAt:serverTimestamp()});return batch.commit();
+  }
+  await assertSucceeds(write('legacy-valid',{}));
+  await assertFails(write('price-forged',{items:[{...source.items[0],price:1}],totalAmount:2,dueAtCounter:2}));
+  await assertFails(write('source-forged',{items:[{...source.items[0],sourceDish:{name:'fake'}}]}));
+  await assertFails(write('qty-forged',{items:[{...source.items[0],qty:21}]}));
+  await assertFails(write('total-forged',{totalAmount:1,dueAtCounter:1}));
+});
+test('concurrent no-shows count once per order and cannot change unrelated profiles or shorten bans',async()=>{
+  const buyer=createSparkOrders(db('buyer'),'buyer');const sellerClient=db('seller');const seller=createSparkOrders(sellerClient,'seller');
+  const one=await buyer.create(orderBody('parallel-one'));const two=await buyer.create(orderBody('parallel-two'));
+  for(const o of [one,two]) await seller.change('/status',{orderId:o.id,status:'Ready for Pickup'});
+  await env.withSecurityRulesDisabled(async c=>{for(const o of [one,two])await updateDoc(doc(c.firestore(),'orders',o.id),{readyAt:Timestamp.fromMillis(Date.now()-16*60000)});await updateDoc(doc(c.firestore(),'users/buyer'),{banStatus:'temp_ban',banUntil:Timestamp.fromMillis(Date.now()+7*86400000)});});
+  await assertFails(updateDoc(doc(sellerClient,'users/buyer'),{unclaimedOrderCount:1,lastStrikeOrderId:one.id,banStatus:'perm_ban',banUntil:null,banReason:'Unclaimed order: '+one.id,updatedAt:serverTimestamp()}));
+  await seller.change('/abandon',{orderId:one.id});
+  await env.withSecurityRulesDisabled(async c=>{const p=(await getDoc(doc(c.firestore(),'users/buyer'))).data();assert.equal(p.unclaimedOrderCount,1);assert.ok(p.banUntil.toMillis()>Date.now()+6.99*86400000);});
+  await Promise.all([seller.change('/abandon',{orderId:two.id}),seller.change('/abandon',{orderId:two.id})]);
+  await env.withSecurityRulesDisabled(async c=>{const p=(await getDoc(doc(c.firestore(),'users/buyer'))).data();assert.equal(p.unclaimedOrderCount,2);assert.equal(p.banStatus,'perm_ban');});
 });

@@ -8,7 +8,10 @@
       "policy": "fingerprint"
     },
     "updates": {
-      "url": "https://u.expo.dev/c4156da2-9497-4ed1-9dbf-51ac4d66f0eb"
+      "url": "https://u.expo.dev/c4156da2-9497-4ed1-9dbf-51ac4d66f0eb",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     },
     "orientation": "portrait",
     "icon": "./assets/icon.png",

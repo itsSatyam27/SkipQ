@@ -11,7 +11,7 @@ import { sendOrderReadyNotification, registerForPushNotificationsAsync, notifyOr
 import { auth, db, doc, getDoc, onSnapshot, updateDoc, serverTimestamp, isFirebaseConfigured } from '../services/firebase';
 import { registerAccountProfile, syncUserProfileToFirestore, onAuthChange, signOutUser, subscribeToUserProfile } from '../services/authService';
 import { subscribeToCanteens, createCanteen, provisionRegisteredCanteen, saveSellerSettingsInFirestore, updateCanteenInDb, deleteCanteenFromDb, updateMenuInDb } from '../services/canteenService';
-import { subscribeToOrders, createOrderInDb, acknowledgeOrder, updateOrderStatusInDb, verifyOrderPinInDb, confirmUpiPaymentInFirestore, cancelOrderInDb, abandonOrderInDb } from '../services/orderService';
+import { subscribeToOrders, createOrderInDb, acknowledgeOrder, updateOrderStatusInDb, verifyOrderPinInDb, confirmUpiPaymentInFirestore, rateOrderInFirestore, cancelOrderInDb, abandonOrderInDb } from '../services/orderService';
 import { requestSellerApproval } from '../services/sellerApprovalService';
 import { isSellerApproved } from '../services/sellerAccess';
 import { selectOwnedCanteen } from '../services/sellerCanteen.cjs';
@@ -119,7 +119,17 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!userProfile.uid) return;
     let mounted = true;
-    const unsubscribe = subscribeToUserProfile(userProfile.uid, profile => { if (mounted) setUserProfileState(profile); });
+    let handlingBan = false;
+    const unsubscribe = subscribeToUserProfile(userProfile.uid, profile => {
+      if (!mounted) return;
+      setUserProfileState(profile);
+      const blocked = profile.banStatus === 'perm_ban' || (profile.banStatus === 'temp_ban' && (profile.banUntil?.toMillis?.() || 0) > Date.now());
+      if (blocked && !handlingBan) {
+        handlingBan = true; setIsOnboardingComplete(false);
+        Alert.alert('Account restricted', profile.banStatus === 'perm_ban' ? 'Your account is permanently blocked. Contact support for help.' : 'Ordering is paused until ' + profile.banUntil.toDate().toLocaleString() + '. ' + (profile.banReason || 'Contact support for help.'));
+        unregisterPushDevice().catch(() => {}).then(() => signOutUser()).catch(console.warn);
+      }
+    });
     return () => { mounted = false; unsubscribe(); };
   }, [userProfile.uid]);
   useEffect(() => {
@@ -282,7 +292,7 @@ export function AppProvider({ children }) {
     setCartState({ shopId: shop.id, shopName: shop.name, items, specialInstructions: '' });
     return true;
   };
-  const rateOrder = async () => { Alert.alert('Ratings unavailable', 'Canteen ratings are not available in this release.'); };
+  const rateOrder = async (id, rating, review, dishRatings) => { commitOrder(await rateOrderInFirestore(id, rating, review, dishRatings)); };
   const topUpWallet = async () => { throw new Error('Wallet payments and top-ups are unavailable. Pay in cash at pickup; UPI is coming soon.'); };
   const logoutUser = async () => {
     await unregisterPushDevice();

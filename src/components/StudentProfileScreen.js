@@ -1,4 +1,5 @@
-﻿import React, { useContext, useEffect, useRef, useState } from 'react';
+import AppUpdateSettings from './AppUpdateSettings';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { AppContext } from '../context/AppContext';
 import { useSellerStyles } from '../context/SellerTheme';
@@ -64,12 +65,12 @@ export default function StudentProfileScreen() {
       <View style={s.card}><View style={s.cardHeading}><InterfaceIcon name="cash" color="#ffb313" size={21} /><Text style={s.cardTitle}>Pay at your canteen</Text></View><Text style={s.subtitle}>Pay the full order amount in cash at pickup or delivery. UPI payments are coming soon.</Text></View>
     </>}
     {tab === 'Permissions' && <><NotificationSettings /><LocationPermissionSettings /></>}
-    {tab === 'Help' && <View style={s.card}>
+    {tab === 'Help' && <><AppUpdateSettings /><View style={s.card}>
       {action('info', 'How to use SkipQ', 'A quick guide to ordering and pickup', () => setShowHowTo(true))}
       {action('support', 'Feedback & Support', 'Contact the SkipQ team', feedback)}
       {action('location', 'Campus and role', 'Review your campus setup', () => confirmAction('Review campus setup?', 'You will return to setup. Your saved orders stay safe.', restartOnboarding))}
       {action('logout', 'Log out', 'Sign out of this device', () => confirmAction('Log out?', 'You will return to the welcome screen.', logoutUser, true), true)}
-    </View>}
+    </View></>}
     {(dirty || saving || error) && <View style={s.saveBar}><Text accessibilityLiveRegion="polite" style={[s.copy, error && s.danger]}>{error || 'Unsaved profile changes'}</Text><View style={s.saveActions}><TouchableOpacity accessibilityRole="button" disabled={saving} onPress={discard} style={s.discard}><Text style={s.discardText}>Discard</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Save profile changes" disabled={saving} onPress={save} style={s.save}>{saving ? <ActivityIndicator color="#090b0d" /> : <><InterfaceIcon name="check" size={18} color="#090b0d" /><Text style={s.saveText}>Save changes</Text></>}</TouchableOpacity></View></View>}
   </ScrollView>
     <Modal visible={showHowTo} transparent animationType="fade" onRequestClose={() => setShowHowTo(false)}>

@@ -89,7 +89,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
       return;
     }
 
-    const prepMins = activeOrderObj.estimatedPrepMins || 5;
+    const prepMins = activeOrderObj.estimatedPrepMins ?? 5;
     const targetMs = new Date(activeOrderObj.timestamp).getTime() + prepMins * 60 * 1000;
 
     const tick = () => {
@@ -104,7 +104,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
 
   // Rating Modal state for past orders
   const [ratingTargetOrder, setRatingTargetOrder] = useState(null);
-  const [ratingStars, setRatingStars] = useState(5);
+  const [dishRatings, setDishRatings] = useState({});
   const [reviewComment, setReviewComment] = useState('');
 
   // Cart calculation
@@ -232,11 +232,21 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
 
   const handleOpenRating = (orderObj) => {
     setRatingTargetOrder(orderObj);
-    setRatingStars(orderObj.rating || 5);
+    setDishRatings(Object.fromEntries((orderObj.items || []).map(item => [item.id, orderObj.dishRatings?.[item.id] || 0])));
     setReviewComment(orderObj.review || '');
   };
 
-  const handleSubmitRating = () => { rateOrder(); setRatingTargetOrder(null); };
+  const [ratingSaving, setRatingSaving] = useState(false);
+  const handleSubmitRating = async () => {
+    if (!ratingTargetOrder || ratingSaving) return;
+    setRatingSaving(true);
+    const stars = Object.values(dishRatings);
+    if (!stars.length || stars.some(value => value < 1 || value > 5)) { setRatingSaving(false); Alert.alert('Rate each dish', 'Choose stars for each dish before submitting.'); return; }
+    const overall = Math.round(stars.reduce((sum, value) => sum + value, 0) / stars.length);
+    try { await rateOrder(ratingTargetOrder.id, overall, reviewComment, dishRatings); setRatingTargetOrder(null); }
+    catch (error) { Alert.alert('Review not saved', error.message || 'Please retry.'); }
+    finally { setRatingSaving(false); }
+  };
 
   const paymentApps = [{ id: 'Cash', label: `Cash at ${isStaffRoomDelivery ? 'delivery' : 'pickup'}` }, { id: 'UPI', label: 'UPI (Coming soon)', disabled: true }];
 
@@ -605,7 +615,7 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
             </View>
 
             <TouchableOpacity style={styles.viewPassBtn} onPress={onOpenPassModal} activeOpacity={0.85}>
-              <Text style={styles.viewPassBtnText}> View Full Digital Pickup Pass & Barcode </Text>
+              <Text style={styles.viewPassBtnText}> View digital pickup pass </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -734,18 +744,23 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
       <Modal visible={!!ratingTargetOrder} animationType="fade" transparent onRequestClose={() => setRatingTargetOrder(null)}>
         <View style={styles.ratingModalOverlay}>
           <View style={styles.ratingModalContent}>
-            <Text style={styles.ratingModalTitle}>Rate Your Campus Meal</Text>
+            <Text style={styles.ratingModalTitle}>How were your dishes?</Text>
             <Text style={styles.ratingModalSub}>{ratingTargetOrder?.canteenName || ratingTargetOrder?.shopName}</Text>
 
-            <View style={styles.starsRow}>
-              {[1, 2, 3, 4, 5].map(star => (
-                <TouchableOpacity key={star} onPress={() => setRatingStars(star)} style={styles.starTouch}>
-                  <Text style={[styles.starIcon, ratingStars >= star ? styles.starFilled : styles.starEmpty]}>
-
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <ScrollView style={{ maxHeight: 260 }}>
+              {(ratingTargetOrder?.items || []).map(item => <View key={item.id}>
+                <Text style={styles.ratingModalSub}>{item.name}</Text>
+                <View style={styles.starsRow}>
+                  {[1, 2, 3, 4, 5].map(star => (
+                    <TouchableOpacity key={star} disabled={ratingSaving} accessibilityRole="button"
+                      accessibilityLabel={`${item.name}: ${star} stars`} accessibilityState={{ selected: dishRatings[item.id] === star }}
+                      onPress={() => setDishRatings(current => ({ ...current, [item.id]: star }))} style={styles.starTouch}>
+                      <Text style={[styles.starIcon, dishRatings[item.id] >= star ? styles.starFilled : styles.starEmpty]}>{'\u2605'}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>)}
+            </ScrollView>
 
             <TextInput
               style={styles.ratingInput}
@@ -761,8 +776,8 @@ export default function StudentCartScreen({ onNavigateToExplore, onOpenPassModal
               <TouchableOpacity style={styles.cancelRatingBtn} onPress={() => setRatingTargetOrder(null)}>
                 <Text style={styles.cancelRatingText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.submitRatingBtn} onPress={handleSubmitRating}>
-                <Text style={styles.submitRatingText}>Submit Review</Text>
+              <TouchableOpacity style={[styles.submitRatingBtn, ratingSaving && { opacity: 0.6 }]} disabled={ratingSaving} onPress={handleSubmitRating}>
+                <Text style={styles.submitRatingText}>{ratingSaving ? 'Saving...' : 'Submit Review'}</Text>
               </TouchableOpacity>
             </View>
           </View>

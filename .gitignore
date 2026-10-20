@@ -58,3 +58,6 @@ website/icon.png
 
 # Local Android build artifacts
 /releases/
+
+# Downloadable Android artifacts
+/website/downloads/*.apk

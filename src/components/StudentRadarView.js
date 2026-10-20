@@ -1,4 +1,5 @@
 import DishPreview from './DishPreview';
+import DishRating from './DishRating';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { prepMinutes, prepLabel, itemCountLabel } from '../utils/orderDisplay.cjs';
 import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
@@ -374,6 +375,7 @@ export default function StudentRadarView({ onSelectOrderItem, onOpenCartCheckout
                       </Text>
                     )}
 
+                    <DishRating value={primaryShop.shopObj.dishRatings?.[primaryShop.itemId]} />
                     {/* Multiple Stalls Link */}
                     {hasMultipleStalls && (
                       <TouchableOpacity

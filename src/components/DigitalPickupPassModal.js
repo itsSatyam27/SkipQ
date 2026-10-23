@@ -1,10 +1,11 @@
+import SharePickupPass from './SharePickupPass';
 import useReducedMotion from '../hooks/useReducedMotion';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { orderDate } from '../utils/orderDisplay.cjs';
 import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
 import InterfaceIcon from './InterfaceIcon';
 import React, { useContext, useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Text, Modal, TouchableOpacity, Alert, ScrollView, Image, Share, Animated } from 'react-native';
+import { StyleSheet, View, Text, Modal, TouchableOpacity, Alert, ScrollView, Image, Animated } from 'react-native';
 import { AppContext } from '../context/AppContext';
 
 function PickupProgress({ percent, secondsLeft, ready, staffRoomDelivery }) {
@@ -28,9 +29,11 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
   const styles = useSellerStyles(baseStyles);
   const insets = useSafeAreaInsets();
   const scrollRef = useRef(null);
+  const [sharePreview, setSharePreview] = useState(false);
+  useEffect(() => { setSharePreview(false); }, [visible]);
 
   const { light } = useSellerTheme();
-  const { activeOrderId, orders, cancelOrder } = useContext(AppContext);
+  const { activeOrderId, orders, cancelOrder, canteens } = useContext(AppContext);
   const activeOrderObj = orders.find(o => o.id === activeOrderId);
   useEffect(() => { if (visible) scrollRef.current?.scrollTo({ y: 0, animated: false }); }, [visible, activeOrderId]);
 
@@ -92,16 +95,7 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
   const canCancel = Boolean(activeOrderObj) && !isCompleted && !isCancelled && !isAbandoned;
   const refundAmount = Number(activeOrderObj?.refundAmount || 0);
 
-  const handleSharePass = async () => {
-    try {
-      await Share.share({
-        title: `SkipQ Pickup Pass - Token ${activeOrderObj.tokenNumber}`,
-        message: ` *SkipQ Pickup Pass*\n Canteen: ${activeOrderObj.shopName}\n Token: ${activeOrderObj.tokenNumber}\n PIN: ${activeOrderObj.pickupPin}\n⏰ Timing: ${activeOrderObj.pickupSlot || 'Immediate'}\n${activeOrderObj.groupCollectorName ? ` Collector: ${activeOrderObj.groupCollectorName}\n` : ''}${activeOrderObj.staffRoomDelivery ? ` Staff room delivery: ${activeOrderObj.facultyRoomNote}\n` : ''}Show this ${activeOrderObj.staffRoomDelivery ? 'to the delivery staff' : 'to counter staff'} for order handover!`
-      });
-    } catch (err) {
-      console.log('Share pass note:', err);
-    }
-  };
+  const handleSharePass = () => setSharePreview(true);
 
   const handleCancelOrder = () => {
     if (!canCancel) return;
@@ -132,6 +126,7 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
       : activeOrderObj.paymentStatus === 'CONFIRMED_BY_MERCHANT'
         ? 'Payment verified by seller'
         : `Seller verification pending. Pay ₹${activeOrderObj.totalAmount} directly to the canteen and wait for seller confirmation.`;
+  if (visible && sharePreview) return <SharePickupPass key={activeOrderObj.id} order={activeOrderObj} shop={canteens?.find(shop => shop.id === activeOrderObj.shopId)} onClose={() => setSharePreview(false)} />;
   return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
     <View style={styles.overlay}><View style={[styles.sheet, { paddingTop: Math.max(14, insets.top), paddingBottom: Math.max(12, insets.bottom) }]}>
       <View style={styles.handle} />

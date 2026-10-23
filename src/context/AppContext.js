@@ -230,7 +230,26 @@ export function AppProvider({ children }) {
   };
   const updateMenuItem = (id, itemId, changes) => menuChange(id, menu => menu.map(item => item.id === itemId ? { ...item, ...changes, id: item.id, price: changes.price === undefined ? item.price : Number(changes.price) } : item));
   const deleteMenuItem = (id, itemId) => menuChange(id, menu => menu.filter(item => item.id !== itemId));
-  const toggleItemStock = (id, itemId) => menuChange(id, menu => menu.map(item => item.id === itemId ? { ...item, isAvailable: !item.isAvailable } : item));
+  const toggleItemStock = async (id, itemId) => {
+    const shop = ownShop(id || sellerShopId);
+    const currentItem = (shop.menu || []).find(item => item.id === itemId);
+    if (!currentItem) throw new Error('Dish no longer exists. Refresh the menu and try again.');
+    const nextAvailable = !currentItem.isAvailable;
+    const nextMenu = (shop.menu || []).map(item => item.id === itemId ? { ...item, isAvailable: nextAvailable } : item);
+    setCanteensState(previous => previous.map(item => item.id === shop.id ? { ...item, menu: nextMenu } : item));
+    try {
+      await updateMenuInDb(shop.id, nextMenu);
+      return nextMenu;
+    } catch (error) {
+      setCanteensState(previous => previous.map(item => item.id === shop.id ? {
+        ...item,
+        menu: (item.menu || []).map(dish => dish.id === itemId && dish.isAvailable === nextAvailable
+          ? { ...dish, isAvailable: currentItem.isAvailable }
+          : dish),
+      } : item));
+      throw error;
+    }
+  };
   const updateItemPrice = (id, itemId, price) => updateMenuItem(id, itemId, { price });
   const addToCart = (shop, item) => {
     const currentShop = canteens.find(canteen => canteen.id === shop.id);

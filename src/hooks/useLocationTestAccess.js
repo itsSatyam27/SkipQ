@@ -5,12 +5,12 @@ export default function useLocationTestAccess(uid) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     setGrant(null);
-    if (!__DEV__ || !uid || !db) return;
+    if (!uid || !db) return;
     const unsubscribe = onSnapshot(doc(db, 'locationTestAccess', uid), snap => {
       setGrant(snap.exists() ? { ...snap.data(), uid } : null); setNow(Date.now());
     }, () => setGrant(null));
     const timer = setInterval(() => setNow(Date.now()), 15000);
     return () => { unsubscribe(); clearInterval(timer); };
   }, [uid]);
-  return Boolean(__DEV__ && grant?.uid === uid && grant?.enabled === true && grant.expiresAt?.toMillis?.() > now);
+  return Boolean(grant?.uid === uid && grant?.enabled === true && grant.expiresAt?.toMillis?.() > now);
 }

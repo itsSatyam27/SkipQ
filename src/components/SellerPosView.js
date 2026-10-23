@@ -92,6 +92,23 @@ export default function SellerPosView({
   // Menu Management state
   const [menuSearch, setMenuSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
+  const [savingStockIds, setSavingStockIds] = useState(() => new Set());
+
+  const handleStockToggle = async itemId => {
+    if (savingStockIds.has(itemId)) return;
+    setSavingStockIds(previous => new Set(previous).add(itemId));
+    try {
+      await toggleItemStock(currentShop.id, itemId);
+    } catch (error) {
+      Alert.alert('Could not update stock', error.message);
+    } finally {
+      setSavingStockIds(previous => {
+        const next = new Set(previous);
+        next.delete(itemId);
+        return next;
+      });
+    }
+  };
 
   const campusCanteens = canteens.filter(c => c.universityId === university && c.ownerId === userProfile?.uid);
   const currentShop = useMemo(() => {
@@ -647,7 +664,8 @@ export default function SellerPosView({
                     </Text>
                     <Switch
                       value={item.isAvailable}
-                      onValueChange={() => toggleItemStock(currentShop.id, item.id).catch(error => Alert.alert('Could not update stock', error.message))}
+                      onValueChange={() => handleStockToggle(item.id)}
+                      disabled={savingStockIds.has(item.id)}
                       trackColor={{ false: '#f43f5e', true: '#10b981' }}
                       thumbColor="#ffffff"
                     />

@@ -966,21 +966,28 @@ dialog select {
 }
 
 .record-dialog {
-  width: min(620px, calc(100% - 24px));
-  max-height: calc(100vh - 24px);
-  margin: 12px 12px 12px auto;
-  border-radius: 24px;
-  overflow: auto
+  position: fixed;
+  inset: 16px 16px 16px auto;
+  width: min(590px, calc(100% - 32px));
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  transform: none;
+  border-color: #3b3b40;
+  border-radius: 26px;
+  overflow: hidden;
+  background: linear-gradient(155deg, #171719 0%, #101011 38%);
+  box-shadow: 0 32px 100px #000e, 0 0 0 1px #ffffff08
 }
 
 .record-dialog[open] {
-  animation: drawer-in .32s var(--ease)
+  animation: modal-in .24s var(--ease)
 }
 
-@keyframes drawer-in {
+@keyframes modal-in {
   from {
     opacity: 0;
-    transform: translateX(26px)
+    transform: translateX(24px) scale(.99)
   }
 }
 
@@ -989,8 +996,9 @@ dialog select {
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--line)
+  padding: 24px 26px 20px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(110deg, #ffb3130d, transparent 45%)
 }
 
 .record-dialog-head h2 {
@@ -1014,7 +1022,11 @@ dialog select {
 }
 
 #record-content {
-  padding-top: 20px
+  max-height: calc(100vh - 137px);
+  max-height: calc(100dvh - 137px);
+  overscroll-behavior: contain;
+  padding: 22px 26px 26px;
+  overflow: auto
 }
 
 .detail-hero {
@@ -1023,10 +1035,36 @@ dialog select {
   justify-content: space-between;
   gap: 16px;
   padding: 18px;
-  background: var(--raise);
+  background: #1a1a1d;
   border: 1px solid var(--line2);
   border-radius: 16px;
   margin-bottom: 16px
+}
+
+.detail-hero .who strong,
+.detail-hero .who small {
+  display: block
+}
+
+.detail-hero .who {
+  flex: 1;
+  min-width: 0
+}
+
+.detail-hero .who>div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px
+}
+
+.detail-hero .who small {
+  max-width: 100%;
+  margin-top: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap
 }
 
 .detail-hero>div>strong {
@@ -1053,6 +1091,21 @@ dialog select {
   padding: 16px;
   background: var(--panel)
 }
+
+.detail-row:last-child:nth-child(odd) {
+  grid-column: 1 / -1
+}
+
+.drawer-profile{display:flex;align-items:center;gap:14px;padding-bottom:22px;border-bottom:1px solid var(--line)}
+.drawer-profile>div{min-width:0;flex:1}.drawer-profile strong,.drawer-profile small{display:block}.drawer-profile strong{font-size:20px;letter-spacing:-.3px}.drawer-profile small{margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.drawer-avatar{display:grid;place-items:center;width:54px;height:54px;flex:none;border-radius:17px;background:linear-gradient(145deg,#5a4100,#2b2004);border:1px solid #ffb31333;color:var(--amber);font-size:20px;font-weight:700;text-transform:uppercase}
+.drawer-section-title{margin:26px 0 10px;color:var(--muted);font-size:13px;font-weight:600}
+.drawer-list{border-top:1px solid var(--line)}.drawer-list>div{display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:64px;padding:14px 0;border-bottom:1px solid var(--line)}.drawer-list span{color:var(--muted);font-size:14px}.drawer-list strong{font-size:14px;text-align:right}.drawer-list.compact{border-top:0}.drawer-list.compact>div:last-child{border-bottom:0}
+.drawer-code{max-width:62%;overflow-wrap:anywhere;font-family:var(--mono);font-size:12px!important;font-weight:500!important}
+.moderation-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.moderation-grid article{min-height:112px;padding:18px;border-radius:17px;background:var(--raise);border:1px solid var(--line)}.moderation-grid span{display:block;color:var(--muted);font-size:13px}.moderation-grid strong{display:block;margin-top:20px;font-size:24px}
+.drawer-card-list,.drawer-note{padding:18px;border:1px solid var(--line);border-radius:17px;background:#131315}.drawer-card-list .item-line:first-child{padding-top:0}.drawer-card-list .item-line:last-child{padding-bottom:0}.drawer-card-list .item-line>span>small{display:block;margin-top:5px;color:var(--muted);font-size:12px}.drawer-note{color:#d8d6dc;font-size:14px;line-height:1.7;overflow-wrap:anywhere}
+.drawer-actions{position:sticky;bottom:-26px;display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:24px -26px -26px;padding:20px 26px;background:#101011f2;border-top:1px solid var(--line)}.drawer-actions button{width:100%}
+.drawer-actions button:only-child{grid-column:1/-1}
 
 .detail-row>span {
   display: block;
@@ -1338,7 +1391,10 @@ td:last-child:has(.row-menu) {
   }
 
   .record-dialog {
-    margin: auto 0 0;
+    position: fixed;
+    inset: auto 0 0;
+    margin: 0;
+    transform: none;
     width: 100%;
     max-width: none;
     max-height: 88vh;
@@ -1359,6 +1415,8 @@ td:last-child:has(.row-menu) {
   .detail-grid {
     grid-template-columns: 1fr
   }
+
+  .moderation-grid{grid-template-columns:1fr 1fr}
 }
 
 @media(prefers-reduced-motion:reduce) {
@@ -1370,3 +1428,14 @@ td:last-child:has(.row-menu) {
     transition-duration: .01ms !important
   }
 }
+
+/* record drawer polish */
+.record-dialog-head h2{letter-spacing:-.4px}
+.drawer-profile strong{overflow-wrap:anywhere}
+.moderation-grid article{min-height:96px;transition:border-color .2s}
+.moderation-grid article:hover{border-color:var(--line2)}
+.moderation-grid strong{margin-top:14px}
+.drawer-list>div{min-height:58px}
+.drawer-actions{backdrop-filter:blur(10px)}
+.record-dialog::backdrop{background:#000a;backdrop-filter:blur(8px)}
+@media(max-width:760px){#record-content{padding:18px 20px 22px}.drawer-actions{margin:24px -20px -22px;padding:16px 20px calc(16px + env(safe-area-inset-bottom,0px));bottom:-22px}}

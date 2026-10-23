@@ -17,7 +17,7 @@
   <body>
     <div id="app">
       <main class="login">
-        <div class="brand">Q<span>SkipQ</span></div>
+        <div class="brand"><img class="brand-icon" src="./icon.png" alt="" /><span>SkipQ</span></div>
         <p>Loading your workspace…</p>
       </main>
     </div>
@@ -86,6 +86,16 @@
           </button>
         </div>
       </form>
+    </dialog>
+    <dialog id="record-dialog" class="record-dialog">
+      <div class="record-dialog-head">
+        <div>
+          <div id="record-eyebrow" class="eyebrow">RECORD DETAILS</div>
+          <h2 id="record-title">Details</h2>
+        </div>
+        <button type="button" id="close-record" class="secondary icon-button" aria-label="Close details">&times;</button>
+      </div>
+      <div id="record-content"></div>
     </dialog>
     <script src="./config.js"></script>
     <script type="module" src="./app.js"></script>

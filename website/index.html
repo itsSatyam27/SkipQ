@@ -1,213 +1,1252 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#ffb82e">
-<meta name="description" content="SkipQ helps Silver Oak University students order from campus canteens, skip the queue, and pick up when their food is ready.">
-<meta property="og:title" content="SkipQ — Campus food, without the queue">
-<meta property="og:description" content="Find campus food, order ahead, and pick it up when it is ready.">
-<meta property="og:url" content="https://skipyourqueue.web.app/">
-<link rel="icon" href="./icon.png" type="image/png">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Instrument+Serif:ital@1&display=swap" rel="stylesheet">
-<title>SkipQ — Campus food, without the queue</title>
-<style>
-:root{--cream:#f6f0e2;--ink:#15130d;--amber:#ffb82e;--red:#ff5a36;--green:#35c27a;--e:cubic-bezier(.2,.9,.2,1);font-family:"Bricolage Grotesque",sans-serif}
-*{box-sizing:border-box;margin:0}
-html{scroll-behavior:smooth;overflow-x:clip}
-body{background:var(--cream);color:var(--ink);overflow-x:clip;-webkit-font-smoothing:antialiased}
-a{color:inherit;text-decoration:none}
-em{font:italic 400 1em "Instrument Serif",serif;letter-spacing:0}
-.w{width:min(1200px,calc(100% - 48px));margin-inline:auto}
-/* nav */
-nav{position:fixed;z-index:10;top:16px;left:50%;translate:-50% 0;display:flex;align-items:center;gap:28px;padding:8px 8px 8px 20px;background:var(--ink);color:var(--cream);border-radius:99px;box-shadow:0 12px 40px #0003;font-size:14px;font-weight:600}
-nav .b{display:flex;align-items:center;gap:8px;font-weight:800;font-size:18px}.b img{width:24px;height:24px;border-radius:8px}.b i{color:var(--amber);font-style:normal}
-nav a.l{opacity:.7;transition:.2s}nav a.l:hover{opacity:1}
-.btn{display:inline-flex;align-items:center;gap:10px;padding:14px 24px;border-radius:99px;background:var(--amber);color:var(--ink);font-weight:800;font-size:15px;border:2px solid var(--ink);box-shadow:4px 4px 0 var(--ink);transition:transform .2s var(--e),box-shadow .2s var(--e)}
-.btn:hover{transform:translate(-2px,-2px);box-shadow:7px 7px 0 var(--ink)}.btn:active{transform:translate(3px,3px);box-shadow:1px 1px 0 var(--ink)}
-nav .btn{padding:9px 16px;font-size:13px;border:0;box-shadow:none}nav .btn:hover{box-shadow:none;transform:scale(1.05)}
-/* hero */
-.hero{min-height:100svh;padding:120px 0 40px;display:flex;flex-direction:column;justify-content:center;position:relative}
-.tag{display:inline-flex;gap:8px;align-items:center;padding:7px 14px;border:2px solid var(--ink);border-radius:99px;font:700 12px "Bricolage Grotesque";letter-spacing:.5px;rotate:-2deg;background:#fff}
-.tag:before{content:"";width:8px;height:8px;border-radius:50%;background:var(--green);animation:p 1.6s infinite}@keyframes p{50%{opacity:.3}}
-h1{font-size:clamp(64px,13.5vw,196px);line-height:.84;letter-spacing:-.06em;font-weight:800;margin:26px 0 30px}
-h1 span{display:block}h1 .s{display:inline-block;position:relative}
-h1 .s:after{content:"";position:absolute;left:-1%;right:-1%;top:52%;height:.09em;background:var(--red);border-radius:9px;transform:scaleX(0);transform-origin:left;animation:strike 1s .9s var(--e) forwards}
-@keyframes strike{to{transform:none}}
-h1 em{color:var(--red);font-size:1.03em}
-.hero-row{display:flex;justify-content:space-between;align-items:flex-end;gap:30px;flex-wrap:wrap}
-.hero-row p{max-width:420px;font-size:19px;line-height:1.45;font-weight:500}
-.cta{display:flex;gap:20px;align-items:center;flex-wrap:wrap}.cta small{font-weight:600;opacity:.65}
-.sticker{position:absolute;right:2%;top:150px;width:150px;height:150px;border-radius:50%;background:var(--red);color:#fff;display:grid;place-items:center;text-align:center;font-weight:800;font-size:19px;line-height:1.05;rotate:12deg;animation:wob 5s ease-in-out infinite;border:2px solid var(--ink);box-shadow:4px 4px 0 var(--ink)}
-@keyframes wob{50%{rotate:-6deg;scale:1.06}}
-/* marquee */
-.mq{background:var(--ink);color:var(--cream);overflow:hidden;padding:16px 0;rotate:-1.2deg;margin:30px -20px 0;border-block:3px solid var(--amber)}
-.mq div{display:flex;gap:40px;width:max-content;animation:m 28s linear infinite;font-size:34px;font-weight:800;letter-spacing:-.03em;white-space:nowrap}
-.mq b{color:var(--amber)}@keyframes m{to{translate:-50%}}
-/* demo */
-.demo{padding:140px 0 100px;text-align:center}
-h2{font-size:clamp(42px,7.5vw,104px);line-height:.9;letter-spacing:-.05em;font-weight:800}
-h2 em{color:var(--red)}
-.sub{margin:18px auto 0;max-width:480px;font-size:18px;font-weight:500;opacity:.75}
-.stage{margin:54px auto 0;background:#fff;border:2px solid var(--ink);border-radius:32px;padding:34px 28px 30px;box-shadow:8px 8px 0 var(--ink);max-width:980px}
-.door{display:flex;justify-content:space-between;font-weight:800;font-size:13px;letter-spacing:1px;margin-bottom:10px}
-.lane{position:relative;height:84px;border-bottom:4px dashed var(--ink)}
-.p{position:absolute;bottom:6px;width:54px;height:62px;display:grid;place-items:center;font-size:40px;transition:left .9s var(--e);left:0}
-.p.me{font-size:0}.p.me:before{content:"🙋";font-size:44px}
-.p.me:after{content:"YOU";position:absolute;top:-8px;left:50%;translate:-50% 0;background:var(--ink);color:var(--amber);font:800 11px "Bricolage Grotesque";padding:3px 8px;border-radius:99px}
-.counter{position:absolute;right:0;bottom:6px;font-size:44px}
-.stats{display:flex;justify-content:space-between;align-items:center;margin-top:26px;gap:20px;flex-wrap:wrap}
-.clock{font-size:clamp(46px,8vw,92px);font-weight:800;letter-spacing:-.05em;line-height:1;text-align:left}
-.clock small{display:block;font:700 12px "Bricolage Grotesque";letter-spacing:1px;opacity:.55;margin-bottom:6px}
-.clock.fast{color:var(--green)}
-.tog{display:flex;border:2px solid var(--ink);border-radius:99px;padding:4px;background:var(--cream)}
-.tog button{font:800 14px "Bricolage Grotesque";border:0;background:none;padding:12px 22px;border-radius:99px;cursor:pointer;color:var(--ink);transition:.3s}
-.tog button.on{background:var(--ink);color:var(--amber)}
-.note{margin-top:20px;font-size:12px;opacity:.5;font-weight:600}
-/* steps */
-.steps{background:var(--amber);border-block:3px solid var(--ink);padding:110px 0}
-.row{display:grid;grid-template-columns:120px 1fr 1.1fr;align-items:center;gap:30px;padding:34px 0;border-top:3px solid var(--ink);transition:.4s var(--e);cursor:default}
-.row:last-child{border-bottom:3px solid var(--ink)}
-.row:hover{padding-left:24px;background:var(--ink);color:var(--amber);margin-inline:-24px;padding-right:24px}
-.row .n{font-size:84px;font-weight:800;letter-spacing:-.06em;line-height:1}
-.row h3{font-size:clamp(30px,4.2vw,56px);letter-spacing:-.04em;line-height:.95}
-.row p{font-size:18px;font-weight:500;line-height:1.4}
-.steps h2{margin-bottom:60px}
-/* bento */
-.feat{padding:120px 0}
-.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:16px;margin-top:56px}
-.c{border:2px solid var(--ink);border-radius:28px;padding:30px;background:#fff;box-shadow:5px 5px 0 var(--ink);transition:transform .35s var(--e);min-height:240px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;position:relative}
-.c:hover{transform:translateY(-6px) rotate(-.6deg)}
-.c h3{font-size:30px;letter-spacing:-.04em;line-height:1;margin-bottom:10px}.c p{font-weight:500;line-height:1.45;opacity:.8;max-width:340px}
-.c .e{font-size:64px;line-height:1}
-.c1{grid-column:span 3;background:var(--red);color:#fff}.c2{grid-column:span 3;background:var(--ink);color:var(--cream)}
-.c3{grid-column:span 2;background:var(--green)}.c4{grid-column:span 4;background:#fff}
-.pass{display:flex;gap:6px;margin-top:18px}.pass i{height:10px;flex:1;border-radius:9px;background:#fff4}.pass i.o{background:#fff;animation:p 1.4s infinite}.pass i:nth-child(-n+2){background:#fff}
-.price{font-size:110px;font-weight:800;letter-spacing:-.08em;line-height:.8;color:var(--red)}
-/* sellers */
-.sell{background:var(--ink);color:var(--cream);padding:130px 0;overflow:hidden}
-.sg{display:grid;grid-template-columns:1fr 1fr;gap:70px;align-items:center}
-.sell h2 em{color:var(--amber)}.sell .sub{margin:20px 0 30px;max-width:440px;opacity:.7}
-.who{display:flex;gap:10px;flex-wrap:wrap}.who span{border:2px solid #fff3;border-radius:99px;padding:10px 18px;font-weight:700;font-size:14px}
-.tix{display:grid;gap:14px;perspective:900px}
-.t{background:var(--cream);color:var(--ink);border-radius:18px;padding:18px 22px;display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center;font-weight:700;opacity:0;translate:60px 0;transition:.8s var(--e);rotate:var(--r)}
-.t.in{opacity:1;translate:0}.t small{display:block;opacity:.5;font-size:11px;letter-spacing:1px}
-.t .e{font-size:34px}.chip{padding:6px 12px;border-radius:99px;font-size:12px;font-weight:800;background:var(--amber)}.chip.g{background:var(--green)}.chip.n{background:#ddd}
-.rush{display:inline-flex;gap:8px;align-items:center;margin-bottom:18px;background:var(--amber);color:var(--ink);padding:8px 14px;border-radius:99px;font-weight:800;font-size:13px}
-/* faq */
-.faq{padding:120px 0}.fq{margin-top:50px}
-details{border-top:3px solid var(--ink)}details:last-child{border-bottom:3px solid var(--ink)}
-summary{display:flex;justify-content:space-between;align-items:center;padding:26px 0;font-size:clamp(24px,3.4vw,40px);font-weight:800;letter-spacing:-.04em;cursor:pointer;list-style:none}
-summary::-webkit-details-marker{display:none}summary i{font-style:normal;width:46px;height:46px;border-radius:50%;background:var(--amber);border:2px solid var(--ink);display:grid;place-items:center;font-size:26px;transition:rotate .4s var(--e);flex:none}
-details[open] summary i{rotate:135deg}details p{padding:0 70px 28px 0;font-size:18px;font-weight:500;line-height:1.5;opacity:.75;max-width:760px}
-/* end */
-.end{background:var(--red);color:#fff;text-align:center;padding:130px 0 0;border-top:3px solid var(--ink);overflow:hidden}
-.end h2{font-size:clamp(52px,10vw,150px)}.end h2 em{color:var(--amber)}.end .btn{margin-top:40px;background:#fff;font-size:18px;padding:20px 34px}
-.end small{display:block;margin-top:18px;font-weight:600;opacity:.8}
-.big{font-size:clamp(120px,31vw,460px);font-weight:800;letter-spacing:-.08em;line-height:.74;margin-top:70px;color:var(--ink);translate:0 8%;white-space:nowrap}
-.big i{color:var(--amber);font-style:normal}
-footer{background:var(--ink);color:var(--cream);padding:22px 0;font-size:13px;font-weight:600}footer .w{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.rv{opacity:0;translate:0 40px;transition:1s var(--e)}.rv.in{opacity:1;translate:0}
-@media(max-width:860px){nav .l{display:none}.sticker{display:none}.row{grid-template-columns:60px 1fr}.row p{grid-column:2}.row .n{font-size:48px}.row:hover{margin-inline:0}
-.grid>*{grid-column:span 6!important}.sg{grid-template-columns:1fr;gap:44px}details p{padding-right:0}.hero-row p{font-size:17px}}
-@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.rv,.t{opacity:1;translate:0}h1 .s:after{transform:none}}
-</style>
-</head>
-<body>
-<nav><a class="b" href="#"><img src="./icon.png" alt=""><span>Skip<i>Q</i></span></a><a class="l" href="#demo">Try it</a><a class="l" href="#how">How</a><a class="l" href="#sellers">Sellers</a><a class="l" href="#faq">FAQ</a>
-<a class="btn" href="https://github.com/itsSatyam27/SkipQ/releases/download/v1.0.0/SkipQ-1.0.0-v8.apk">Get app ↗</a></nav>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffb82e" />
+    <meta
+      name="description"
+      content="SkipQ helps Silver Oak University students order from campus canteens, skip the queue, and pick up when their food is ready."
+    />
+    <meta
+      property="og:title"
+      content="SkipQ — Campus food, without the queue"
+    />
+    <meta
+      property="og:description"
+      content="Find campus food, order ahead, and pick it up when it is ready."
+    />
+    <meta property="og:url" content="https://skipyourqueue.web.app/" />
+    <link rel="icon" href="./icon.png" type="image/png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Instrument+Serif:ital@1&display=swap"
+      rel="stylesheet"
+    />
+    <title>SkipQ — Campus food, without the queue</title>
+    <style>
+      :root {
+        --cream: #f6f0e2;
+        --ink: #15130d;
+        --amber: #ffb82e;
+        --red: #ff5a36;
+        --green: #35c27a;
+        --e: cubic-bezier(0.2, 0.9, 0.2, 1);
+        font-family: "Bricolage Grotesque", sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html {
+        scroll-behavior: smooth;
+        overflow-x: clip;
+      }
+      body {
+        background: var(--cream);
+        color: var(--ink);
+        overflow-x: clip;
+        -webkit-font-smoothing: antialiased;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      em {
+        font:
+          italic 400 1em "Instrument Serif",
+          serif;
+        letter-spacing: 0;
+      }
+      .w {
+        width: min(1200px, calc(100% - 48px));
+        margin-inline: auto;
+      }
+      /* nav */
+      nav {
+        position: fixed;
+        z-index: 10;
+        top: 16px;
+        left: 50%;
+        translate: -50% 0;
+        display: flex;
+        align-items: center;
+        gap: 28px;
+        padding: 8px 8px 8px 20px;
+        background: var(--ink);
+        color: var(--cream);
+        border-radius: 99px;
+        box-shadow: 0 12px 40px #0003;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      nav .b {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 800;
+        font-size: 18px;
+      }
+      .b img {
+        width: 24px;
+        height: 24px;
+        border-radius: 8px;
+      }
+      .b i {
+        color: var(--amber);
+        font-style: normal;
+      }
+      nav a.l {
+        opacity: 0.7;
+        transition: 0.2s;
+      }
+      nav a.l:hover {
+        opacity: 1;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 24px;
+        border-radius: 99px;
+        background: var(--amber);
+        color: var(--ink);
+        font-weight: 800;
+        font-size: 15px;
+        border: 2px solid var(--ink);
+        box-shadow: 4px 4px 0 var(--ink);
+        transition:
+          transform 0.2s var(--e),
+          box-shadow 0.2s var(--e);
+      }
+      .btn:hover {
+        transform: translate(-2px, -2px);
+        box-shadow: 7px 7px 0 var(--ink);
+      }
+      .btn:active {
+        transform: translate(3px, 3px);
+        box-shadow: 1px 1px 0 var(--ink);
+      }
+      nav .btn {
+        padding: 9px 16px;
+        font-size: 13px;
+        border: 0;
+        box-shadow: none;
+      }
+      nav .btn:hover {
+        box-shadow: none;
+        transform: scale(1.05);
+      }
+      /* hero */
+      .hero {
+        min-height: 100svh;
+        padding: 120px 0 40px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        position: relative;
+      }
+      .tag {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        padding: 7px 14px;
+        border: 2px solid var(--ink);
+        border-radius: 99px;
+        font: 700 12px "Bricolage Grotesque";
+        letter-spacing: 0.5px;
+        rotate: -2deg;
+        background: #fff;
+      }
+      .tag:before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+        animation: p 1.6s infinite;
+      }
+      @keyframes p {
+        50% {
+          opacity: 0.3;
+        }
+      }
+      h1 {
+        font-size: clamp(64px, 13.5vw, 196px);
+        line-height: 0.84;
+        letter-spacing: -0.06em;
+        font-weight: 800;
+        margin: 26px 0 30px;
+      }
+      h1 span {
+        display: block;
+      }
+      h1 .s {
+        display: inline-block;
+        position: relative;
+      }
+      h1 .s:after {
+        content: "";
+        position: absolute;
+        left: -1%;
+        right: -1%;
+        top: 52%;
+        height: 0.09em;
+        background: var(--red);
+        border-radius: 9px;
+        transform: scaleX(0);
+        transform-origin: left;
+        animation: strike 1s 0.9s var(--e) forwards;
+      }
+      @keyframes strike {
+        to {
+          transform: none;
+        }
+      }
+      h1 em {
+        color: var(--red);
+        font-size: 1.03em;
+      }
+      .hero-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 30px;
+        flex-wrap: wrap;
+      }
+      .hero-row p {
+        max-width: 420px;
+        font-size: 19px;
+        line-height: 1.45;
+        font-weight: 500;
+      }
+      .cta {
+        display: flex;
+        gap: 20px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .cta small {
+        font-weight: 600;
+        opacity: 0.65;
+      }
+      .sticker {
+        position: absolute;
+        right: 2%;
+        top: 150px;
+        width: 150px;
+        height: 150px;
+        border-radius: 50%;
+        background: var(--red);
+        color: #fff;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        font-weight: 800;
+        font-size: 19px;
+        line-height: 1.05;
+        rotate: 12deg;
+        animation: wob 5s ease-in-out infinite;
+        border: 2px solid var(--ink);
+        box-shadow: 4px 4px 0 var(--ink);
+      }
+      @keyframes wob {
+        50% {
+          rotate: -6deg;
+          scale: 1.06;
+        }
+      }
+      /* marquee */
+      .mq {
+        background: var(--ink);
+        color: var(--cream);
+        overflow: hidden;
+        padding: 16px 0;
+        rotate: -1.2deg;
+        margin: 30px -20px 0;
+        border-block: 3px solid var(--amber);
+      }
+      .mq div {
+        display: flex;
+        gap: 40px;
+        width: max-content;
+        animation: m 28s linear infinite;
+        font-size: 34px;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        white-space: nowrap;
+      }
+      .mq b {
+        color: var(--amber);
+      }
+      @keyframes m {
+        to {
+          translate: -50%;
+        }
+      }
+      /* demo */
+      .demo {
+        padding: 140px 0 100px;
+        text-align: center;
+      }
+      h2 {
+        font-size: clamp(42px, 7.5vw, 104px);
+        line-height: 0.9;
+        letter-spacing: -0.05em;
+        font-weight: 800;
+      }
+      h2 em {
+        color: var(--red);
+      }
+      .sub {
+        margin: 18px auto 0;
+        max-width: 480px;
+        font-size: 18px;
+        font-weight: 500;
+        opacity: 0.75;
+      }
+      .stage {
+        margin: 54px auto 0;
+        background: #fff;
+        border: 2px solid var(--ink);
+        border-radius: 32px;
+        padding: 34px 28px 30px;
+        box-shadow: 8px 8px 0 var(--ink);
+        max-width: 980px;
+      }
+      .door {
+        display: flex;
+        justify-content: space-between;
+        font-weight: 800;
+        font-size: 13px;
+        letter-spacing: 1px;
+        margin-bottom: 10px;
+      }
+      .lane {
+        position: relative;
+        height: 84px;
+        border-bottom: 4px dashed var(--ink);
+      }
+      .p {
+        position: absolute;
+        bottom: 6px;
+        width: 54px;
+        height: 62px;
+        display: grid;
+        place-items: center;
+        font-size: 40px;
+        transition: left 0.9s var(--e);
+        left: 0;
+      }
+      .p.me {
+        font-size: 0;
+      }
+      .p.me:before {
+        content: "🙋";
+        font-size: 44px;
+      }
+      .p.me:after {
+        content: "YOU";
+        position: absolute;
+        top: -8px;
+        left: 50%;
+        translate: -50% 0;
+        background: var(--ink);
+        color: var(--amber);
+        font: 800 11px "Bricolage Grotesque";
+        padding: 3px 8px;
+        border-radius: 99px;
+      }
+      .counter {
+        position: absolute;
+        right: 0;
+        bottom: 6px;
+        font-size: 44px;
+      }
+      .stats {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 26px;
+        gap: 20px;
+        flex-wrap: wrap;
+      }
+      .clock {
+        font-size: clamp(46px, 8vw, 92px);
+        font-weight: 800;
+        letter-spacing: -0.05em;
+        line-height: 1;
+        text-align: left;
+      }
+      .clock small {
+        display: block;
+        font: 700 12px "Bricolage Grotesque";
+        letter-spacing: 1px;
+        opacity: 0.55;
+        margin-bottom: 6px;
+      }
+      .clock.fast {
+        color: var(--green);
+      }
+      .tog {
+        display: flex;
+        border: 2px solid var(--ink);
+        border-radius: 99px;
+        padding: 4px;
+        background: var(--cream);
+      }
+      .tog button {
+        font: 800 14px "Bricolage Grotesque";
+        border: 0;
+        background: none;
+        padding: 12px 22px;
+        border-radius: 99px;
+        cursor: pointer;
+        color: var(--ink);
+        transition: 0.3s;
+      }
+      .tog button.on {
+        background: var(--ink);
+        color: var(--amber);
+      }
+      .note {
+        margin-top: 20px;
+        font-size: 12px;
+        opacity: 0.5;
+        font-weight: 600;
+      }
+      /* steps */
+      .steps {
+        background: var(--amber);
+        border-block: 3px solid var(--ink);
+        padding: 110px 0;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 120px 1fr 1.1fr;
+        align-items: center;
+        gap: 30px;
+        padding: 34px 0;
+        border-top: 3px solid var(--ink);
+        transition: 0.4s var(--e);
+        cursor: default;
+      }
+      .row:last-child {
+        border-bottom: 3px solid var(--ink);
+      }
+      .row:hover {
+        padding-left: 24px;
+        background: var(--ink);
+        color: var(--amber);
+        margin-inline: -24px;
+        padding-right: 24px;
+      }
+      .row .n {
+        font-size: 84px;
+        font-weight: 800;
+        letter-spacing: -0.06em;
+        line-height: 1;
+      }
+      .row h3 {
+        font-size: clamp(30px, 4.2vw, 56px);
+        letter-spacing: -0.04em;
+        line-height: 0.95;
+      }
+      .row p {
+        font-size: 18px;
+        font-weight: 500;
+        line-height: 1.4;
+      }
+      .steps h2 {
+        margin-bottom: 60px;
+      }
+      /* bento */
+      .feat {
+        padding: 120px 0;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 16px;
+        margin-top: 56px;
+      }
+      .c {
+        border: 2px solid var(--ink);
+        border-radius: 28px;
+        padding: 30px;
+        background: #fff;
+        box-shadow: 5px 5px 0 var(--ink);
+        transition: transform 0.35s var(--e);
+        min-height: 240px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        overflow: hidden;
+        position: relative;
+      }
+      .c:hover {
+        transform: translateY(-6px) rotate(-0.6deg);
+      }
+      .c h3 {
+        font-size: 30px;
+        letter-spacing: -0.04em;
+        line-height: 1;
+        margin-bottom: 10px;
+      }
+      .c p {
+        font-weight: 500;
+        line-height: 1.45;
+        opacity: 0.8;
+        max-width: 340px;
+      }
+      .c .e {
+        font-size: 64px;
+        line-height: 1;
+      }
+      .c1 {
+        grid-column: span 3;
+        background: var(--red);
+        color: #fff;
+      }
+      .c2 {
+        grid-column: span 3;
+        background: var(--ink);
+        color: var(--cream);
+      }
+      .c3 {
+        grid-column: span 2;
+        background: var(--green);
+      }
+      .c4 {
+        grid-column: span 4;
+        background: #fff;
+      }
+      .pass {
+        display: flex;
+        gap: 6px;
+        margin-top: 18px;
+      }
+      .pass i {
+        height: 10px;
+        flex: 1;
+        border-radius: 9px;
+        background: #fff4;
+      }
+      .pass i.o {
+        background: #fff;
+        animation: p 1.4s infinite;
+      }
+      .pass i:nth-child(-n + 2) {
+        background: #fff;
+      }
+      .price {
+        font-size: 110px;
+        font-weight: 800;
+        letter-spacing: -0.08em;
+        line-height: 0.8;
+        color: var(--red);
+      }
+      /* sellers */
+      .sell {
+        background: var(--ink);
+        color: var(--cream);
+        padding: 130px 0;
+        overflow: hidden;
+      }
+      .sg {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 70px;
+        align-items: center;
+      }
+      .sell h2 em {
+        color: var(--amber);
+      }
+      .sell .sub {
+        margin: 20px 0 30px;
+        max-width: 440px;
+        opacity: 0.7;
+      }
+      .who {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .who span {
+        border: 2px solid #fff3;
+        border-radius: 99px;
+        padding: 10px 18px;
+        font-weight: 700;
+        font-size: 14px;
+      }
+      .tix {
+        display: grid;
+        gap: 14px;
+        perspective: 900px;
+      }
+      .t {
+        background: var(--cream);
+        color: var(--ink);
+        border-radius: 18px;
+        padding: 18px 22px;
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 16px;
+        align-items: center;
+        font-weight: 700;
+        opacity: 0;
+        translate: 60px 0;
+        transition: 0.8s var(--e);
+        rotate: var(--r);
+      }
+      .t.in {
+        opacity: 1;
+        translate: 0;
+      }
+      .t small {
+        display: block;
+        opacity: 0.5;
+        font-size: 11px;
+        letter-spacing: 1px;
+      }
+      .t .e {
+        font-size: 34px;
+      }
+      .chip {
+        padding: 6px 12px;
+        border-radius: 99px;
+        font-size: 12px;
+        font-weight: 800;
+        background: var(--amber);
+      }
+      .chip.g {
+        background: var(--green);
+      }
+      .chip.n {
+        background: #ddd;
+      }
+      .rush {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 18px;
+        background: var(--amber);
+        color: var(--ink);
+        padding: 8px 14px;
+        border-radius: 99px;
+        font-weight: 800;
+        font-size: 13px;
+      }
+      /* faq */
+      .faq {
+        padding: 120px 0;
+      }
+      .fq {
+        margin-top: 50px;
+      }
+      details {
+        border-top: 3px solid var(--ink);
+      }
+      details:last-child {
+        border-bottom: 3px solid var(--ink);
+      }
+      summary {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 26px 0;
+        font-size: clamp(24px, 3.4vw, 40px);
+        font-weight: 800;
+        letter-spacing: -0.04em;
+        cursor: pointer;
+        list-style: none;
+      }
+      summary::-webkit-details-marker {
+        display: none;
+      }
+      summary i {
+        font-style: normal;
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        background: var(--amber);
+        border: 2px solid var(--ink);
+        display: grid;
+        place-items: center;
+        font-size: 26px;
+        transition: rotate 0.4s var(--e);
+        flex: none;
+      }
+      details[open] summary i {
+        rotate: 135deg;
+      }
+      details p {
+        padding: 0 70px 28px 0;
+        font-size: 18px;
+        font-weight: 500;
+        line-height: 1.5;
+        opacity: 0.75;
+        max-width: 760px;
+      }
+      /* end */
+      .end {
+        background: var(--red);
+        color: #fff;
+        text-align: center;
+        padding: 130px 0 0;
+        border-top: 3px solid var(--ink);
+        overflow: hidden;
+      }
+      .end h2 {
+        font-size: clamp(52px, 10vw, 150px);
+      }
+      .end h2 em {
+        color: var(--amber);
+      }
+      .end .btn {
+        margin-top: 40px;
+        background: #fff;
+        font-size: 18px;
+        padding: 20px 34px;
+      }
+      .end small {
+        display: block;
+        margin-top: 18px;
+        font-weight: 600;
+        opacity: 0.8;
+      }
+      .big {
+        font-size: clamp(110px, 27vw, 400px);
+        font-weight: 800;
+        letter-spacing: -0.045em;
+        line-height: 0.78;
+        margin-top: 64px;
+        color: var(--ink);
+        translate: 0 7%;
+        white-space: nowrap;
+        user-select: none;
+      }
+      .big i {
+        color: var(--amber);
+        font-style: normal;
+      }
+      footer {
+        background: var(--ink);
+        color: var(--cream);
+        padding: 70px 0 26px;
+        border-top: 3px solid var(--ink);
+      }
+      .fg {
+        display: grid;
+        grid-template-columns: 1.4fr 1fr 1fr;
+        gap: 50px;
+      }
+      .fb .b {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 800;
+        font-size: 26px;
+        letter-spacing: -0.04em;
+      }
+      .fb .b img {
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+      }
+      .fb .b i {
+        color: var(--amber);
+        font-style: normal;
+      }
+      .fb p {
+        margin-top: 16px;
+        max-width: 300px;
+        font-size: 15px;
+        line-height: 1.5;
+        opacity: 0.65;
+        font-weight: 500;
+      }
+      .fb .chip2 {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 20px;
+        padding: 8px 14px;
+        border: 2px solid #fff3;
+        border-radius: 99px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .chip2:before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+        animation: p 1.6s infinite;
+      }
+      footer h4 {
+        font-size: 12px;
+        letter-spacing: 1.5px;
+        color: var(--amber);
+        margin-bottom: 18px;
+      }
+      footer ul {
+        list-style: none;
+        padding: 0;
+        display: grid;
+        gap: 12px;
+      }
+      footer li a {
+        font-size: 16px;
+        font-weight: 600;
+        opacity: 0.8;
+        display: inline-block;
+        transition: 0.25s var(--e);
+      }
+      footer li a:hover {
+        opacity: 1;
+        color: var(--amber);
+        translate: 6px 0;
+      }
+      .fbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin-top: 56px;
+        padding-top: 22px;
+        border-top: 1px solid #fff2;
+        font-size: 13px;
+        font-weight: 600;
+        opacity: 0.7;
+      }
+      .top {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 16px;
+        border: 2px solid #fff3;
+        border-radius: 99px;
+        font-weight: 700;
+        opacity: 1;
+        transition: 0.25s;
+      }
+      .top:hover {
+        background: var(--amber);
+        color: var(--ink);
+        border-color: var(--amber);
+      }
+      .rv {
+        opacity: 0;
+        translate: 0 40px;
+        transition: 1s var(--e);
+      }
+      .rv.in {
+        opacity: 1;
+        translate: 0;
+      }
+      @media (max-width: 860px) {
+        nav .l {
+          display: none;
+        }
+        .sticker {
+          display: none;
+        }
+        .row {
+          grid-template-columns: 60px 1fr;
+        }
+        .row p {
+          grid-column: 2;
+        }
+        .row .n {
+          font-size: 48px;
+        }
+        .row:hover {
+          margin-inline: 0;
+        }
+        .grid > * {
+          grid-column: span 6 !important;
+        }
+        .fg {
+          grid-template-columns: 1fr 1fr;
+          gap: 36px;
+        }
+        .fb {
+          grid-column: 1/-1;
+        }
+        .sg {
+          grid-template-columns: 1fr;
+          gap: 44px;
+        }
+        details p {
+          padding-right: 0;
+        }
+        .hero-row p {
+          font-size: 17px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation: none !important;
+          transition: none !important;
+        }
+        .rv,
+        .t {
+          opacity: 1;
+          translate: 0;
+        }
+        h1 .s:after {
+          transform: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <a class="b" href="#"
+        ><img src="./icon.png" alt="" /><span>Skip<i>Q</i></span></a
+      ><a class="l" href="#demo">Try it</a><a class="l" href="#how">How</a
+      ><a class="l" href="#sellers">Sellers</a><a class="l" href="#faq">FAQ</a>
+      <a
+        class="btn"
+        href="https://github.com/itsSatyam27/SkipQ/releases/download/v1.0.0/SkipQ-1.0.0-production-v9.apk"
+        >Get app ↗</a
+      >
+    </nav>
 
-<header class="hero w">
-  <div class="sticker">Free<br>on<br>Android</div>
-  <span class="tag">MADE FOR SILVER OAK UNIVERSITY</span>
-  <h1><span>Skip the</span><span><span class="s">queue.</span></span><span><em>Keep</em> the break.</span></h1>
-  <div class="hero-row">
-    <p>Order from your campus canteen before the rush. Pick it up when it's ready and spend your break how you want.</p>
-    <div class="cta"><a class="btn" href="https://github.com/itsSatyam27/SkipQ/releases/download/v1.0.0/SkipQ-1.0.0-v8.apk">⬇ Download for Android</a><small>Pay cash at pickup</small></div>
-  </div>
-</header>
-<div class="mq" aria-hidden="true"><div><span>ORDER AHEAD</span><b>✺</b><span>PICK UP HOT</span><b>✺</b><span>NO QUEUE</span><b>✺</b><span>PAY AT COUNTER</span><b>✺</b><span>ORDER AHEAD</span><b>✺</b><span>PICK UP HOT</span><b>✺</b><span>NO QUEUE</span><b>✺</b><span>PAY AT COUNTER</span><b>✺</b></div></div>
-
-<section class="demo w" id="demo">
-  <h2 class="rv">Feel the <em>difference.</em></h2>
-  <p class="sub rv">Flip the switch. Same canteen, same break, very different lunch.</p>
-  <div class="stage rv">
-    <div class="door"><span>YOU ↓</span><span>COUNTER ↓</span></div>
-    <div class="lane" id="lane"><span class="counter">🍜</span></div>
-    <div class="stats">
-      <div class="clock" id="clock"><small>TIME IN LINE</small><span id="min">23</span> min</div>
-      <div class="tog"><button id="bOld" class="on">Old way</button><button id="bNew">With SkipQ</button></div>
+    <header class="hero w">
+      <div class="sticker">Free<br />on<br />Android</div>
+      <span class="tag">MADE FOR SILVER OAK UNIVERSITY</span>
+      <h1>
+        <span>Skip the</span><span><span class="s">queue.</span></span
+        ><span><em>Keep</em> the break.</span>
+      </h1>
+      <div class="hero-row">
+        <p>
+          Order from your campus canteen before the rush. Pick it up when it's
+          ready and spend your break how you want.
+        </p>
+        <div class="cta">
+          <a
+            class="btn"
+            href="https://github.com/itsSatyam27/SkipQ/releases/download/v1.0.0/SkipQ-1.0.0-production-v9.apk"
+            >⬇ Download for Android</a
+          ><small>Pay cash at pickup</small>
+        </div>
+      </div>
+    </header>
+    <div class="mq" aria-hidden="true">
+      <div>
+        <span>ORDER AHEAD</span><b>✺</b><span>PICK UP HOT</span><b>✺</b
+        ><span>NO QUEUE</span><b>✺</b><span>PAY AT COUNTER</span><b>✺</b
+        ><span>ORDER AHEAD</span><b>✺</b><span>PICK UP HOT</span><b>✺</b
+        ><span>NO QUEUE</span><b>✺</b><span>PAY AT COUNTER</span><b>✺</b>
+      </div>
     </div>
-    <p class="note">Illustration only — real times depend on your canteen.</p>
-  </div>
-</section>
 
-<section class="steps" id="how"><div class="w">
-  <h2>Three taps.<br><em style="color:var(--ink)">That's it.</em></h2>
-  <div style="height:56px"></div>
-  <div class="row"><span class="n">01</span><h3>Find your canteen</h3><p>See available campus counters and browse the dishes they're serving.</p></div>
-  <div class="row"><span class="n">02</span><h3>Order ahead</h3><p>Pick what you want and check the estimated prep time before you order.</p></div>
-  <div class="row"><span class="n">03</span><h3>Pick up. Skip.</h3><p>Show your secure pickup pass at the counter and walk away with food.</p></div>
-</div></section>
+    <section class="demo w" id="demo">
+      <h2 class="rv">Feel the <em>difference.</em></h2>
+      <p class="sub rv">
+        Flip the switch. Same canteen, same break, very different lunch.
+      </p>
+      <div class="stage rv">
+        <div class="door"><span>YOU ↓</span><span>COUNTER ↓</span></div>
+        <div class="lane" id="lane"><span class="counter">🍜</span></div>
+        <div class="stats">
+          <div class="clock" id="clock">
+            <small>TIME IN LINE</small><span id="min">23</span> min
+          </div>
+          <div class="tog">
+            <button id="bOld" class="on">Old way</button
+            ><button id="bNew">With SkipQ</button>
+          </div>
+        </div>
+        <p class="note">
+          Illustration only — real times depend on your canteen.
+        </p>
+      </div>
+    </section>
 
-<section class="feat w">
-  <h2 class="rv">Built for the <em>counter.</em></h2>
-  <div class="grid">
-    <article class="c c1 rv"><div><h3>Know before you go</h3><p>Follow your order live — placed, preparing, ready.</p></div><div class="pass"><i></i><i></i><i class="o"></i></div></article>
-    <article class="c c2 rv"><div><h3>Campus-first discovery</h3><p>Browse registered canteens around campus and see what's cooking.</p></div><span class="e">🍜 🥪 🥟</span></article>
-    <article class="c c3 rv"><div><h3>Digital pickup pass</h3><p style="opacity:.85">The right order, to the right person.</p></div><span class="e">🎟️</span></article>
-    <article class="c c4 rv"><div><h3>Pay cash at pickup.</h3><p>Order in the app, pay the canteen when you collect. No wallets to top up.</p></div><span class="price">₹</span></article>
-  </div>
-</section>
+    <section class="steps" id="how">
+      <div class="w">
+        <h2>Three taps.<br /><em style="color: var(--ink)">That's it.</em></h2>
+        <div style="height: 56px"></div>
+        <div class="row">
+          <span class="n">01</span>
+          <h3>Find your canteen</h3>
+          <p>
+            See available campus counters and browse the dishes they're serving.
+          </p>
+        </div>
+        <div class="row">
+          <span class="n">02</span>
+          <h3>Order ahead</h3>
+          <p>
+            Pick what you want and check the estimated prep time before you
+            order.
+          </p>
+        </div>
+        <div class="row">
+          <span class="n">03</span>
+          <h3>Pick up. Skip.</h3>
+          <p>
+            Show your secure pickup pass at the counter and walk away with food.
+          </p>
+        </div>
+      </div>
+    </section>
 
-<section class="sell" id="sellers"><div class="w sg">
-  <div class="rv"><h2>Sellers get a <em>cockpit.</em></h2>
-    <p class="sub">Manage your menu and incoming orders from a dedicated seller view. Faculty can order too, including staff-room delivery where available.</p>
-    <div class="who"><span>🎓 Students</span><span>🧑‍🏫 Faculty</span><span>🍳 Canteen sellers</span></div></div>
-  <div><span class="rush">● RUSH MODE</span>
-  <div class="tix" id="tix">
-    <div class="t" style="--r:-1deg"><span class="e">🍜</span><div><small>#0427</small>Masala Noodles</div><span class="chip">Preparing</span></div>
-    <div class="t" style="--r:.8deg"><span class="e">🥪</span><div><small>#0428</small>Grilled Sandwich</div><span class="chip n">New</span></div>
-    <div class="t" style="--r:-.4deg"><span class="e">🥟</span><div><small>#0426</small>Veg Momos</div><span class="chip g">Ready</span></div>
-  </div></div>
-</div></section>
+    <section class="feat w">
+      <h2 class="rv">Built for the <em>counter.</em></h2>
+      <div class="grid">
+        <article class="c c1 rv">
+          <div>
+            <h3>Know before you go</h3>
+            <p>Follow your order live — placed, preparing, ready.</p>
+          </div>
+          <div class="pass"><i></i><i></i><i class="o"></i></div>
+        </article>
+        <article class="c c2 rv">
+          <div>
+            <h3>Campus-first discovery</h3>
+            <p>
+              Browse registered canteens around campus and see what's cooking.
+            </p>
+          </div>
+          <span class="e">🍜 🥪 🥟</span>
+        </article>
+        <article class="c c3 rv">
+          <div>
+            <h3>Digital pickup pass</h3>
+            <p style="opacity: 0.85">The right order, to the right person.</p>
+          </div>
+          <span class="e">🎟️</span>
+        </article>
+        <article class="c c4 rv">
+          <div>
+            <h3>Pay cash at pickup.</h3>
+            <p>
+              Order in the app, pay the canteen when you collect. No wallets to
+              top up.
+            </p>
+          </div>
+          <span class="price">₹</span>
+        </article>
+      </div>
+    </section>
 
-<section class="faq w" id="faq"><h2 class="rv">Quick <em>answers.</em></h2>
-<div class="fq">
-<details><summary>Is SkipQ free?<i>+</i></summary><p>Yes, the app is free to download. You pay your canteen directly, in cash, at pickup.</p></details>
-<details><summary>Which phones?<i>+</i></summary><p>Android for now, installed from the APK on GitHub Releases. Your browser may ask permission to install it.</p></details>
-<details><summary>Which campus?<i>+</i></summary><p>Built for Silver Oak University canteens, students, faculty and sellers.</p></details>
-<details><summary>How do I collect?<i>+</i></summary><p>When your order is marked ready, show your digital pickup pass at the counter.</p></details>
-</div></section>
+    <section class="sell" id="sellers">
+      <div class="w sg">
+        <div class="rv">
+          <h2>Sellers get a <em>cockpit.</em></h2>
+          <p class="sub">
+            Manage your menu and incoming orders from a dedicated seller view.
+            Faculty can order too, including staff-room delivery where
+            available.
+          </p>
+          <div class="who">
+            <span>🎓 Students</span><span>🧑‍🏫 Faculty</span
+            ><span>🍳 Canteen sellers</span>
+          </div>
+        </div>
+        <div>
+          <span class="rush">● RUSH MODE</span>
+          <div class="tix" id="tix">
+            <div class="t" style="--r: -1deg">
+              <span class="e">🍜</span>
+              <div><small>#0427</small>Masala Noodles</div>
+              <span class="chip">Preparing</span>
+            </div>
+            <div class="t" style="--r: 0.8deg">
+              <span class="e">🥪</span>
+              <div><small>#0428</small>Grilled Sandwich</div>
+              <span class="chip n">New</span>
+            </div>
+            <div class="t" style="--r: -0.4deg">
+              <span class="e">🥟</span>
+              <div><small>#0426</small>Veg Momos</div>
+              <span class="chip g">Ready</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
 
-<section class="end"><div class="w">
-  <h2>Your next break,<br><em>sorted.</em></h2>
-  <a class="btn" href="https://github.com/itsSatyam27/SkipQ/releases/download/v1.0.0/SkipQ-1.0.0-v8.apk">⬇ Download SkipQ for Android</a>
-  <small>Android APK · Free to download</small></div>
-  <div class="big">Skip<i>Q</i></div>
-</section>
-<footer><div class="w"><span>Good food. Zero queue.</span><span>Made for Silver Oak University · © <span id="y">2026</span> SkipQ</span></div></footer>
+    <section class="faq w" id="faq">
+      <h2 class="rv">Quick <em>answers.</em></h2>
+      <div class="fq">
+        <details>
+          <summary>Is SkipQ free?<i>+</i></summary>
+          <p>
+            Yes, the app is free to download. You pay your canteen directly, in
+            cash, at pickup.
+          </p>
+        </details>
+        <details>
+          <summary>Which phones?<i>+</i></summary>
+          <p>
+            Android for now, installed from the APK on GitHub Releases. Your
+            browser may ask permission to install it.
+          </p>
+        </details>
+        <details>
+          <summary>Which campus?<i>+</i></summary>
+          <p>
+            Built for Silver Oak University canteens, students, faculty and
+            sellers.
+          </p>
+        </details>
+        <details>
+          <summary>How do I collect?<i>+</i></summary>
+          <p>
+            When your order is marked ready, show your digital pickup pass at
+            the counter.
+          </p>
+        </details>
+      </div>
+    </section>
 
-<script>
-const $=s=>document.querySelector(s);$('#y').textContent=new Date().getFullYear();
-const io=new IntersectionObserver(e=>e.forEach(x=>{if(x.isIntersecting){x.target.classList.add('in');io.unobserve(x.target)}}),{threshold:.2});
-document.querySelectorAll('.rv').forEach(el=>io.observe(el));
-document.querySelectorAll('.t').forEach((t,i)=>{setTimeout(()=>io.observe(t),0)});
-// queue demo
-const lane=$('#lane'),N=9,E=['🧑‍🎓','👩‍🎓','🧑‍💻','👨‍🎓','👩‍💻','🧑‍🎨','👨‍💻','👩‍🎨','🧑‍🔬'];
-const ps=[];for(let i=0;i<N;i++){const d=document.createElement('div');d.className='p'+(i===N-1?' me':'');d.textContent=i===N-1?'':E[i];lane.append(d);ps.push(d)}
-let fast=false,tm;
-function place(){const gap=Math.min(70,(lane.clientWidth-130)/(N-1));
-const order=ps.slice(0,N-1);const me=ps[N-1];
-if(fast){me.style.left='0px';order.forEach((p,i)=>p.style.left=(gap*(i+1)+10)+'px')}
-else{order.forEach((p,i)=>p.style.left=(gap*i)+'px');me.style.left=(gap*(N-1)+10)+'px'}}
-function count(to){clearInterval(tm);let v=+$('#min').textContent;tm=setInterval(()=>{v+=v<to?1:-1;$('#min').textContent=v;if(v===to)clearInterval(tm)},fast?40:60)}
-function set(f){fast=f;$('#bOld').classList.toggle('on',!f);$('#bNew').classList.toggle('on',f);$('#clock').classList.toggle('fast',f);
-$('#clock').lastChild.textContent=f?' min · food\'s ready':' min';$('#clock small').textContent=f?'TIME IN LINE':'TIME IN LINE';place();count(f?0:23)}
-$('#bOld').onclick=()=>set(false);$('#bNew').onclick=()=>set(true);
-addEventListener('resize',place);place();
-let auto=setInterval(()=>set(!fast),3800);['#bOld','#bNew'].forEach(s=>$(s).addEventListener('click',()=>clearInterval(auto)));
-</script>
-</body>
+    <section class="end">
+      <div class="w">
+        <h2>Your next break,<br /><em>sorted.</em></h2>
+        <a
+          class="btn"
+          href="https://github.com/itsSatyam27/SkipQ/releases/download/v1.0.0/SkipQ-1.0.0-production-v9.apk"
+          >⬇ Download SkipQ for Android</a
+        >
+        <small>Android APK · Free to download</small>
+      </div>
+      <div class="big">Skip<i>Q</i></div>
+    </section>
+    <footer>
+      <div class="w">
+        <div class="fg">
+          <div class="fb">
+            <a class="b" href="#"
+              ><img src="./icon.png" alt="" /><span>Skip<i>Q</i></span></a
+            >
+            <p>
+              Order from your campus canteen, skip the queue, and pick up when
+              it's ready.
+            </p>
+            <span class="chip2">Made for Silver Oak University</span>
+          </div>
+          <div>
+            <h4>EXPLORE</h4>
+            <ul>
+              <li><a href="#demo">Try the demo</a></li>
+              <li><a href="#how">How it works</a></li>
+              <li><a href="#sellers">For sellers</a></li>
+              <li><a href="#faq">FAQ</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>GET SKIPQ</h4>
+            <ul>
+              <li>
+                <a
+                  href="https://github.com/itsSatyam27/SkipQ/releases/download/v1.0.0/SkipQ-1.0.0-production-v9.apk"
+                  >Download for Android</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/itsSatyam27/SkipQ"
+                  target="_blank"
+                  rel="noopener"
+                  >GitHub</a
+                >
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="fbar">
+          <span>© <span id="y">2026</span> SkipQ · Good food. Zero queue.</span
+          ><a class="top" href="#">Back to top ↑</a>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      const $ = (s) => document.querySelector(s);
+      $("#y").textContent = new Date().getFullYear();
+      const io = new IntersectionObserver(
+        (e) =>
+          e.forEach((x) => {
+            if (x.isIntersecting) {
+              x.target.classList.add("in");
+              io.unobserve(x.target);
+            }
+          }),
+        { threshold: 0.2 },
+      );
+      document.querySelectorAll(".rv").forEach((el) => io.observe(el));
+      document.querySelectorAll(".t").forEach((t, i) => {
+        setTimeout(() => io.observe(t), 0);
+      });
+      // queue demo
+      const lane = $("#lane"),
+        N = 9,
+        E = ["🧑‍🎓", "👩‍🎓", "🧑‍💻", "👨‍🎓", "👩‍💻", "🧑‍🎨", "👨‍💻", "👩‍🎨", "🧑‍🔬"];
+      const ps = [];
+      for (let i = 0; i < N; i++) {
+        const d = document.createElement("div");
+        d.className = "p" + (i === N - 1 ? " me" : "");
+        d.textContent = i === N - 1 ? "" : E[i];
+        lane.append(d);
+        ps.push(d);
+      }
+      let fast = false,
+        tm;
+      function place() {
+        const W = lane.clientWidth,
+          gap = Math.min(70, (W - 54 - 90) / (N - 1)),
+          front = W - 54 - 70;
+        const others = ps.slice(0, N - 1),
+          me = ps[N - 1];
+        const at = (el, k) => (el.style.left = front - k * gap + "px"); // slot 0 = front, next to the counter
+        if (fast) {
+          at(me, 0);
+          others.forEach((p, i) => at(p, i + 1));
+        } else {
+          others.forEach((p, i) => at(p, i));
+          at(me, N - 1);
+        }
+      }
+      function count(to) {
+        clearInterval(tm);
+        let v = +$("#min").textContent;
+        tm = setInterval(
+          () => {
+            v += v < to ? 1 : -1;
+            $("#min").textContent = v;
+            if (v === to) clearInterval(tm);
+          },
+          fast ? 40 : 60,
+        );
+      }
+      function set(f) {
+        fast = f;
+        $("#bOld").classList.toggle("on", !f);
+        $("#bNew").classList.toggle("on", f);
+        $("#clock").classList.toggle("fast", f);
+        $("#clock small").textContent = f
+          ? "FOOD'S READY — NO WAITING"
+          : "TIME IN LINE";
+        place();
+        count(f ? 0 : 23);
+      }
+      $("#bOld").onclick = () => set(false);
+      $("#bNew").onclick = () => set(true);
+      addEventListener("resize", place);
+      place();
+      let auto = setInterval(() => set(!fast), 3800);
+      ["#bOld", "#bNew"].forEach((s) =>
+        $(s).addEventListener("click", () => clearInterval(auto)),
+      );
+    </script>
+  </body>
 </html>

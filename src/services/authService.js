@@ -41,7 +41,9 @@ export async function registerAccountProfile(profile) {
     const { sellerShopId: ignoredShopId, ...editable } = safeFields(profile);
     const saved = { ...editable, uid: user.uid, authUid: user.uid, name, phone, email: user.email.toLowerCase(),
       userType: profile.userType, emailVerified: true, phoneVerified: false, profileComplete: true,
-      walletBalance: 0, banStatus: 'active', unclaimedOrderCount: 0, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+      walletBalance: 0, banStatus: 'active', unclaimedOrderCount: 0,
+      facultyApprovalStatus: profile.userType === 'faculty' ? 'PENDING' : 'NOT_REQUIRED',
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
     // Rules require both creates together, and reject replacement of an existing claim.
     transaction.set(userRef, saved);
     transaction.set(claimRef, { claimed: true, createdAt: serverTimestamp() });

@@ -5,8 +5,9 @@ import { orderDate } from '../utils/orderDisplay.cjs';
 import { useSellerStyles, useSellerTheme } from '../context/SellerTheme';
 import InterfaceIcon from './InterfaceIcon';
 import React, { useContext, useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, Text, Modal, TouchableOpacity, Alert, ScrollView, Image, Animated } from 'react-native';
+import { StyleSheet, View, Text, Modal, TouchableOpacity, Alert, ScrollView, Image, Animated, Share } from 'react-native';
 import { AppContext } from '../context/AppContext';
+import { createPickupInvite } from '../services/pickupDelegationService';
 
 function PickupProgress({ percent, secondsLeft, ready, staffRoomDelivery }) {
   const styles = useSellerStyles(baseStyles);
@@ -30,10 +31,11 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
   const insets = useSafeAreaInsets();
   const scrollRef = useRef(null);
   const [sharePreview, setSharePreview] = useState(false);
+  const [inviteBusy, setInviteBusy] = useState(false);
   useEffect(() => { setSharePreview(false); }, [visible]);
 
   const { light } = useSellerTheme();
-  const { activeOrderId, orders, cancelOrder, canteens } = useContext(AppContext);
+  const { activeOrderId, orders, cancelOrder, canteens, revokeFriendPickup } = useContext(AppContext);
   const activeOrderObj = orders.find(o => o.id === activeOrderId);
   useEffect(() => { if (visible) scrollRef.current?.scrollTo({ y: 0, animated: false }); }, [visible, activeOrderId]);
 
@@ -92,10 +94,19 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
     return () => clearInterval(timerInterval);
   }, [activeOrderObj, isCompleted, isCancelled, isAbandoned, isReady]);
 
-  const canCancel = Boolean(activeOrderObj) && !isCompleted && !isCancelled && !isAbandoned;
+  const canCancel = Boolean(activeOrderObj) && !activeOrderObj.pickupDelegation && !isCompleted && !isCancelled && !isAbandoned;
   const refundAmount = Number(activeOrderObj?.refundAmount || 0);
 
   const handleSharePass = () => setSharePreview(true);
+  const handleRoommateInvite = async () => {
+    if (inviteBusy) return;
+    setInviteBusy(true);
+    try {
+      const code = await createPickupInvite(activeOrderObj.id);
+      await Share.share({ title: 'Collect my SkipQ order', message: `Collect my SkipQ order from ${activeOrderObj.shopName}. Open SkipQ > Profile > Collect for a friend and enter code ${code}. This code expires in 30 minutes.` });
+    } catch (error) { Alert.alert('Could not create pickup invite', error.message); }
+    finally { setInviteBusy(false); }
+  };
 
   const handleCancelOrder = () => {
     if (!canCancel) return;
@@ -150,7 +161,9 @@ export default function DigitalPickupPassModal({ visible, onClose }) {
           {!!activeOrderObj.pickupSlot && activeOrderObj.pickupSlot !== 'ASAP' && <Text style={styles.hint}>{activeOrderObj.staffRoomDelivery ? 'Preferred delivery time' : 'Pickup'}: {activeOrderObj.pickupSlot}</Text>}
           <Text style={styles.footnote}>{activeOrderObj.staffRoomDelivery ? 'Quote the 4-digit PIN to the delivery staff at handover.' : 'Quote the 4-digit PIN to the counter operator.'}</Text>
         </View>
-        {!closed && <TouchableOpacity accessibilityRole="button" accessibilityLabel={activeOrderObj.staffRoomDelivery ? 'Share delivery pass' : activeOrderObj.isFacultyExpress ? 'Share pass with colleague' : 'Share pass to roommate or friend'} onPress={handleSharePass} style={styles.primary}><Text style={styles.primaryText}>{activeOrderObj.staffRoomDelivery ? 'Share delivery pass' : activeOrderObj.isFacultyExpress ? 'Share pass with colleague' : 'Share pass to roommate / friend'}</Text></TouchableOpacity>}
+        {!closed && !activeOrderObj.pickupDelegation && activeOrderObj.delegationStatus!=='ACCEPTED' && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Let a friend collect this order" disabled={inviteBusy} onPress={handleRoommateInvite} style={styles.primary}><Text style={styles.primaryText}>{inviteBusy?'Creating secure code…':'Let a roommate / friend collect'}</Text></TouchableOpacity>}
+        {!closed && !activeOrderObj.pickupDelegation && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Share pickup pass image" onPress={handleSharePass} style={styles.secondaryShare}><Text style={styles.secondaryShareText}>Share pass image</Text></TouchableOpacity>}
+        {!closed && !activeOrderObj.pickupDelegation && activeOrderObj.delegationStatus==='ACCEPTED' && <><View style={styles.notice}><InterfaceIcon name="check" size={16} color="#47db85"/><Text style={styles.noticeText}>Verified collector: {activeOrderObj.delegatedCollectorName}</Text></View><TouchableOpacity accessibilityRole="button" onPress={()=>Alert.alert('Revoke pickup access?',`${activeOrderObj.delegatedCollectorName} will immediately lose access to this pass.`,[{text:'Keep access',style:'cancel'},{text:'Revoke',style:'destructive',onPress:()=>revokeFriendPickup(activeOrderObj.id).catch(error=>Alert.alert('Could not revoke',error.message))}])} style={styles.cancel}><Text style={styles.cancelText}>Revoke roommate access</Text></TouchableOpacity></>}
         {canCancel && <><View style={styles.notice}><InterfaceIcon name="info" size={16} color="#ffb313" /><Text style={styles.noticeText}>You can cancel this active order. Contact the canteen to arrange the return of any money already paid; SkipQ does not process refunds.</Text></View><TouchableOpacity accessibilityRole="button" onPress={handleCancelOrder} style={styles.cancel}><Text style={styles.cancelText}>Cancel order</Text></TouchableOpacity></>}
         <TouchableOpacity accessibilityRole="button" onPress={onClose} style={styles.back}><Text style={styles.backText}>Back to Campus Radar</Text></TouchableOpacity>
       </ScrollView>
@@ -190,5 +203,5 @@ const baseStyles = StyleSheet.create({
   label: { color: '#a5a9b2', fontSize: 8, letterSpacing: 1 }, name: { color: '#f5f4f0', fontSize: 12, fontWeight: '700', marginTop: 6 }, amount: { color: '#f5f4f0', fontSize: 23, fontWeight: '700', marginTop: 5 }, payment: { color: '#ffb313', fontSize: 10, textAlign: 'right', marginTop: 7 },
   items: { padding: 12, borderRadius: 12, backgroundColor: '#090b0d', borderWidth: 1, borderColor: '#26292e', marginTop: 15 }, itemRow: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 10 }, itemName: { color: '#f5f4f0', fontSize: 12, flex: 1 }, itemQuantity: { color: '#a5a9b2', fontSize: 10 }, itemPrice: { color: '#f5f4f0', fontSize: 12, fontWeight: '600' },
   footnote: { color: '#a5a9b2', textAlign: 'center', fontSize: 9, lineHeight: 15, marginTop: 15 }, primary: { minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#ffb313', marginTop: 14, padding: 12 }, primaryText: { color: '#090b0d', fontSize: 12, fontWeight: '700' }, notice: { flexDirection: 'row', gap: 9, alignItems: 'flex-start', padding: 12, backgroundColor: '#17191d', borderRadius: 12, marginTop: 12 }, noticeText: { color: '#a5a9b2', flex: 1, fontSize: 10, lineHeight: 16 },
-  cancel: { borderRadius: 12, borderWidth: 1, borderColor: '#57252c', padding: 13, alignItems: 'center', marginTop: 10 }, cancelText: { color: '#ff536c', fontSize: 12, fontWeight: '600' }, back: { borderRadius: 12, borderWidth: 1, borderColor: '#26292e', padding: 13, alignItems: 'center', marginTop: 10 }, backText: { color: '#f5f4f0', fontSize: 12 }
+  secondaryShare:{borderRadius:12,borderWidth:1,borderColor:'#41464f',padding:13,alignItems:'center',marginTop:9},secondaryShareText:{color:'#f5f4f0',fontSize:12,fontWeight:'600'},cancel: { borderRadius: 12, borderWidth: 1, borderColor: '#57252c', padding: 13, alignItems: 'center', marginTop: 10 }, cancelText: { color: '#ff536c', fontSize: 12, fontWeight: '600' }, back: { borderRadius: 12, borderWidth: 1, borderColor: '#26292e', padding: 13, alignItems: 'center', marginTop: 10 }, backText: { color: '#f5f4f0', fontSize: 12 }
 });

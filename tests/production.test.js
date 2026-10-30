@@ -36,6 +36,14 @@ test('faculty staff-room delivery adds a server-priced five rupee fee', async ()
   missingLocation.store.get('users/buyer').userType = 'faculty';
   await rejects(missingLocation.handlers.createOrder(missingLocation.buyer, { ...missingLocation.body(), staffRoomDelivery: true }), 400);
 });
+test('new faculty accounts cannot order until an administrator approves them', async () => {
+  const f = fixture();
+  Object.assign(f.store.get('users/buyer'), { userType: 'faculty', facultyApprovalStatus: 'PENDING' });
+  await rejects(f.handlers.createOrder(f.buyer, f.body()), 403);
+  f.store.set('facultyApprovals/buyer', { approved: true });
+  const order = await f.handlers.createOrder(f.buyer, f.body());
+  assert.equal(order.isFacultyExpress, true);
+});
 test('concurrent checkout retries produce one order', async () => {
   const f = fixture();
   const orders = await Promise.all(Array.from({ length: 8 }, () => f.handlers.createOrder(f.buyer, f.body())));

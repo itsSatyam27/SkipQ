@@ -14,7 +14,9 @@ import { subscribeToCanteens, createCanteen, provisionRegisteredCanteen, saveSel
 import { subscribeToOrders, createOrderInDb, acknowledgeOrder, updateOrderStatusInDb, verifyOrderPinInDb, confirmUpiPaymentInFirestore, rateOrderInFirestore, cancelOrderInDb, abandonOrderInDb } from '../services/orderService';
 import { requestSellerApproval } from '../services/sellerApprovalService';
 import { isSellerApproved } from '../services/sellerAccess';
+import { isFacultyApproved, requestFacultyApproval } from '../services/facultyApprovalService';
 import { selectOwnedCanteen } from '../services/sellerCanteen.cjs';
+import { acceptPickupInvite, revokePickupDelegation } from '../services/pickupDelegationService';
 
 export const AppContext = createContext();
 const EMPTY_CART = { shopId: null, shopName: null, items: [], specialInstructions: '' };
@@ -25,6 +27,8 @@ export function AppProvider({ children }) {
   const [role, setRoleState] = useState('buyer');
   const [sellerShopId, setSellerShopIdState] = useState(null);
   const [sellerApproved, setSellerApproved] = useState(false);
+  const [facultyApproved, setFacultyApproved] = useState(true);
+  const [facultyReviewStatus, setFacultyReviewStatus] = useState('APPROVED');
   const [sellerSetupStatus, setSellerSetupStatus] = useState('idle');
   const [sellerSetupError, setSellerSetupError] = useState('');
   const [sellerSetupAttempt, setSellerSetupAttempt] = useState(0);
@@ -58,7 +62,7 @@ export function AppProvider({ children }) {
     const unsubscribe = onAuthChange(async user => {
       const version = ++sessionVersion.current;
       setOrdersState([]); setCartState(EMPTY_CART); setActiveOrderIdState(null);
-      setUserProfileState(EMPTY_PROFILE); setSellerApproved(false); setSellerShopIdState(null); setRoleState('buyer');
+      setUserProfileState(EMPTY_PROFILE); setSellerApproved(false); setFacultyApproved(true); setFacultyReviewStatus('APPROVED'); setSellerShopIdState(null); setRoleState('buyer');
       if (!user || user.isAnonymous) { setIsOnboardingComplete(false); return; }
       try {
         const token = await user.getIdTokenResult(true);
@@ -70,11 +74,12 @@ export function AppProvider({ children }) {
         setSellerApproved(approved);
         if (profile.exists()) {
           const data = { ...profile.data(), uid: user.uid };
+          const approvedFaculty = await isFacultyApproved(data);
           if (data.banStatus === 'perm_ban' || (data.banStatus === 'temp_ban' && (data.banUntil?.toMillis?.() || 0) > Date.now())) {
             Alert.alert('Account blocked', 'This account is blocked from the platform. Contact support if you need help.');
             await signOutUser(); setIsOnboardingComplete(false); return;
           }
-          setUserProfileState(data); setUniversityState(data.universityId || 'sou');
+          setUserProfileState(data); setFacultyApproved(approvedFaculty); setUniversityState(data.universityId || 'sou');
           setSellerShopIdState(approved ? data.sellerShopId || null : null);
           setRoleState(data.userType === 'seller' ? 'seller' : 'buyer');
           setActiveOrderIdState(active);
@@ -140,6 +145,16 @@ export function AppProvider({ children }) {
     }, () => setSellerApproved(false));
   }, [userProfile.uid, userProfile.userType]);
   useEffect(() => {
+    if (userProfile.userType !== 'faculty' || !userProfile.uid || !db || userProfile.facultyApprovalStatus === undefined) { setFacultyApproved(true); setFacultyReviewStatus('APPROVED'); return; }
+    const approvalUnsubscribe = onSnapshot(doc(db, 'facultyApprovals', userProfile.uid), snapshot => {
+      setFacultyApproved(snapshot.data()?.approved === true);
+    }, () => setFacultyApproved(false));
+    const requestUnsubscribe = onSnapshot(doc(db, 'facultyRequests', userProfile.uid), snapshot => {
+      setFacultyReviewStatus(snapshot.data()?.status || 'PENDING');
+    }, () => setFacultyReviewStatus('PENDING'));
+    return () => { approvalUnsubscribe(); requestUnsubscribe(); };
+  }, [userProfile.uid, userProfile.userType, userProfile.facultyApprovalStatus]);
+  useEffect(() => {
     let mounted = true;
     if (role === 'seller' && !sellerApproved) { setOrdersState([]); return; }
     const unsubscribe = subscribeToOrders({ role, uid: userProfile.uid }, list => {
@@ -176,6 +191,8 @@ export function AppProvider({ children }) {
     const approved = await isSellerApproved();
     const profile = await registerAccountProfile({ ...profileData, universityId: chosenUniversity,
       userType: chosenRole === 'seller' ? 'seller' : profileData.userType || 'student' });
+    const approvedFaculty = await isFacultyApproved(profile);
+    if (profile.userType === 'faculty' && !approvedFaculty) await requestFacultyApproval(profile);
     if (chosenRole === 'seller' && vendorCanteenData) {
       if (!approved) {
         await requestSellerApproval({ stallName: vendorCanteenData.name, location: vendorCanteenData.location, upiId: vendorCanteenData.upiId, universityId: chosenUniversity });
@@ -185,7 +202,7 @@ export function AppProvider({ children }) {
         profile.sellerShopId = shop.id;
       }
     }
-    setUserProfileState(profile); setUniversityState(chosenUniversity); setSellerApproved(approved);
+    setUserProfileState(profile); setUniversityState(chosenUniversity); setSellerApproved(approved); setFacultyApproved(approvedFaculty);
     setRoleState(profile.userType === 'seller' ? 'seller' : 'buyer');
     setSellerShopIdState(approved ? profile.sellerShopId || null : null); setIsOnboardingComplete(true);
   };
@@ -312,6 +329,13 @@ export function AppProvider({ children }) {
     return true;
   };
   const rateOrder = async (id, rating, review, dishRatings) => { commitOrder(await rateOrderInFirestore(id, rating, review, dishRatings)); };
+  const claimFriendPickup = async code => {
+    const orderId = await acceptPickupInvite(code, userProfile.name);
+    setActiveOrderIdState(orderId);
+    await AsyncStorage.setItem(`@skipq_active_pass_${auth.currentUser.uid}`, orderId).catch(() => {});
+    return orderId;
+  };
+  const revokeFriendPickup = async orderId => revokePickupDelegation(orderId);
   const topUpWallet = async () => { throw new Error('Wallet payments and top-ups are unavailable. Pay in cash at pickup; UPI is coming soon.'); };
   const logoutUser = async () => {
     await unregisterPushDevice();
@@ -322,11 +346,11 @@ export function AppProvider({ children }) {
   const refreshFirebaseState = async () => ({ isConfigured: isFirebaseConfigured });
   return <AppContext.Provider value={{
     isOnboardingComplete, completeOnboarding, restartOnboarding, university, setUniversity, role, setRole,
-    sellerShopId, setSellerShopId, sellerApproved, sellerSetupStatus, sellerSetupError,
+    sellerShopId, setSellerShopId, sellerApproved, facultyApproved, facultyReviewStatus, sellerSetupStatus, sellerSetupError,
     retrySellerSetup: () => setSellerSetupAttempt(value => value + 1), userProfile, updateUserProfile,
     canteens, addCanteen, updateCanteen, saveSellerSettings, deleteCanteen, addMenuItem, updateMenuItem, deleteMenuItem, toggleItemStock, updateItemPrice,
     cart, addToCart, updateCartQty, setSpecialInstructions, setCartSpecialInstructions: setSpecialInstructions, clearCart,
-    orders, placeOrder, markOrderReady, markOrderCompleted, verifyAndCompleteOrder, confirmUpiPayment, cancelOrder, markOrderAbandoned, reorderItems, rateOrder,
+    orders, placeOrder, markOrderReady, markOrderCompleted, verifyAndCompleteOrder, confirmUpiPayment, cancelOrder, markOrderAbandoned, reorderItems, rateOrder, claimFriendPickup, revokeFriendPickup,
     activeOrderId, setActiveOrderIdState, userLocation, locationTesting, requestUserLocation, locationPermissionGranted, locationStatus, locationError, openLocationSettings,
     walletBalance, topUpWallet, unclaimedOrderCount, banStatus, banUntil,
     rushModeActive, setRushModeActive, toggleRushMode: () => setRushModeActive(previous => !previous),

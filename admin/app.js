@@ -6,10 +6,23 @@ const firebase = initializeApp(window.SKIPQ_FIREBASE_CONFIG);
 const auth = getAuth(firebase), db = getFirestore(firebase), root = document.querySelector('#app');
 const state = { user:null, section:'Overview', rows:[], cursor:null, previous:[], page:1, hasMore:false, filter:'all', search:'', counts:{}, loading:false, error:'', success:'', generation:0 };
 const pageCache = new Map();
+let successTimer = null;
+function clearSuccess() {
+  if(successTimer){clearTimeout(successTimer);successTimer=null;}
+  if(!state.success)return;
+  state.success='';
+  const feedback=document.querySelector('#feedback');
+  if(feedback && !state.error)feedback.replaceChildren();
+}
+function showSuccess(message) {
+  clearSuccess();
+  state.success=message;
+  successTimer=setTimeout(clearSuccess,4000);
+}
 const cacheKey = () => JSON.stringify([state.section,state.filter,state.page]);
-const paths = {Overview:'sellerRequests',Users:'users','Seller requests':'sellerRequests',Blocked:'users',Strikes:'users',Canteens:'canteens',Orders:'orders',History:'adminAudit'};
+const paths = {Overview:'sellerRequests',Users:'users','Faculty requests':'facultyRequests','Seller requests':'sellerRequests',Blocked:'users',Strikes:'users',Canteens:'canteens',Orders:'orders',History:'adminAudit','Admin tools':'users'};
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const icon = name => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${({Overview:'<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',Users:'<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M18 15a5 5 0 0 1 3 5"/>','Seller requests':'<path d="M4 9v12h16V9M3 9l2-6h14l2 6M3 9h18M9 21v-7h6v7"/>',Strikes:'<path d="M12 3 2 21h20ZM12 9v5m0 3h.01"/>',Blocked:'<circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/>',Canteens:'<path d="M4 9v12h16V9M3 9l2-6h14l2 6M3 9h18M9 21v-7h6v7"/>',Orders:'<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3h6v4H9zM9 12h6M9 16h4"/>',History:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'})[name] || '<path d="M4 12h16M12 4v16"/>'}</svg>`;
+const icon = name => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${({Overview:'<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',Users:'<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M18 15a5 5 0 0 1 3 5"/>','Seller requests':'<path d="M4 9v12h16V9M3 9l2-6h14l2 6M3 9h18M9 21v-7h6v7"/>',Strikes:'<path d="M12 3 2 21h20ZM12 9v5m0 3h.01"/>',Blocked:'<circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/>',Canteens:'<path d="M4 9v12h16V9M3 9l2-6h14l2 6M3 9h18M9 21v-7h6v7"/>',Orders:'<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3h6v4H9zM9 12h6M9 16h4"/>',History:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>','Admin tools':'<path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.6v-.1A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.5-1H3v-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.5V3h4v.1A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.5 1h.1v4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>'})[name] || '<path d="M4 12h16M12 4v16"/>'}</svg>`;
 const date = value => value?.toDate ? value.toDate().toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'}) : '—';
 const blocked = row => row.banStatus === 'perm_ban' || (row.banStatus === 'temp_ban' && row.banUntil?.toMillis() > Date.now());
 const who = r => `<div class="who"><span class="av">${esc((r.name||r.email||'?')[0])}</span><div><strong>${esc(r.name||'Unnamed')}</strong><small>${esc(r.email)}</small></div></div>`;
@@ -29,14 +42,27 @@ async function offboardAccount({userId,reason,sellerAction,successorUid}) {
   if(!response.ok)throw new Error(result.message || `Offboarding failed (HTTP ${response.status}).`);
   return result;
 }
+async function manageLocationAccess({userId,action,reason}) {
+  if(!['grant','revoke'].includes(action)||!reason)throw new Error('Choose an action and enter a reason.');
+  const target=doc(db,'locationTestAccess',userId),profileRef=doc(db,'users',userId),log=doc(collection(db,'adminAudit'));
+  const enabled=action==='grant',expiresAt=Timestamp.fromMillis(Date.now()+(enabled?24*60*60*1000:0));
+  await runTransaction(db,async tx=>{
+    const profile=(await tx.get(profileRef)).data();
+    if(!profile||profile.universityStatus==='LEFT')throw new Error('Choose an active user account.');
+    if(!['student','faculty'].includes(profile.userType))throw new Error('Location testing is available only for student and faculty accounts.');
+    tx.set(target,{enabled,expiresAt,updatedAt:serverTimestamp(),updatedBy:state.user.uid,reason,adminActionId:log.id});
+    tx.set(log,{actorUid:state.user.uid,targetType:'locationTestAccess',targetId:userId,action:enabled?'LOCATION_ACCESS_GRANTED':'LOCATION_ACCESS_REVOKED',reason,createdAt:serverTimestamp()});
+  });
+}
 
 function login(message='') {
   root.innerHTML = `<main class="login"><div class="brand"><img class="brand-icon" src="./icon.png" alt=""><span>SkipQ <small>admin</small></span></div><div class="eyebrow">CAMPUS OPERATIONS</div><h1>A clearer view of your campus.</h1><p>Manage seller requests, accounts and canteens from one secure workspace.</p>${message?`<p class="error" role="alert">${esc(message)}</p>`:''}<button id="login">Continue with Google</button><small>Access is limited to authorized administrators. Your student, faculty or seller account does not grant admin access.</small></main>`;
   document.querySelector('#login').onclick = async () => { try { const provider = new GoogleAuthProvider(); provider.setCustomParameters({prompt:'select_account'}); await signInWithPopup(auth,provider); } catch(error) { login(failure(error)); } };
 }
 function shell() {
-  root.innerHTML = `<div class="layout"><aside class="sidebar"><div class="brand"><img class="brand-icon" src="./icon.png" alt=""><span class="brand-name">SkipQ</span><span class="admin-tag">admin</span></div><div class="workspace-label">WORKSPACE</div><nav class="nav" aria-label="Admin sections">${Object.keys(paths).map(name=>`<button data-nav="${esc(name)}" class="${state.section===name?'active':''}" ${state.section===name?'aria-current="page"':''}>${icon(name)}${esc(name)}${name==='Seller requests'&&state.counts.pending?`<em class="pill">${state.counts.pending}</em>`:''}</button>`).join('')}</nav><div class="sidebar-footer"><strong>Silver Oak University</strong><br>Campus operations workspace<br><br>Owner access · Firebase protected</div></aside><main class="main"><header class="topbar"><small>Workspace / <strong>${esc(state.section)}</strong>${state.section!=='Overview'?'<span class="kbd">/ to search</span>':''}</small><div class="identity"><div class="avatar">${esc((state.user.displayName || 'A')[0])}</div><div class="email"><strong>${esc(state.user.displayName || 'Administrator')}</strong><small>${esc(state.user.email)}</small></div><button class="secondary" id="logout">Sign out</button></div></header><div class="page-heading ${state.section==='Overview'?'overview-heading':''}"><div><div class="eyebrow">CAMPUS OPERATIONS</div><h1>${state.section==='Overview'?'Your campus, <span>at a glance.</span>':esc(state.section)}</h1><p>${esc(({Overview:'The people and activity behind every pickup.',Users:'Registered accounts across your campus.','Seller requests':'Review canteens before they start accepting orders.',Blocked:'Review restrictions and restore access when appropriate.',Strikes:'Recorded pickup strikes for students and faculty, with current account restrictions.',Canteens:'Registered counters and their current availability.',Orders:'View pickup and payment activity. PINs stay private.',History:'A permanent record of administrative actions.'})[state.section])}</p></div><button class="secondary" id="refresh" ${state.loading?'disabled':''}>${state.loading?'Loading…':'Refresh data'}</button></div><div id="feedback">${state.error?`<div class="notice" role="alert">${esc(state.error)}</div>`:''}${state.success?`<div class="notice success" role="status">${esc(state.success)}</div>`:''}</div><div id="content" aria-busy="${state.loading}"></div></main></div>`;
-  document.querySelectorAll('[data-nav]').forEach(button => button.onclick=()=>{state.section=button.dataset.nav;state.filter='all';state.search='';resetPage();load(false);});
+  root.innerHTML = `<div class="layout"><aside class="sidebar"><div class="brand"><img class="brand-icon" src="./icon.png" alt=""><span class="brand-name">SkipQ</span><span class="admin-tag">admin</span></div><div class="workspace-label">WORKSPACE</div><nav class="nav" aria-label="Admin sections">${Object.keys(paths).map(name=>`<button data-nav="${esc(name)}" class="${state.section===name?'active':''}" ${state.section===name?'aria-current="page"':''}>${icon(name)}${esc(name)}${name==='Seller requests'&&state.counts.pending?`<em class="pill">${state.counts.pending}</em>`:name==='Faculty requests'&&state.counts.facultyPending?`<em class="pill">${state.counts.facultyPending}</em>`:''}</button>`).join('')}</nav><div class="sidebar-footer"><strong>Silver Oak University</strong><br>Campus operations workspace<br><br>Owner access · Firebase protected</div></aside><main class="main"><header class="topbar"><small>Workspace / <strong>${esc(state.section)}</strong>${state.section!=='Overview'?'<span class="kbd">/ to search</span>':''}</small><div class="identity"><div class="avatar">${esc((state.user.displayName || 'A')[0])}</div><div class="email"><strong>${esc(state.user.displayName || 'Administrator')}</strong><small>${esc(state.user.email)}</small></div><button class="secondary" id="logout">Sign out</button></div></header><div class="page-heading ${state.section==='Overview'?'overview-heading':''}"><div><div class="eyebrow">CAMPUS OPERATIONS</div><h1>${state.section==='Overview'?'Your campus, <span>at a glance.</span>':esc(state.section)}</h1><p>${esc(({Overview:'The people and activity behind every pickup.',Users:'Registered accounts across your campus.','Faculty requests':'Verify faculty and staff before campus ordering is enabled.','Seller requests':'Review canteens before they start accepting orders.',Blocked:'Review restrictions and restore access when appropriate.',Strikes:'Recorded pickup strikes for students and faculty, with current account restrictions.',Canteens:'Registered counters and their current availability.',Orders:'View pickup and payment activity. PINs stay private.',History:'A permanent record of administrative actions.'})[state.section])}</p></div><button class="secondary" id="refresh" ${state.loading?'disabled':''}>${state.loading?'Loading…':'Refresh data'}</button></div><div id="feedback">${state.error?`<div class="notice" role="alert">${esc(state.error)}</div>`:''}${state.success?`<div class="notice success" role="status">${esc(state.success)}</div>`:''}</div><div id="content" aria-busy="${state.loading}"></div></main></div>`;
+  if(state.section==='Admin tools')document.querySelector('.page-heading p').textContent='Manage test location access and remove campus users.';
+  document.querySelectorAll('[data-nav]').forEach(button => button.onclick=()=>{clearSuccess();state.section=button.dataset.nav;state.filter='all';state.search='';resetPage();load(false);});
   document.querySelector('#logout').onclick=()=>signOut(auth);
   document.querySelector('#refresh').onclick=()=>load();
   renderContent();
@@ -55,7 +81,7 @@ function refreshWorkspace(){
 const count = async (...constraints) => (await getCountFromServer(query(collection(db,constraints.shift()),...constraints))).data().count;
 async function loadCounts() {
   const now = Timestamp.fromMillis(Date.now()-86400000);
-  const pairs=await Promise.all([['users',count('users')],['student',count('users',where('userType','==','student'))],['faculty',count('users',where('userType','==','faculty'))],['seller',count('users',where('userType','==','seller'))],['active',count('users',where('lastActiveAt','>=',now))],['pending',count('sellerRequests',where('status','==','PENDING'))],['blocked',count('users',where('banStatus','==','perm_ban'))],['departed',count('users',where('universityStatus','==','LEFT'))],['orders',count('orders',where('orderStatus','in',['Preparing','Ready for Pickup']))]].map(async([key,promise])=>[key,await promise]));
+  const pairs=await Promise.all([['users',count('users')],['student',count('users',where('userType','==','student'))],['faculty',count('users',where('userType','==','faculty'))],['seller',count('users',where('userType','==','seller'))],['active',count('users',where('lastActiveAt','>=',now))],['pending',count('sellerRequests',where('status','==','PENDING'))],['facultyPending',count('facultyRequests',where('status','==','PENDING'))],['blocked',count('users',where('banStatus','==','perm_ban'))],['departed',count('users',where('universityStatus','==','LEFT'))],['orders',count('orders',where('orderStatus','in',['Preparing','Ready for Pickup']))]].map(async([key,promise])=>[key,await promise]));
   return Object.fromEntries(pairs);
 }
 function resetPage(){state.cursor=null;state.previous=[];state.page=1;state.rows=[];state.hasMore=false;}
@@ -69,18 +95,20 @@ async function load(force=true){
     if(state.section==='Overview') { const [counts,rows]=await Promise.all([loadCounts(),getDocs(query(collection(db,'sellerRequests'),where('status','==','PENDING'),limit(6)))]);if(generation!==state.generation)return;state.counts=counts;state.rows=rows.docs.map(d=>({...d.data(),id:d.id})); }
     else {let filters=[];
       if(state.section==='Strikes') filters.push(where('unclaimedOrderCount','>',0),where('userType',state.filter==='all'?'in':'==',state.filter==='all'?['student','faculty']:state.filter));if(state.section==='Blocked')filters.push(where('banStatus','in',['temp_ban','perm_ban']));
-      if(state.section==='Users'&&state.filter==='LEFT')filters.push(where('universityStatus','==','LEFT'));
-      else if(state.section==='Users'&&state.filter!=='all')filters.push(where('userType','==',state.filter));
+      if(['Users','Admin tools'].includes(state.section)&&state.filter==='LEFT')filters.push(where('universityStatus','==','LEFT'));
+      else if(['Users','Admin tools'].includes(state.section)&&state.filter!=='all')filters.push(where('userType','==',state.filter));
       if(state.section==='Seller requests'&&state.filter!=='all')filters.push(where('status','==',state.filter));
+      if(state.section==='Faculty requests'&&state.filter!=='all')filters.push(where('status','==',state.filter));
       if(state.section==='Orders'&&state.filter!=='all')filters.push(where('orderStatus','==',state.filter));
       const sort=state.section==='History'?'createdAt':state.section==='Strikes'?'unclaimedOrderCount':documentId();
       filters.push(orderBy(sort,['History','Strikes'].includes(state.section)?'desc':'asc'));if(state.cursor)filters.push(startAfter(state.cursor));filters.push(limit(51));
       const result=await getDocs(query(collection(db,paths[state.section]),...filters));if(generation!==state.generation)return;state.hasMore=result.docs.length>50;state.rows=result.docs.slice(0,50).map(d=>({...d.data(),id:d.id}));state.last=result.docs[Math.min(49,result.docs.length-1)];
-      if(['Users','Blocked'].includes(state.section)) {
+      if(['Users','Blocked','Admin tools'].includes(state.section)) {
         const enriched=await Promise.all(state.rows.map(async row=>{
-          if(row.userType!=='seller')return row;
+          const locationAccess=state.section==='Admin tools'?await getDoc(doc(db,'locationTestAccess',row.id)):null;
+          if(row.userType!=='seller')return {...row,locationTestAccess:locationAccess?.data()||null};
           const [approval,request]=await Promise.all([getDoc(doc(db,'sellerApprovals',row.id)),getDoc(doc(db,'sellerRequests',row.id))]);
-          return {...row,sellerApproval:row.universityStatus==='LEFT'?'Left university':approval.data()?.approved===true?'Approved':request.exists()?request.data().status==='REJECTED'?'Rejected':request.data().status==='PENDING'?'Pending':request.data().status==='LEFT_UNIVERSITY'?'Left university':'Not approved':'Not requested'};
+          return {...row,locationTestAccess:locationAccess?.data()||null,sellerApproval:row.universityStatus==='LEFT'?'Left university':approval.data()?.approved===true?'Approved':request.exists()?request.data().status==='REJECTED'?'Rejected':request.data().status==='PENDING'?'Pending':request.data().status==='LEFT_UNIVERSITY'?'Left university':'Not approved':'Not requested'};
         }));
         if(generation!==state.generation)return;state.rows=enriched;
       }
@@ -92,9 +120,9 @@ function renderContent(){
   const content=document.querySelector('#content');
   if(state.section==='Overview'){
     const c=state.counts,total=c.users||0;
-    content.innerHTML=`<div class="stats">${stat('Total users',c.users,'All registered accounts','Users')}${stat('Active in 24 hours',c.active,'Recorded app activity','History')}${stat('Registered sellers',c.seller,'Includes pending approval','Canteens')}${stat('Active orders',c.orders,'Preparing or ready for pickup','Orders')}</div><div class="grid"><section class="panel"><div class="panel-heading"><div><h2>Your campus community</h2><p>Account types across the platform</p></div>${badge('Silver Oak University')}</div>${[['Students','student'],['Faculty & staff','faculty'],['Sellers','seller']].map(([label,key])=>`<div class="role-row"><div class="role-line"><span>${label}</span><strong>${c[key]??'—'}</strong></div><div class="track"><div class="fill ${key}" style="width:${total?(c[key]/total*100):0}%"></div></div></div>`).join('')}<p class="list-note">Activity tracking begins with the updated app. This is not a live online count.</p></section><section class="panel"><h2>Needs your attention</h2><div class="quick"><span>Pending seller requests</span><b>${c.pending??'—'}</b></div><div class="quick"><span>Permanent account blocks</span><b>${c.blocked??'—'}</b></div><div class="quick"><span>Left university</span><button class="inline-link" data-open="Users" data-users-filter="LEFT">${c.departed??'—'} · View accounts →</button></div><div class="quick"><span>Seller onboarding</span><button class="inline-link" data-open="Seller requests">Review requests →</button></div></section></div><section class="panel"><div class="panel-heading"><div><h2>Seller approval queue</h2><p>Up to six pending requests</p></div><button class="inline-link" data-open="Seller requests">View all requests →</button></div>${table(state.rows,'Seller requests')}</section>`;
+    content.innerHTML=`<div class="stats">${stat('Total users',c.users,'All registered accounts','Users')}${stat('Active in 24 hours',c.active,'Recorded app activity','History')}${stat('Registered sellers',c.seller,'Includes pending approval','Canteens')}${stat('Active orders',c.orders,'Preparing or ready for pickup','Orders')}</div><div class="grid"><section class="panel"><div class="panel-heading"><div><h2>Your campus community</h2><p>Account types across the platform</p></div>${badge('Silver Oak University')}</div>${[['Students','student'],['Faculty & staff','faculty'],['Sellers','seller']].map(([label,key])=>`<div class="role-row"><div class="role-line"><span>${label}</span><strong>${c[key]??'—'}</strong></div><div class="track"><div class="fill ${key}" style="width:${total?(c[key]/total*100):0}%"></div></div></div>`).join('')}<p class="list-note">Activity tracking begins with the updated app. This is not a live online count.</p></section><section class="panel"><h2>Needs your attention</h2><div class="quick"><span>Pending faculty requests</span><button class="inline-link" data-open="Faculty requests">${c.facultyPending??'—'} · Review →</button></div><div class="quick"><span>Pending seller requests</span><b>${c.pending??'—'}</b></div><div class="quick"><span>Permanent account blocks</span><b>${c.blocked??'—'}</b></div><div class="quick"><span>Left university</span><button class="inline-link" data-open="Users" data-users-filter="LEFT">${c.departed??'—'} · View accounts →</button></div><div class="quick"><span>Seller onboarding</span><button class="inline-link" data-open="Seller requests">Review requests →</button></div></section></div><section class="panel"><div class="panel-heading"><div><h2>Seller approval queue</h2><p>Up to six pending requests</p></div><button class="inline-link" data-open="Seller requests">View all requests →</button></div>${table(state.rows,'Seller requests')}</section>`;
   }else{
-    const choices=state.section==='Strikes'?['all','student','faculty']:state.section==='Users'?['all','student','faculty','seller','LEFT']:state.section==='Seller requests'?['all','PENDING','APPROVED','REJECTED','LEFT_UNIVERSITY']:state.section==='Orders'?['all','Preparing','Ready for Pickup','Completed','Cancelled','Abandoned']:[];
+    const choices=state.section==='Strikes'?['all','student','faculty']:['Users','Admin tools'].includes(state.section)?['all','student','faculty','seller','LEFT']:['Seller requests','Faculty requests'].includes(state.section)?['all','PENDING','APPROVED','REJECTED']:state.section==='Orders'?['all','Preparing','Ready for Pickup','Completed','Cancelled','Abandoned']:[];
     content.innerHTML=`<section class="panel"><div class="toolbar"><input id="search" aria-label="Search current page" placeholder="Search this page…" value="${esc(state.search)}">${choices.length?`<select id="filter" aria-label="Filter records">${choices.map(v=>`<option value="${esc(v)}" ${v===state.filter?'selected':''}>${v==='all'?'All records':v==='LEFT'?'Left university':v==='LEFT_UNIVERSITY'?'Left university':esc(v)}</option>`).join('')}</select>`:''}<button class="secondary" id="export">Export CSV</button></div>${state.section==='Strikes'?'<p class="list-note">Counts come from recorded account strikes. An abandoned order alone does not prove a strike was issued. Unblocking an account does not clear its strike count.</p>':''}<div id="table"></div><div class="pagination"><span>Page ${state.page} · up to 50 records per page</span><div class="actions"><button class="secondary" id="previous" ${state.page===1||state.loading?'disabled':''}>Previous</button><button class="secondary" id="next" ${!state.hasMore||state.loading?'disabled':''}>Next</button></div></div></section>`;
     document.querySelector('#export').onclick=exportCsv;renderTable();let searchTimer;document.querySelector('#search').oninput=e=>{state.search=e.target.value;clearTimeout(searchTimer);searchTimer=setTimeout(renderTable,90);};
     const filter=document.querySelector('#filter');if(filter)filter.onchange=e=>{state.filter=e.target.value;resetPage();load();};
@@ -103,10 +131,10 @@ function renderContent(){
   }
   document.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{state.section=b.dataset.open;state.filter=b.dataset.usersFilter||'all';resetPage();load(false);});bindActions();
 }
-function renderTable(){const term=state.search.toLowerCase();const rows=state.rows.filter(r=>(state.section!=='Strikes'||(['student','faculty'].includes(r.userType)&&Number.isSafeInteger(r.unclaimedOrderCount)&&r.unclaimedOrderCount>0))&&[r.name,r.email,r.phone,r.stallName,r.shopName,r.buyerName,r.id,r.status,r.action,r.universityStatus,r.sellerApproval,r.orderStatus,r.paymentMethod,r.paymentStatus,r.location,r.ownerId,r.userId,r.targetId,r.reason,r.banReason,r.reviewReason].join(' ').toLowerCase().includes(term));document.querySelector('#table').innerHTML=table(rows,state.section);bindActions();bindOffboarding();}
+function renderTable(){const term=state.search.toLowerCase();const rows=state.rows.filter(r=>(state.section!=='Strikes'||(['student','faculty'].includes(r.userType)&&Number.isSafeInteger(r.unclaimedOrderCount)&&r.unclaimedOrderCount>0))&&[r.name,r.email,r.phone,r.stallName,r.shopName,r.buyerName,r.id,r.status,r.action,r.universityStatus,r.sellerApproval,r.orderStatus,r.paymentMethod,r.paymentStatus,r.location,r.ownerId,r.userId,r.targetId,r.reason,r.banReason,r.reviewReason].join(' ').toLowerCase().includes(term));document.querySelector('#table').innerHTML=table(rows,state.section);bindActions();bindOffboarding();bindLocationTools();}
 function table(rows,section){
-  if(!rows.length){const empty=({Users:['No matching accounts','Try another search or filter.'],Strikes:['No recorded strikes','Students and faculty with one or more strikes will appear here.'],Blocked:['No blocked accounts','Temporary and permanent blocks will be listed here.'],'Seller requests':['No pending requests','New seller sign-ups will appear here for approval.'],Canteens:['No canteens found','Registered counters will appear here.'],Orders:['No orders yet','Pickup and payment activity will appear here.'],History:['No actions yet','Administrative actions will appear here.']})[section]||['No records','Try another search.'];return `<div class="empty" role="status">${state.loading?'<div class="skel"><i></i><i></i><i></i><i></i></div>':`<strong>${esc(empty[0])}</strong><span>${esc(empty[1])}</span>`}</div>`;}
-  const headers=({Strikes:['Account','Role','Recorded strikes','Restriction','Restricted until','Reason'],Users:['Account','Role','Phone','Account status','Seller approval','Last activity','Actions'],Blocked:['Account','Role','Phone','Account status','Seller approval','Last activity','Actions'],'Seller requests':['Canteen','Seller UID','Campus','Status','Actions'],Canteens:['Canteen','Campus','Owner UID','Status','Menu'],Orders:['Order','Customer / canteen','Amount','Order status','Payment','Created'],History:['When','Action','Record','Admin UID','Reason']})[section];
+  if(!rows.length){const empty=({Users:['No matching accounts','Try another search or filter.'],'Admin tools':['No matching accounts','Search by name, email, phone, or UID.'],Strikes:['No recorded strikes','Students and faculty with one or more strikes will appear here.'],Blocked:['No blocked accounts','Temporary and permanent blocks will be listed here.'],'Faculty requests':['No faculty requests','New faculty verification requests will appear here.'],'Seller requests':['No pending requests','New seller sign-ups will appear here for approval.'],Canteens:['No canteens found','Registered counters will appear here.'],Orders:['No orders yet','Pickup and payment activity will appear here.'],History:['No actions yet','Administrative actions will appear here.']})[section]||['No records','Try another search.'];return `<div class="empty" role="status">${state.loading?'<div class="skel"><i></i><i></i><i></i><i></i></div>':`<strong>${esc(empty[0])}</strong><span>${esc(empty[1])}</span>`}</div>`;}
+  const headers=({Strikes:['Account','Role','Recorded strikes','Restriction','Restricted until','Reason'],Users:['Account','Role','Phone','Account status','Seller approval','Last activity','Actions'],'Admin tools':['Account','Role','Location testing','Expires','Account controls'],Blocked:['Account','Role','Phone','Account status','Seller approval','Last activity','Actions'],'Faculty requests':['Faculty account','Faculty ID','Campus','Status','Actions'],'Seller requests':['Canteen','Seller UID','Campus','Status','Actions'],Canteens:['Canteen','Campus','Owner UID','Status','Menu'],Orders:['Order','Customer / canteen','Amount','Order status','Payment','Created'],History:['When','Action','Record','Admin UID','Reason']})[section];
   return `<div class="table-wrap"><table><thead><tr>${headers.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>{
     let cells;
     if(section==='Strikes') {
@@ -126,7 +154,18 @@ function table(rows,section){
       ],`Actions for ${r.name||r.email||r.id}`,r.id);
       cells=[who(r),badge(r.userType),esc(r.phone||'—'),badge(accountStatus,statusColor)+`<small>${esc(left?r.leftUniversityReason||'':r.banReason||'')}${left&&r.leftUniversityAt?' · '+esc(date(r.leftUniversityAt)):r.banUntil?' · '+esc(date(r.banUntil)):''}</small>`,r.userType==='seller'?badge(sellerStatus,sellerStatus==='Approved'?'green':sellerStatus==='Rejected'?'red':sellerStatus==='Left university'?'amber':'amber'):'Not applicable',esc(date(r.lastActiveAt)),r.id===state.user.uid?'Owner account':left?'Offboarded':accountMenu];
     }
+    if(section==='Admin tools'){
+      const left=r.universityStatus==='LEFT',expires=r.locationTestAccess?.expiresAt;
+      const locationActive=r.locationTestAccess?.enabled===true&&expires?.toMillis?.()>Date.now();
+      const canTest=['student','faculty'].includes(r.userType)&&!left&&r.id!==state.user.uid;
+      const controls=r.id===state.user.uid?'Owner account':left?'Removed':menu([
+        canTest?`<button data-location-action="${locationActive?'revoke':'grant'}" data-id="${esc(r.id)}" class="secondary">${locationActive?'Disable location access':'Allow off-campus for 24h'}</button>`:'',
+        `<button data-offboard="${esc(r.id)}" class="danger">Remove user</button>`
+      ],`Admin tools for ${r.name||r.email||r.id}`,`tools-${r.id}`);
+      cells=[who(r),badge(r.userType),canTest?badge(locationActive?'Enabled':'Disabled',locationActive?'green':''):r.userType==='seller'?'Not available':'Not applicable',locationActive?esc(date(expires)):'—',controls];
+    }
     if(section==='Seller requests')cells=[`<strong>${esc(r.stallName)}</strong><small>${esc(r.location)} · ${esc(r.upiId||'Cash only')}</small>`,esc(r.userId||r.id),esc(r.universityId),badge(r.status,r.status==='APPROVED'?'green':r.status==='REJECTED'?'red':'amber'),r.status==='LEFT_UNIVERSITY'?'Account offboarded':menu([r.status!=='APPROVED'?action('APPROVED','Approve',r.id):'',r.status!=='REJECTED'?action('REJECTED',r.status==='APPROVED'?'Revoke access':'Reject',r.id):''],`Actions for ${r.stallName||r.id}`,r.id)];
+    if(section==='Faculty requests')cells=[who(r),esc(r.facultyId||'—'),esc(r.universityId||'—'),badge(r.status,r.status==='APPROVED'?'green':r.status==='REJECTED'?'red':'amber'),menu([r.status!=='APPROVED'?action('FACULTY_APPROVED','Approve',r.id):'',r.status!=='REJECTED'?action('FACULTY_REJECTED',r.status==='APPROVED'?'Revoke access':'Reject',r.id):''],`Actions for ${r.name||r.email||r.id}`,r.id)];
     if(section==='Canteens')cells=[`<strong>${esc(r.name)}</strong><small>${esc(r.location)}</small>`,esc(r.universityId),esc(r.ownerId),badge(r.status,r.status==='Open'?'green':''),`${(r.menu||[]).length} dishes`];
     if(section==='Orders')cells=[esc(r.id),`<strong>${esc(r.buyerName)}</strong><small>${esc(r.shopName)}</small>`,money(r.totalAmount),badge(r.orderStatus),`${esc(r.paymentMethod)}<small>${esc(r.paymentStatus)}</small>`,esc(date(r.createdAt))];
     if(section==='History')cells=[esc(date(r.createdAt)),badge(r.action==='LEFT_UNIVERSITY'?'Left university':r.action),`${esc(r.targetType)}<small>${esc(r.targetId)}</small>`,esc(r.actorUid),esc(r.reason)];
@@ -152,6 +191,10 @@ function openRecord(row,section){
     title='Seller request';eyebrow='SELLER';
     const requestActions=row.status==='LEFT_UNIVERSITY'?'':`<div class="drawer-actions">${row.status!=='APPROVED'?action('APPROVED','Approve seller',row.id):''}${row.status!=='REJECTED'?action('REJECTED',row.status==='APPROVED'?'Revoke access':'Reject request',row.id):''}</div>`;
     body=`<div class="drawer-profile"><span class="drawer-avatar">${esc((row.stallName||'?')[0])}</span><div><strong>${detailValue(row.stallName||'Unnamed canteen')}</strong><small>${detailValue(row.location)}</small></div>${badge(row.status,row.status==='APPROVED'?'green':row.status==='REJECTED'?'red':'amber')}</div><div class="drawer-section-title">Request</div><div class="drawer-list"><div><span>Seller UID</span><strong class="drawer-code">${detailValue(row.userId||row.id)}</strong></div><div><span>Campus</span><strong>${detailValue(row.universityId)}</strong></div><div><span>Payment setup</span><strong>${detailValue(row.upiId||'Cash only')}</strong></div><div><span>Updated</span><strong>${detailValue(date(row.updatedAt))}</strong></div></div>${row.reviewReason?`<div class="drawer-section-title">Review note</div><div class="drawer-note">${detailValue(row.reviewReason)}</div>`:''}${requestActions}`;
+  }else if(section==='Faculty requests'){
+    title='Faculty request';eyebrow='FACULTY';
+    const requestActions=`<div class="drawer-actions">${row.status!=='APPROVED'?action('FACULTY_APPROVED','Approve faculty',row.id):''}${row.status!=='REJECTED'?action('FACULTY_REJECTED',row.status==='APPROVED'?'Revoke access':'Reject request',row.id):''}</div>`;
+    body=`<div class="drawer-profile"><span class="drawer-avatar">${esc((row.name||row.email||'?')[0])}</span><div><strong>${detailValue(row.name||'Unnamed account')}</strong><small>${detailValue(row.email)}</small></div>${badge(row.status,row.status==='APPROVED'?'green':row.status==='REJECTED'?'red':'amber')}</div><div class="drawer-section-title">Verification details</div><div class="drawer-list"><div><span>Faculty / staff ID</span><strong>${detailValue(row.facultyId)}</strong></div><div><span>Department / room</span><strong>${detailValue(row.roomNumber)}</strong></div><div><span>Campus</span><strong>${detailValue(row.universityId)}</strong></div><div><span>User UID</span><strong class="drawer-code">${detailValue(row.userId||row.id)}</strong></div><div><span>Submitted</span><strong>${detailValue(date(row.submittedAt))}</strong></div></div>${row.reviewReason?`<div class="drawer-section-title">Review note</div><div class="drawer-note">${detailValue(row.reviewReason)}</div>`:''}${requestActions}`;
   }else if(section==='Canteens'){
     title='Canteen details';eyebrow='CANTEEN';
     const dishes=Array.isArray(row.menu)?row.menu:[];
@@ -220,6 +263,23 @@ function bindOffboarding(){
     finally{submit.disabled=false;}
   });
 }
+let locationTarget=null;
+function bindLocationTools(){
+  document.querySelectorAll('[data-location-action]').forEach(button=>button.onclick=()=>{
+    button.closest('.row-menu-items')?.hidePopover();
+    locationTarget=state.rows.find(row=>row.id===button.dataset.id);
+    if(!locationTarget)return;
+    locationTarget.locationAction=button.dataset.locationAction;
+    const granting=locationTarget.locationAction==='grant';
+    document.querySelector('#location-title').textContent=granting?'Allow off-campus ordering':'Disable location access';
+    document.querySelector('#location-account').textContent=`${locationTarget.name||'Account'} · ${locationTarget.email||locationTarget.id}`;
+    document.querySelector('#location-description').textContent=granting?'This user can place orders away from campus for the next 24 hours.':'The temporary off-campus ordering exception will stop immediately.';
+    document.querySelector('#location-reason').value='';
+    document.querySelector('#location-error').textContent='';
+    document.querySelector('#confirm-location').disabled=false;
+    document.querySelector('#location-dialog').showModal();
+  });
+}
 sellerActionSelect.onchange=updateSellerOffboardForm;
 document.querySelector('#cancel-offboard').onclick=()=>document.querySelector('#offboard-dialog').close();
 document.querySelector('#offboard-form').onsubmit=async event=>{
@@ -231,36 +291,65 @@ document.querySelector('#offboard-form').onsubmit=async event=>{
   submit.disabled=true;
   document.querySelector('#offboard-error').textContent='';
   try{
+    const returnSection=state.section;
     const isSeller=offboardTarget.userType==='seller';
     const sellerAction=isSeller?sellerActionSelect.value:undefined;
-    await offboardAccount({userId:offboardTarget.id,reason,sellerAction,successorUid:sellerAction==='transfer'?successorSelect.value:undefined});
+    const result=await offboardAccount({userId:offboardTarget.id,reason,sellerAction,successorUid:sellerAction==='transfer'?successorSelect.value:undefined});
     document.querySelector('#offboard-dialog').close();
-    state.success=`${offboardTarget.name||offboardTarget.email||'Account'} marked as left university. Account history was preserved.`;
-    state.section='Users';
+    showSuccess(result.authDisabled===false
+      ?`${offboardTarget.name||offboardTarget.email||'Account'} removed from SkipQ. Google sign-in could not be disabled, but app access is blocked.`
+      :`${offboardTarget.name||offboardTarget.email||'Account'} removed from SkipQ. Account history was preserved.`);
+    state.section=returnSection==='Admin tools'?'Admin tools':'Users';
     state.filter='all';
     state.search='';
     resetPage();
     await load();
-  }catch(error){document.querySelector('#offboard-error').textContent=failure(error);}
+  }catch(error){
+    if(error.message?.includes('Account access was blocked in SkipQ')){
+      const profile=await getDoc(doc(db,'users',offboardTarget.id)).catch(()=>null);
+      if(profile?.data()?.universityStatus==='LEFT'){
+        document.querySelector('#offboard-dialog').close();
+        showSuccess(`${offboardTarget.name||offboardTarget.email||'Account'} removed from SkipQ. Google sign-in could not be disabled, but app access is blocked.`);
+        pageCache.clear();resetPage();await load();
+      }else document.querySelector('#offboard-error').textContent=failure(error);
+    }else document.querySelector('#offboard-error').textContent=failure(error);
+  }
   finally{submit.disabled=false;}
 };
 document.querySelector('#cancel-action').onclick=()=>document.querySelector('#action-dialog').close();
+document.querySelector('#cancel-location').onclick=()=>document.querySelector('#location-dialog').close();
+document.querySelector('#location-form').onsubmit=async event=>{
+  event.preventDefault();
+  if(!locationTarget)return;
+  const reason=document.querySelector('#location-reason').value.trim();
+  if(!reason)return;
+  const submit=document.querySelector('#confirm-location');submit.disabled=true;
+  document.querySelector('#location-error').textContent='';
+  try{
+    await manageLocationAccess({userId:locationTarget.id,action:locationTarget.locationAction,reason});
+    document.querySelector('#location-dialog').close();
+    showSuccess(locationTarget.locationAction==='grant'?'24-hour location access enabled.':'Location access disabled.');
+    pageCache.clear();await load();
+  }catch(error){document.querySelector('#location-error').textContent=failure(error);}
+  finally{submit.disabled=false;}
+};
 document.querySelector('#close-record').onclick=()=>document.querySelector('#record-dialog').close();
 document.querySelector('#record-dialog').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.close();});
 document.querySelector('#action-form').onsubmit=async e=>{
   e.preventDefault();const reason=document.querySelector('#reason').value.trim();if(!reason)return;const selected=pendingAction;const user=state.user;if(!selected||!user)return;
   const button=document.querySelector('#confirm-action');button.disabled=true;
-  try{const seller=['APPROVED','REJECTED'].includes(selected.action);const type=seller?'sellerRequests':'users';const target=doc(db,type,selected.id),log=doc(collection(db,'adminAudit'));
+  try{const seller=['APPROVED','REJECTED'].includes(selected.action);const faculty=selected.action.startsWith('FACULTY_');const reviewAction=faculty?selected.action.replace('FACULTY_',''):selected.action;const type=seller?'sellerRequests':faculty?'facultyRequests':'users';const target=doc(db,type,selected.id),log=doc(collection(db,'adminAudit'));
     await runTransaction(db,async tx=>{const snapshot=await tx.get(target);if(!snapshot.exists())throw new Error('Record no longer exists. Refresh and try again.');
       if(seller){const profile=await tx.get(doc(db,'users',selected.id));if(!profile.exists()||profile.data().userType!=='seller')throw new Error('A completed seller profile is required.');if(selected.action==='APPROVED'&&blocked(profile.data()))throw new Error('Unblock the seller account before approving it.');
         tx.update(target,{status:selected.action,reviewedBy:user.uid,reviewReason:reason,updatedAt:serverTimestamp(),adminActionId:log.id});tx.set(doc(db,'sellerApprovals',selected.id),{approved:selected.action==='APPROVED',reviewedBy:user.uid,updatedAt:serverTimestamp(),adminActionId:log.id});
+      }else if(faculty){const profile=await tx.get(doc(db,'users',selected.id));if(!profile.exists()||profile.data().userType!=='faculty')throw new Error('A completed faculty profile is required.');if(reviewAction==='APPROVED'&&blocked(profile.data()))throw new Error('Unblock the account before approving it.');tx.update(target,{status:reviewAction,reviewedBy:user.uid,reviewReason:reason,updatedAt:serverTimestamp(),adminActionId:log.id});tx.set(doc(db,'facultyApprovals',selected.id),{approved:reviewAction==='APPROVED',reviewedBy:user.uid,updatedAt:serverTimestamp(),adminActionId:log.id});
       }else tx.update(target,{banStatus:selected.action,banUntil:selected.action==='temp_ban'?Timestamp.fromMillis(Date.now()+Number(document.querySelector('#duration').value)*3600000):null,banReason:reason,updatedAt:serverTimestamp(),adminActionId:log.id});
-      tx.set(log,{actorUid:user.uid,targetType:type,targetId:selected.id,action:selected.action,reason,createdAt:serverTimestamp()});
-    });document.querySelector('#action-dialog').close();state.success=`${selected.action.replaceAll('_',' ')} completed and recorded in History.`;await load();
+      tx.set(log,{actorUid:user.uid,targetType:type,targetId:selected.id,action:reviewAction,reason,createdAt:serverTimestamp()});
+    });document.querySelector('#action-dialog').close();showSuccess(`${selected.action.replaceAll('_',' ')} completed and recorded in History.`);await load();
   }catch(error){document.querySelector('#action-error').textContent=failure(error);}finally{button.disabled=false;}
 };
 onAuthStateChanged(auth,async user=>{
-  ++state.generation;pageCache.clear();document.querySelector('#action-dialog').close();document.querySelector('#offboard-dialog').close();document.querySelector('#record-dialog').close();state.user=null;state.rows=[];state.counts={};
+  ++state.generation;pageCache.clear();document.querySelector('#action-dialog').close();document.querySelector('#offboard-dialog').close();document.querySelector('#location-dialog').close();document.querySelector('#record-dialog').close();state.user=null;state.rows=[];state.counts={};
   if(!user){login();return;}
   try{if(!user.emailVerified)throw new Error('A verified Google account is required.');const access=await getDoc(doc(db,'admins',user.uid));if(!access.exists()||access.data().enabled!==true){await signOut(auth);login('This account is not an authorized administrator. Use the registered owner account.');return;}state.user=user;state.section='Overview';state.filter='all';resetPage();await load();}catch(error){await signOut(auth);login(failure(error));}
 });

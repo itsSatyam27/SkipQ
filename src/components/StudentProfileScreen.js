@@ -15,13 +15,14 @@ function Field({ label, locked = false, ...props }) {
 }
 export default function StudentProfileScreen() {
   const s = useSellerStyles(baseStyles);
-  const { userProfile, updateUserProfile, logoutUser, restartOnboarding, university } = useContext(AppContext);
+  const { userProfile, updateUserProfile, logoutUser, restartOnboarding, university, claimFriendPickup } = useContext(AppContext);
   const [tab, setTab] = useState('Profile');
   const [draft, setDraft] = useState(() => values(userProfile));
   const [baseline, setBaseline] = useState(() => JSON.stringify(values(userProfile)));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showHowTo, setShowHowTo] = useState(false);
+  const [showClaim, setShowClaim] = useState(false), [claimCode, setClaimCode] = useState(''), [claiming, setClaiming] = useState(false);
   const dirty = JSON.stringify(draft) !== baseline;
   const dirtyRef = useRef(dirty); dirtyRef.current = dirty;
   const uidRef = useRef(userProfile?.uid);
@@ -66,6 +67,7 @@ export default function StudentProfileScreen() {
     </>}
     {tab === 'Permissions' && <><NotificationSettings /><LocationPermissionSettings /></>}
     {tab === 'Help' && <><AppUpdateSettings /><View style={s.card}>
+      {action('pass', 'Collect for a friend', 'Enter a secure roommate pickup code', () => { setClaimCode(''); setShowClaim(true); })}
       {action('info', 'How to use SkipQ', 'A quick guide to ordering and pickup', () => setShowHowTo(true))}
       {action('support', 'Feedback & Support', 'Contact the SkipQ team', feedback)}
       {action('location', 'Campus and role', 'Review your campus setup', () => confirmAction('Review campus setup?', 'You will return to setup. Your saved orders stay safe.', restartOnboarding))}
@@ -88,6 +90,9 @@ export default function StudentProfileScreen() {
         </View>
       </View>
     </Modal>
+    <Modal visible={showClaim} transparent animationType="fade" onRequestClose={() => !claiming&&setShowClaim(false)}>
+      <View style={s.guideOverlay}><View style={s.claimCard}><Text style={s.guideTitle}>Collect for a friend</Text><Text style={s.copy}>Enter the 8-character code shared by the person who placed the order.</Text><TextInput autoCapitalize="characters" autoCorrect={false} maxLength={8} value={claimCode} onChangeText={value=>setClaimCode(value.toUpperCase().replace(/[^A-Z2-9]/g,''))} placeholder="ABCD2345" placeholderTextColor="#79818f" style={s.claimInput}/><View style={s.saveActions}><TouchableOpacity disabled={claiming} onPress={()=>setShowClaim(false)} style={s.discard}><Text style={s.discardText}>Cancel</Text></TouchableOpacity><TouchableOpacity disabled={claiming||claimCode.length!==8} onPress={async()=>{setClaiming(true);try{await claimFriendPickup(claimCode);setShowClaim(false);Alert.alert('Pickup accepted','The delegated pickup pass is now available from the active-order button.');}catch(e){Alert.alert('Could not accept pickup',e.message);}finally{setClaiming(false);}}} style={[s.save,(claiming||claimCode.length!==8)&&{opacity:.5}]}>{claiming?<ActivityIndicator color="#090b0d"/>:<Text style={s.saveText}>Accept pickup</Text>}</TouchableOpacity></View></View></View>
+    </Modal>
   </View>;
 }
 function GuideStep({ number, title, children }) {
@@ -103,5 +108,6 @@ const baseStyles = StyleSheet.create({
   field: { marginTop: 18 }, labelRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 }, label: { color: '#a5a9b2', fontSize: 11, fontWeight: '600' }, input: { color: '#f5f4f0', backgroundColor: '#090b0d', borderColor: '#26292e', borderWidth: 1, borderRadius: 12, minHeight: 47, paddingHorizontal: 13, paddingVertical: 12, fontSize: 13 }, locked: { color: '#a5a9b2', backgroundColor: '#17191d' },
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 16 }, copy: { color: '#a5a9b2', fontSize: 11, lineHeight: 17, marginTop: 2 }, action: { flexDirection: 'row', gap: 11, alignItems: 'center', paddingVertical: 15 }, icon: { width: 37, height: 37, borderRadius: 11, backgroundColor: '#17191d', alignItems: 'center', justifyContent: 'center' }, actionCopy: { flex: 1, minWidth: 0 }, actionTitle: { color: '#f5f4f0', fontSize: 13, fontWeight: '600' }, danger: { color: '#ef4444' },
   guideOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 18, backgroundColor: 'rgba(0,0,0,0.7)' }, guideCard: { width: '100%', maxWidth: 500, maxHeight: '90%', borderRadius: 22, borderWidth: 1, borderColor: '#34373d', backgroundColor: '#121417', padding: 18 }, guideHeader: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: '#26292e' }, guideIcon: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#211a07' }, guideTitle: { color: '#f5f4f0', fontSize: 17, fontWeight: '800' }, guideClose: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: '#202329' }, guideCloseText: { color: '#f5f4f0', fontSize: 25, lineHeight: 28 }, guideContent: { paddingVertical: 5 }, guideStep: { flexDirection: 'row', gap: 12, paddingVertical: 13 }, guideNumber: { width: 27, height: 27, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: '#292418' }, guideNumberText: { color: '#ffb313', fontSize: 12, fontWeight: '800' }, guideStepTitle: { color: '#f5f4f0', fontSize: 13, fontWeight: '700' }, guideStepCopy: { color: '#a5a9b2', fontSize: 11, lineHeight: 17, marginTop: 4 }, guideNotice: { backgroundColor: '#211a07', borderWidth: 1, borderColor: '#3a2c07', borderRadius: 13, padding: 12, marginTop: 4 }, guideNoticeText: { color: '#f5cf76', fontSize: 11, lineHeight: 17 }, guideDone: { minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#ffb313', marginTop: 13 }, guideDoneText: { color: '#090b0d', fontSize: 13, fontWeight: '800' },
+  claimCard: { width: '100%', maxWidth: 440, borderRadius: 22, borderWidth: 1, borderColor: '#34373d', backgroundColor: '#121417', padding: 20 }, claimInput: { color: '#f5f4f0', backgroundColor: '#090b0d', borderColor: '#41464f', borderWidth: 1, borderRadius: 13, minHeight: 54, paddingHorizontal: 16, fontSize: 20, fontWeight: '800', letterSpacing: 3, textAlign: 'center', marginTop: 18 },
   saveBar: { backgroundColor: '#121417', borderColor: '#26292e', borderWidth: 1, borderRadius: 18, padding: 16, marginTop: 4 }, saveActions: { flexDirection: 'row', gap: 10, marginTop: 12 }, discard: { paddingHorizontal: 16, minHeight: 46, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#26292e', borderRadius: 12 }, discardText: { color: '#a5a9b2', fontSize: 12, fontWeight: '600' }, save: { flex: 1, flexDirection: 'row', gap: 8, minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#ffb313' }, saveText: { color: '#090b0d', fontSize: 13, fontWeight: '700' },
 });

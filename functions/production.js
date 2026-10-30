@@ -185,13 +185,14 @@ function createHandlers({ db, auth, Timestamp, now = Date.now }) {
       return { alreadyOffboarded: false, sellerAction: isSeller ? sellerAction : null };
     });
 
+    let authDisabled = true;
     try {
       await auth.updateUser(uid, { disabled: true });
     } catch (error) {
       console.error('Account status saved but Firebase Auth disable failed', error.code || error.name);
-      fail(503, 'Account access was blocked in SkipQ, but sign-in could not be disabled. Retry this action or contact support.');
+      authDisabled = false;
     }
-    return { success: true, alreadyOffboarded: result.alreadyOffboarded, sellerAction: result.sellerAction };
+    return { success: true, alreadyOffboarded: result.alreadyOffboarded, sellerAction: result.sellerAction, authDisabled };
   }
   async function createOrder(user, body) {
     if (!validId(body.shopId) || !validId(body.requestId)) fail(400, 'A canteen and request ID are required.');
@@ -213,6 +214,10 @@ function createHandlers({ db, auth, Timestamp, now = Date.now }) {
       const canteen = (await tx.get(db.collection('canteens').doc(body.shopId))).data();
       const profile = (await tx.get(db.collection('users').doc(user.uid))).data();
       if (!complete(profile) || normalizeEmail(profile.email) !== normalizeEmail(user.email)) fail(409, 'Complete your profile and link a phone number before ordering.');
+      if (profile.userType === 'faculty' && profile.facultyApprovalStatus !== undefined) {
+        const facultyApproval = (await tx.get(db.collection('facultyApprovals').doc(user.uid))).data();
+        if (facultyApproval?.approved !== true) fail(403, 'Your faculty account is awaiting administrator approval.');
+      }
       if (!canteen || canteen.status !== 'Open' || !validId(canteen.ownerId)) fail(409, 'This canteen is unavailable.');
       const staffRoomDelivery = body.staffRoomDelivery === true;
       if (staffRoomDelivery && profile.userType !== 'faculty') fail(403, 'Staff room delivery is available to faculty accounts only.');

@@ -1,4 +1,4 @@
-import { auth, db, isFirebaseConfigured, collection, query, where, onSnapshot } from './firebase';
+import { auth, db, isFirebaseConfigured, collection, doc, getDoc, query, where, onSnapshot } from './firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createSparkOrders } from './sparkOrders.cjs';
 async function orderRequest(path, body) {
@@ -13,15 +13,21 @@ export function subscribeToOrders(filter, onUpdate, onError = console.warn) {
   const field = filter.role === 'seller' ? 'sellerId' : 'buyerId';
   let version = 0;
   let alive = true;
-  const unsubscribe = onSnapshot(query(collection(db, 'orders'), where(field, '==', uid)), async snapshot => {
+  let ownOrders = [], delegatedOrders = [];
+  const publish = async () => {
     const current = ++version;
     try {
-      const orders = snapshot.docs.map(snap => ({ ...snap.data(), id: snap.id }));
+      const orders = [...ownOrders, ...delegatedOrders].filter((order,index,list)=>list.findIndex(item=>item.id===order.id)===index);
       const complete = field === 'buyerId' ? await Promise.all(orders.map(order => createSparkOrders(db, uid).withPin(order))) : orders;
       if (alive && current === version) onUpdate(complete.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp))));
     } catch (error) { if (alive) onError(error); }
-  }, onError);
-  return () => { alive = false; unsubscribe(); };
+  };
+  const ownUnsubscribe = onSnapshot(query(collection(db, 'orders'), where(field, '==', uid)), snapshot => { ownOrders=snapshot.docs.map(snap=>({...snap.data(),id:snap.id}));publish(); }, onError);
+  let delegationUnsubscribe=()=>{};
+  if(field==='buyerId') delegationUnsubscribe=onSnapshot(query(collection(db,'pickupDelegations'),where('collectorId','==',uid),where('status','==','ACCEPTED')),async snapshot=>{
+    delegatedOrders=(await Promise.all(snapshot.docs.map(async delegation=>{const data=delegation.data();const order=await getDoc(doc(db,'orders',data.orderId));return order.exists()?{...order.data(),id:order.id,delegatedCollectorName:data.collectorName,pickupDelegation:true}:null;}))).filter(Boolean);publish();
+  },onError);
+  return () => { alive = false; ownUnsubscribe(); delegationUnsubscribe(); };
 }
 export async function placeOrderInFirestore(body) {
   const uid = auth?.currentUser?.uid;

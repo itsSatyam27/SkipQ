@@ -213,6 +213,7 @@ export default function OnboardingFlow() {
   const handleProfileContinue = async () => {
     if (isSavingProfile) return;
     if (!name.trim() || !/^[6-9]\d{9}$/.test(phone)) { Alert.alert('Complete your profile', 'Enter your name and a valid 10-digit Indian mobile number.'); return; }
+    if (userType === 'faculty' && !facultyId.trim()) { Alert.alert('Faculty ID required', 'Enter your faculty or staff ID for verification.'); return; }
     setIsSavingProfile(true);
     try {
       const profile = await registerAccountProfile({ name: name.trim(), phone, userType, rollNo, facultyId, roomNumber, facultyRoomNote: roomNumber, universityId: selectedUniversity });
@@ -445,7 +446,7 @@ export default function OnboardingFlow() {
                 {/* Dynamic Faculty Fields */}
                 {userType === 'faculty' && (
                   <View style={styles.profileRoleDetails}>
-                    <Text style={styles.profileLabel}>FACULTY / STAFF ID (OPTIONAL)</Text>
+                    <Text style={styles.profileLabel}>FACULTY / STAFF ID *</Text>
                     <TextInput
                       style={styles.profileInput}
                       placeholder="e.g. FAC-CS-104 or Employee ID"

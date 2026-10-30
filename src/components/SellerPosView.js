@@ -465,6 +465,7 @@ export default function SellerPosView({
                       : '01:10 PM • Lunch break'}
                     {order.isFacultyExpress ? ' • ⭐ Faculty Express' : ''}
                     {order.groupCollectorName ? ` •  ${order.groupCollectorName}` : ''}
+                    {order.delegationStatus==='ACCEPTED'&&order.delegatedCollectorName ? ` • Verified collector: ${order.delegatedCollectorName}` : ''}
                   </Text>
                   {order.staffRoomDelivery && <View style={styles.notesBox}><Text style={styles.notesText}>Staff room delivery (+₹{order.deliveryFee || 5}): {order.facultyRoomNote}</Text></View>}
 

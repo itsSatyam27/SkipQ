@@ -36,8 +36,11 @@ function noShowSettlement(order) {
 function createSparkOrders(db, uid) {
   const secretRef = (buyer, id) => doc(db, 'users', buyer, 'pickupSecrets', id);
   async function withPin(order) {
-    if (order.buyerId !== uid) return order;
-    const secret = await getDoc(secretRef(uid, order.id));
+    if (order.buyerId !== uid) {
+      const delegation = await getDoc(doc(db, 'pickupDelegations', order.id));
+      if (delegation.data()?.collectorId !== uid || delegation.data()?.status !== 'ACCEPTED') return order;
+    }
+    const secret = await getDoc(secretRef(order.buyerId, order.id));
     return { ...order, pickupPin: secret.data()?.pin || order.pickupPin };
   }
   async function create(body) {
@@ -61,6 +64,10 @@ function createSparkOrders(db, uid) {
       const profile = (await tx.get(doc(db, 'users', uid))).data();
       if (!shop || shop.status !== 'Open') throw new Error('This canteen is unavailable.');
       if (!profile?.profileComplete) throw new Error('Complete your profile first.');
+      if (profile.userType === 'faculty' && profile.facultyApprovalStatus !== undefined) {
+        const facultyApproval = (await tx.get(doc(db, 'facultyApprovals', uid))).data();
+        if (facultyApproval?.approved !== true) throw new Error('Your faculty account is awaiting administrator approval.');
+      }
       if (staffRoomDelivery && profile.userType !== 'faculty') throw new Error('Staff room delivery is available to faculty accounts only.');
       if (staffRoomDelivery && !facultyRoomNote) throw new Error('Enter the staff room or department location for delivery.');
       if (body.paymentMethod !== 'Cash') throw new Error('UPI payments are coming soon. Choose cash at pickup or delivery.');

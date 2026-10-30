@@ -18,6 +18,7 @@ import StudentCartScreen from './src/components/StudentCartScreen';
 import StudentProfileScreen from './src/components/StudentProfileScreen';
 import SellerPosView from './src/components/SellerPosView';
 import SellerPendingScreen from './src/components/SellerPendingScreen';
+import FacultyPendingScreen from './src/components/FacultyPendingScreen';
 import DigitalPickupPassModal from './src/components/DigitalPickupPassModal';
 import AddMenuItemModal from './src/components/AddMenuItemModal';
 import CreateCanteenModal from './src/components/CreateCanteenModal';
@@ -125,10 +126,11 @@ function VendorScreen({ navigation }) { return <VendorProfileModal visible onClo
 export function AppNavigator() { return <SellerThemeProvider><ThemedAppNavigator /></SellerThemeProvider>; }
 function ThemedAppNavigator() {
   const { light } = useSellerTheme();
-  const { isOnboardingComplete, userProfile, role } = useContext(AppContext);
+  const { isOnboardingComplete, userProfile, role, facultyApproved } = useContext(AppContext);
   const [globalAlert, setGlobalAlert] = useState(null);
   useEffect(() => { registerAlertListener(setGlobalAlert); return unregisterAlertListener; }, []);
   if (isOnboardingComplete === null && Platform.OS !== 'web') return null;
+  if (isOnboardingComplete && userProfile.userType === 'faculty' && !facultyApproved) return <FacultyPendingScreen />;
   return <View style={{ flex: 1, backgroundColor: '#edf3f8' }} onLayout={() => {
     if (Platform.OS !== 'web' && isOnboardingComplete !== null) SplashScreen.hideAsync().catch(() => {});
   }}>

@@ -1,4 +1,4 @@
-name: Verify SkipQ OTA compatibility
+name: V9 GPS and signup OTA
 on:
   workflow_dispatch:
   push:
@@ -6,34 +6,40 @@ on:
     paths: [.github/workflows/verify-ota.yml]
 permissions:
   contents: read
+concurrency:
+  group: skipq-production-ota
+  cancel-in-progress: false
 jobs:
-  verify:
+  release_v9:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: 544f8cd6b6e3d64348c65776b8c0c0540e609086
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22"
+      - run: npm test
       - run: npm ci --no-audit --no-fund
       - run: npm install --global eas-cli@27.2.0 --no-audit --no-fund
-      - name: Read published update and latest APK metadata
+      - name: Ensure no Android production build is pending
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          CI: "1"
         run: |
-          eas workflow:view 01a190fc-81b4-7820-95d3-0d711f545eee --json --non-interactive
-          eas build:view ca8f81cd-8558-4065-883a-95281d0f09f1 --json > "$RUNNER_TEMP/build.json"
+          eas build:list --platform android --channel production --limit 50 --json --non-interactive > "$RUNNER_TEMP/builds.json"
           node <<'NODE'
           const fs = require('fs');
-          const b = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/build.json', 'utf8'));
-          console.log(JSON.stringify({id:b.id,status:b.status,runtimeVersion:b.runtimeVersion,fingerprint:b.fingerprint,appBuildVersion:b.appBuildVersion,gitCommitHash:b.gitCommitHash},null,2));
+          const builds = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/builds.json','utf8'));
+          if (builds.some(b => ['NEW','IN_QUEUE','IN_PROGRESS','PENDING_CANCEL'].includes(b.status))) throw new Error('Wait for pending production builds.');
           NODE
-          eas workflow:logs 01a190fc-81b4-7820-95d3-0d711f545eee --all-steps --non-interactive > "$RUNNER_TEMP/eas-logs.txt"
-          node <<'NODE'
-          const fs = require('fs');
-          const lines = fs.readFileSync(process.env.RUNNER_TEMP + '/eas-logs.txt','utf8').split('\n');
-          console.log(lines.filter(x => /runtime|fingerprint|update group|published|production|updates\//i.test(x)).join('\n'));
-          NODE
+      - name: Run compatibility gated V9 hotfix release
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          eas workflow:run .eas/workflows/v9-hotfix.yml --non-interactive --wait --json > "$RUNNER_TEMP/v9-release.json"
+          cat "$RUNNER_TEMP/v9-release.json"

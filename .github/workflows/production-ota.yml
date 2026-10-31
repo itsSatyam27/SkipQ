@@ -1,0 +1,65 @@
+name: SkipQ production OTA
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/production-ota.yml]
+permissions:
+  contents: read
+concurrency:
+  group: skipq-production-ota
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - name: Check Expo secret is configured
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Add the EXPO_TOKEN repository secret."
+            exit 1
+          fi
+          echo "EXPO_TOKEN is configured; its value will not be printed."
+      - name: Install pinned EAS CLI
+        run: npm install --global eas-cli@27.2.0 --no-audit --no-fund
+      - name: Verify Expo authentication
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: eas whoami
+      - name: Run regression tests
+        run: npm test
+      - name: Install locked app dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Check production builds
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          eas build:list --platform android --channel production --limit 50 --json --non-interactive > "$RUNNER_TEMP/skipq-builds.json"
+          node <<'NODE'
+          const fs = require('fs');
+          const builds = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/skipq-builds.json', 'utf8'));
+          const pending = builds.filter(b => ['NEW', 'IN_QUEUE', 'IN_PROGRESS', 'PENDING_CANCEL'].includes(b.status));
+          if (pending.length) throw new Error('Wait for pending Android production builds before publishing OTA.');
+          const finished = builds.filter(b => b.status === 'FINISHED');
+          if (!finished.length) throw new Error('No completed Android production build found.');
+          console.log(JSON.stringify(finished.map(b => ({id: b.id, version: b.appBuildVersion, runtime: b.runtimeVersion})), null, 2));
+          NODE
+      - name: Publish with EAS production environment
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: eas workflow:run .eas/workflows/production-ota.yml --non-interactive --wait

@@ -1,9 +1,6 @@
 name: SkipQ production OTA
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: [.github/workflows/production-ota.yml]
 permissions:
   contents: read
 concurrency:

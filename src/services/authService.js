@@ -28,15 +28,22 @@ export async function registerAccountProfile(profile) {
   if (!name || name.length > 100 || !['student', 'faculty', 'seller'].includes(profile.userType)) throw new Error('Enter your name and choose a campus role.');
   const userRef = doc(db, 'users', user.uid);
   const claimRef = doc(db, 'phoneClaims', phone);
+  // Refresh the newly established Google session before the first rules-protected write.
+  await user.getIdToken(true);
   return runTransaction(db, async transaction => {
     const previous = await transaction.get(userRef);
-    const claim = await transaction.get(claimRef);
     if (previous.exists()) {
-      const existing = await getUserProfile();
+      // Use the transaction snapshot rather than a separate, potentially cached read.
+      const existing = { ...previous.data(), uid: user.uid };
+      const bannedUntil = existing.banUntil?.toMillis?.() || 0;
+      if (existing.banStatus === 'perm_ban' || (existing.banStatus === 'temp_ban' && bannedUntil > Date.now())) {
+        const error = new Error('This account is blocked from the platform.'); error.code = 'ACCOUNT_BLOCKED'; throw error;
+      }
       if (existing.phone !== phone || existing.email !== user.email.toLowerCase() || existing.userType !== profile.userType) throw new Error('Your registered email, phone and campus role cannot be changed.');
       if (!existing.profileComplete) throw new Error('This legacy account needs administrator migration before profile setup.');
       return existing;
     }
+    const claim = await transaction.get(claimRef);
     if (claim.exists()) { const error = new Error('This phone number is already linked to another account. Please use a different number.'); error.code = 'PHONE_ALREADY_LINKED'; throw error; }
     const { sellerShopId: ignoredShopId, ...editable } = safeFields(profile);
     const saved = { ...editable, uid: user.uid, authUid: user.uid, name, phone, email: user.email.toLowerCase(),
@@ -47,7 +54,10 @@ export async function registerAccountProfile(profile) {
     transaction.set(claimRef, { claimed: true, createdAt: serverTimestamp() });
     return saved;
   }).catch(error => {
-    if (error.code === 'permission-denied') throw new Error('Profile setup was denied. Publish the current Firestore rules, then try again.');
+    if (error.code === 'permission-denied') {
+      const denied = new Error('Could not finish profile setup because access was denied. Retry once; if it continues, contact support with this error.');
+      denied.code = error.code; throw denied;
+    }
     throw error;
   });
 }

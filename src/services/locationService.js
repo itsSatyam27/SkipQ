@@ -1,6 +1,7 @@
 import { Platform, Linking } from 'react-native';
 import * as Location from 'expo-location';
 import { normalizePosition, gpsError } from './locationPolicy.cjs';
+import { acquireAccuratePosition } from './locationAcquisition.cjs';
 
 function webLocation() {
   if (typeof window !== 'undefined' && !window.isSecureContext) throw gpsError('INSECURE_ORIGIN', 'Browser location requires HTTPS or localhost. Open the HTTPS app address.');
@@ -15,21 +16,18 @@ function webError(error) {
 export async function requestDevicePosition() {
   if (Platform.OS === 'web') {
     const geolocation = webLocation();
-    const position = await new Promise((resolve, reject) => geolocation.getCurrentPosition(resolve, error => reject(webError(error)),
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }));
-    return normalizePosition(position);
+    return acquireAccuratePosition((update, fail) => {
+      const id = geolocation.watchPosition(update, error => fail(webError(error)),
+        { enableHighAccuracy: true, timeout: 45000, maximumAge: 0 });
+      return { remove: () => geolocation.clearWatch(id) };
+    });
   }
   const permission = await Location.requestForegroundPermissionsAsync();
   if (permission.status !== 'granted') throw gpsError('PERMISSION_DENIED', 'Allow location access for SkipQ in app settings, then retry.', !permission.canAskAgain);
   if (!await Location.hasServicesEnabledAsync()) throw gpsError('SERVICES_DISABLED', 'Device location is turned off. Turn it on, then retry GPS.', true);
-  let timer;
-  try {
-    const position = await Promise.race([
-      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High, mayShowUserSettingsDialog: true }),
-      new Promise((_, reject) => { timer = setTimeout(() => reject(gpsError('LOCATION_TIMEOUT', 'GPS took too long. Move near a window and retry.')), 20000); })
-    ]);
-    return normalizePosition(position);
-  } finally { clearTimeout(timer); }
+  return acquireAccuratePosition((update, fail) => Location.watchPositionAsync(
+    { accuracy: Location.Accuracy.High, timeInterval: 1000, distanceInterval: 0 }, update,
+    message => fail(gpsError('LOCATION_UNAVAILABLE', String(message || 'Could not find your location. Retry GPS.')))));
 }
 export async function watchDevicePosition(onLocation, onError) {
   const update = position => { try { onLocation(normalizePosition(position)); } catch (error) { onError(error); } };

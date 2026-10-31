@@ -1,0 +1,10 @@
+name: SkipQ Android production OTA
+jobs:
+  publish_android:
+    name: Publish Android production update
+    type: update
+    environment: production
+    params:
+      platform: android
+      channel: production
+      message: "Signup retry and accurate GPS improvements"

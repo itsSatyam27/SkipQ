@@ -50,3 +50,9 @@ jobs:
           const changes = [...new Set([...a.keys(), ...b.keys()])].filter(k => a.get(k)?.hash !== b.get(k)?.hash);
           console.log(JSON.stringify(changes.map(k => ({path:k,old:a.get(k)?.hash,new:b.get(k)?.hash})),null,2));
           NODE
+          eas env:list production --format short > "$RUNNER_TEMP/env-list.txt"
+          node <<'NODE'
+          const fs = require('fs');
+          const s = fs.readFileSync(process.env.RUNNER_TEMP + '/env-list.txt','utf8');
+          console.log('GOOGLE_SERVICES_JSON listed in production environment: ' + s.includes('GOOGLE_SERVICES_JSON'));
+          NODE

@@ -1,9 +1,6 @@
 name: Diagnose V9 fingerprint inputs
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: [.github/workflows/verify-ota.yml]
 permissions:
   contents: read
 concurrency:

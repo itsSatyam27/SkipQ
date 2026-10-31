@@ -41,5 +41,12 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
-          eas fingerprint:compare 0ba1fe33fc7542b9591f4f2ccbcc203c41010b54 0e8a7b2af7abe6987f0aca2007c1d9496203a84e --json --non-interactive
-          eas update:view 80ffe3cd-233c-415c-a0e8-e224397dee4a --json
+          eas fingerprint:compare 0ba1fe33fc7542b9591f4f2ccbcc203c41010b54 98ba7ae63c265b4b3925c5ca268013c76d8f9984 --json --non-interactive > "$RUNNER_TEMP/diff.json"
+          node <<'NODE'
+          const fs = require('fs');
+          const j = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/diff.json', 'utf8'));
+          const a = new Map(j.fingerprint1.sources.map(s => [s.filePath || s.id, s]));
+          const b = new Map(j.fingerprint2.sources.map(s => [s.filePath || s.id, s]));
+          const changes = [...new Set([...a.keys(), ...b.keys()])].filter(k => a.get(k)?.hash !== b.get(k)?.hash);
+          console.log(JSON.stringify(changes.map(k => ({path:k,old:a.get(k)?.hash,new:b.get(k)?.hash})),null,2));
+          NODE

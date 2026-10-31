@@ -1,0 +1,26 @@
+name: V9 GPS and signup hotfix
+jobs:
+  fingerprint:
+    name: Check native compatibility
+    type: fingerprint
+    environment: production
+  compatible_v9:
+    name: Find matching V9 APK
+    type: get-build
+    needs: [fingerprint]
+    params:
+      platform: android
+      app_build_version: "9"
+      channel: production
+      fingerprint_hash: ${{ needs.fingerprint.outputs.android_fingerprint_hash }}
+      runtime_version: "0ba1fe33fc7542b9591f4f2ccbcc203c41010b54"
+  publish:
+    name: Publish V9 GPS and signup fixes
+    needs: [compatible_v9]
+    if: ${{ needs.compatible_v9.outputs.build_id }}
+    type: update
+    environment: production
+    params:
+      platform: android
+      channel: production
+      message: "V9 GPS acquisition and signup retry hotfix"

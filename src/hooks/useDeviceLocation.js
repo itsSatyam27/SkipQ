@@ -25,7 +25,11 @@ export default function useDeviceLocation(enabled) {
         update(location);
         watcher.current?.remove(); watcher.current = null;
         try {
-          const next = await watchDevicePosition(value => { if (version === generation.current) update(value); }, error => { if (version === generation.current) fail(error); });
+          const next = await watchDevicePosition(value => { if (version === generation.current) update(value); }, error => {
+            // A noisy background fix must not erase a still-fresh precise fix.
+            const transient = ['LOW_ACCURACY', 'INVALID_LOCATION', 'STALE_LOCATION', 'LOCATION_TIMEOUT', 'LOCATION_UNAVAILABLE'].includes(error.code);
+            if (version === generation.current && !(transient && isUsableLocation(current.current))) fail(error);
+          });
           if (version === generation.current) watcher.current = next; else next.remove();
         } catch { /* Current fix remains usable; the next checkout refreshes stale GPS. */ }
         return location;

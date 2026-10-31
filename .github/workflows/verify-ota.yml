@@ -1,6 +1,9 @@
-name: V9 GPS and signup OTA
+name: Diagnose V9 fingerprint inputs
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/verify-ota.yml]
 permissions:
   contents: read
 concurrency:
@@ -34,9 +37,9 @@ jobs:
           const builds = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/builds.json','utf8'));
           if (builds.some(b => ['NEW','IN_QUEUE','IN_PROGRESS','PENDING_CANCEL'].includes(b.status))) throw new Error('Wait for pending production builds.');
           NODE
-      - name: Run compatibility gated V9 hotfix release
+      - name: Compare stored native fingerprints
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
-          eas workflow:run .eas/workflows/v9-hotfix.yml --non-interactive --wait --json > "$RUNNER_TEMP/v9-release.json"
-          cat "$RUNNER_TEMP/v9-release.json"
+          eas fingerprint:compare 0ba1fe33fc7542b9591f4f2ccbcc203c41010b54 0e8a7b2af7abe6987f0aca2007c1d9496203a84e --json --non-interactive
+          eas update:view 80ffe3cd-233c-415c-a0e8-e224397dee4a --json

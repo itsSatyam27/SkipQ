@@ -1,0 +1,39 @@
+name: Verify SkipQ OTA compatibility
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/verify-ota.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - run: npm ci --no-audit --no-fund
+      - run: npm install --global eas-cli@27.2.0 --no-audit --no-fund
+      - name: Read published update and latest APK metadata
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          CI: "1"
+        run: |
+          eas workflow:view 01a190fc-81b4-7820-95d3-0d711f545eee --json --non-interactive
+          eas build:view ca8f81cd-8558-4065-883a-95281d0f09f1 --json > "$RUNNER_TEMP/build.json"
+          node <<'NODE'
+          const fs = require('fs');
+          const b = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/build.json', 'utf8'));
+          console.log(JSON.stringify({id:b.id,status:b.status,runtimeVersion:b.runtimeVersion,fingerprint:b.fingerprint,appBuildVersion:b.appBuildVersion,gitCommitHash:b.gitCommitHash},null,2));
+          NODE
+          eas workflow:logs 01a190fc-81b4-7820-95d3-0d711f545eee --all-steps --non-interactive > "$RUNNER_TEMP/eas-logs.txt"
+          node <<'NODE'
+          const fs = require('fs');
+          const lines = fs.readFileSync(process.env.RUNNER_TEMP + '/eas-logs.txt','utf8').split('\n');
+          console.log(lines.filter(x => /runtime|fingerprint|update group|published|production|updates\//i.test(x)).join('\n'));
+          NODE
